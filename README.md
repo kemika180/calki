@@ -4,13 +4,21 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
 
 `calki` combines the real-time calculations of tools like Calca with the inter-linked organization of a personal wiki, all inside a fast, Vim-friendly terminal interface.
 
+![calki Onboarding Screen](home.png)
+
 ---
 
 ## 🚀 Key Features
 
 * **Calca-Style Calculations**: Real-time evaluation of mathematical equations. Write assignments or expressions, end them with `=>`, and watch them calculate instantly when you exit Insert mode.
+
+  ![Grocery List Budgeting](grocery-list.png)
+
 * **Inline Math Evaluation**: Run calculations right inside your sentences using backticks: `` `10m * 5m => 50m^2` ``.
 * **Dimensional & Currency Analysis**: Supports physical units (length, speed, data size, temperature, time) and live-updated currency conversion (fetched via a background thread to prevent startup latency).
+
+  ![Trip Planning & Speed Conversion](trip-planning.png)
+
 * **Wiki Link Navigation**: Create double-bracket links like `[[Project Goals]]` to connect notes. Press `Enter` on a link in Normal mode to jump to it, and `Backspace` or `Ctrl-o` to navigate back.
 * **Triple-Panel Layout**:
   - **Left Panel (Wiki Map)**: View references and incoming backlinks for the current note.
