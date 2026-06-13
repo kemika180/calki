@@ -28,10 +28,10 @@ impl WikiManager {
         if !home_path.exists() {
             let onboarding_content = r#"# Welcome to calki! 🧮 📝
 
-calki is a text editor designed for taking notes and interactive calculations, integrated with a local wiki link structure.
+calki is a terminal-based Markdown note editor and interactive math sheet calculator with local wiki-style link navigation.
 
-## 1. How to use math sheets (Calca-style)
-Write variables and equations, ending evaluation lines with `=>`. Values are calculated when you exit Insert mode (`Esc`).
+## 1. Interactive Math Sheets
+Write variables and equations, ending evaluation lines with `=>`. Values are calculated in real time when you exit Insert mode (`Esc`).
 
 price = 100
 tax_rate = 8.5%
@@ -40,21 +40,128 @@ quantity = 5
 Let's calculate the total:
 price * quantity * (1 + tax_rate) => 542.5
 
-You can also write calculations inline: We bought items for `price * quantity => 500` before tax.
+We can also write calculations inline: `price * quantity => 500` before tax.
 
-## 2. Dynamic Wiki Links
-You can link notes together using double square brackets: `[[Savings Plan]]` or `[[Project Ideas]]`.
-* Place your cursor over a link and press **Enter** in Normal mode to jump to it.
-* Press **Backspace** or **Ctrl-o** to return.
-* Highlight text in Visual mode and press **Enter** to wrap it in a link.
+## 2. Dynamic Wiki Links & Creating Pages
+Notes can be linked together using double square brackets like `[[Grocery List]]`.
+* **Follow links**: Place your cursor over a link and press **Enter** in Normal mode to jump to it.
+* **Go back**: Press **Backspace** or **Ctrl-o** to return in history.
+* **Create links**: In Visual mode, highlight any text and press **Enter** to instantly wrap it in a wiki link.
+* **Create new pages**: Simply write a new link name (e.g. `[[My New Project]]`) and press **Enter** over it. `calki` will automatically create the new page and open it for editing!
 
-## 3. Sidebar Panels
-* Press **F2** to toggle the left **Wiki Map** (shows what notes link here).
+## 3. Sample Sheets
+We've pre-generated a few demo notes to showcase different capabilities. Press **Enter** on these links to explore:
+* **Budgeting & Quantities**: [[Grocery List]]
+* **Financial Forecasting**: [[Savings Plan]]
+* **Unit Conversions & Speed**: [[Trip Planning]]
+
+## 4. Sidebar Panels
+* Press **F2** to toggle the left **Wiki Map** (shows backlinks and references).
 * Press **F3** to toggle the right **Variables Inspector** (shows active scope values).
 * Press **Ctrl-h** / **Ctrl-l** to switch focus between active panels.
 "#;
             fs::write(&home_path, onboarding_content)
                 .map_err(|e| format!("Failed to write onboarding home.md: {}", e))?;
+        }
+
+        // Generate sample pages if they don't exist
+        let grocery_path = self.root_dir.join("grocery-list.md");
+        if !grocery_path.exists() {
+            let grocery_content = r#"# Grocery List 🛒
+
+Planning this week's groceries and budgeting with tax and discounts.
+
+## Items & Prices
+apples = 6 * $0.75 => $4.50
+milk = 2 * $3.29 => $6.58
+bread = 1 * $2.49 => $2.49
+cheese = 0.5 kg * $12.00 / kg => $6.00
+
+## Calculations
+subtotal = apples + milk + bread + cheese
+subtotal => $19.57
+
+## Tax & Discounts
+discount = 10%
+coupon_savings = subtotal * discount => $1.957
+tax_rate = 8.5%
+
+## Final Bill
+total = (subtotal - coupon_savings) * (1 + tax_rate)
+total => $19.1091
+
+Back to [[Home]].
+"#;
+            let _ = fs::write(&grocery_path, grocery_content);
+        }
+
+        let savings_path = self.root_dir.join("savings-plan.md");
+        if !savings_path.exists() {
+            let savings_content = r#"# Savings Plan 💰
+
+Let's plan for a big purchase or retirement using financial compounding functions.
+
+## Goals & Variables
+target = $50000
+initial_deposit = $5000
+monthly_contribution = $450
+annual_rate = 6%
+years = 5
+
+## Calculations
+months = years * 12 => 60
+monthly_rate = annual_rate / 12 => 0.005
+
+## Future Value
+# fv(rate, nper, pmt, pv) calculates future value of an investment
+future_value = fv(monthly_rate, months, -1 * monthly_contribution, -1 * initial_deposit)
+future_value => $39502.82
+
+## Gap to Target
+shortfall = target - future_value
+shortfall => $10497.18
+
+Required monthly boost to hit the target:
+additional_pmt = shortfall * monthly_rate / (1 - (1 + monthly_rate)^(-1 * months)) => $148.96
+
+Back to [[Home]].
+"#;
+            let _ = fs::write(&savings_path, savings_content);
+        }
+
+        let trip_path = self.root_dir.join("trip-planning.md");
+        if !trip_path.exists() {
+            let trip_content = r#"# Trip Planning 🚗 ✈️
+
+Calculating driving times, fuel costs, and speed conversions for a road trip.
+
+## Route Details
+distance = 320 miles
+speed_limit = 65 mph
+fuel_efficiency = 28 miles / gallon
+gas_price = $3.89 / gallon
+
+## Fuel Calculation
+fuel_needed = distance / fuel_efficiency
+fuel_needed => 11.4286 gallon
+
+total_gas_cost = fuel_needed * gas_price
+total_gas_cost => $44.4571
+
+## Duration
+driving_time = distance / speed_limit
+driving_time in hours => 4.9231 hours
+
+## Metric Conversions
+metric_distance = distance to km
+metric_distance => 514.99 km
+
+metric_speed = speed_limit to km/h
+metric_speed => 104.6074 km/h
+
+Back to [[Home]].
+"#;
+            let _ = fs::write(&trip_path, trip_content);
         }
 
         Ok(home_path)
