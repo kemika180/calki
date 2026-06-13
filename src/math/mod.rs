@@ -1,0 +1,213 @@
+pub mod lexer;
+pub mod parser;
+pub mod eval;
+pub mod units;
+
+use crate::math::parser::Line;
+use std::collections::HashMap;
+
+// High-level sheet evaluator
+// Evaluates the entire document line-by-line, updating `=>` evaluations
+// and compiling the active variable registry.
+pub fn evaluate_sheet(
+    sheet_text: &str,
+    exchange_rates: &HashMap<String, f64>,
+) -> (String, Vec<(String, String)>) {
+    let mut ctx = eval::Context::default();
+    ctx.exchange_rates = exchange_rates.clone();
+
+    let mut updated_lines = Vec::new();
+    let mut vars_inspector = Vec::new();
+
+    for line_text in sheet_text.lines() {
+        let line = parser::parse_line(line_text);
+
+        match line {
+            Line::Text(text) => {
+                // Scan and evaluate inline math within backticks: `expr =>`
+                let evaluated = evaluate_inline_math(&text, &mut ctx);
+                updated_lines.push(evaluated);
+            }
+            Line::Assignment { name, expr, raw_prefix, current_result } => {
+                match eval::eval_expr(&expr, &mut ctx) {
+                    Ok(qty) => {
+                        let formatted = eval::format_quantity(&qty);
+                        vars_inspector.push((name.clone(), formatted.clone()));
+                        ctx.variables.insert(name, qty);
+                        if current_result.is_some() || raw_prefix.contains("=>") {
+                            updated_lines.push(format!("{} {}", raw_prefix, formatted));
+                        } else {
+                            updated_lines.push(line_text.to_string());
+                        }
+                    }
+                    Err(err) => {
+                        vars_inspector.push((name.clone(), format!("[Error: {}]", err)));
+                        if current_result.is_some() || raw_prefix.contains("=>") {
+                            updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
+                        } else {
+                            updated_lines.push(line_text.to_string());
+                        }
+                    }
+                }
+            }
+            Line::FnDefinition { name, args, expr, raw_prefix: _ } => {
+                ctx.functions.insert(name.clone(), (args, expr));
+                updated_lines.push(line_text.to_string());
+            }
+            Line::Evaluation { expr, raw_prefix, .. } => {
+                match eval::eval_expr(&expr, &mut ctx) {
+                    Ok(qty) => {
+                        let formatted = eval::format_quantity(&qty);
+                        updated_lines.push(format!("{} {}", raw_prefix, formatted));
+                    }
+                    Err(err) => {
+                        updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
+                    }
+                }
+            }
+        }
+    }
+
+    // Join with newlines (ensuring trailing newline behavior matches the input)
+    let has_trailing_newline = sheet_text.ends_with('\n');
+    let mut output = updated_lines.join("\n");
+    if has_trailing_newline && !output.is_empty() {
+        output.push('\n');
+    }
+
+    (output, vars_inspector)
+}
+
+fn evaluate_inline_math(text: &str, ctx: &mut eval::Context) -> String {
+    let mut result = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            let mut inner = String::new();
+            let mut closed = false;
+            while let Some(next_ch) = chars.next() {
+                if next_ch == '`' {
+                    closed = true;
+                    break;
+                }
+                inner.push(next_ch);
+            }
+
+            if closed {
+                if let Some(arrow_pos) = inner.find("=>") {
+                    let expr_part = inner[..arrow_pos].trim();
+                    let lexer = lexer::Lexer::new(expr_part);
+                    if let Ok(tokens) = lexer.lex() {
+                        let parser = parser::Parser::new(tokens);
+                        if let Ok(expr) = parser.parse() {
+                            match eval::eval_expr(&expr, ctx) {
+                                Ok(qty) => {
+                                    let formatted = eval::format_quantity(&qty);
+                                    result.push_str(&format!("`{} => {}`", expr_part, formatted));
+                                }
+                                Err(err) => {
+                                    result.push_str(&format!("`{} => [Error: {}]`", expr_part, err));
+                                }
+                            }
+                        } else {
+                            result.push_str(&format!("`{}`", inner)); // parse fail
+                        }
+                    } else {
+                        result.push_str(&format!("`{}`", inner)); // lex fail
+                    }
+                } else {
+                    result.push_str(&format!("`{}`", inner)); // no arrow
+                }
+            } else {
+                result.push_str("`");
+                result.push_str(&inner);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_evaluate_sheet() {
+        let sheet = r#"# Grocery Math
+price = 6
+quantity = 3
+tax = 8.5%
+
+total = price * quantity * (1 + tax)
+total => 19.53
+
+We bought items for `price * quantity =>` total.
+"#;
+        let rates = HashMap::new();
+        let (output, vars) = evaluate_sheet(sheet, &rates);
+
+        assert!(output.contains("total => 19.53"));
+        assert!(output.contains("We bought items for `price * quantity => 18` total."));
+        assert_eq!(vars.len(), 4);
+        assert_eq!(vars[0], ("price".to_string(), "6".to_string()));
+
+        // Test unit cancellation commute cost scenario
+        let unit_sheet = r#"
+mileage = 27 miles / 1 gallon
+commute = 88 miles / 1 day
+gas_cost = $4.09 / 1 gallon
+
+cost = commute / mileage * gas_cost
+cost =>
+"#;
+        let (unit_output, _) = evaluate_sheet(unit_sheet, &rates);
+        assert!(unit_output.contains("cost => 13.3304$/day"), "Actual output: {}", unit_output);
+
+        // Test unit cancellation with standalone units (implied 1)
+        let unit_sheet_2 = r#"
+mileage = 27 miles / gallon
+commute = 88 miles / day
+gas_cost = $4.09 / gallon
+
+cost = commute / mileage * gas_cost
+cost =>
+cost in $/week =>
+cost * 5 days =>
+"#;
+        let (unit_output_2, _) = evaluate_sheet(unit_sheet_2, &rates);
+        assert!(unit_output_2.contains("cost => 13.3304$/day"), "Actual output: {}", unit_output_2);
+        assert!(unit_output_2.contains("cost in $/week => 93.3126$/week"), "Actual output: {}", unit_output_2);
+        assert!(unit_output_2.contains("cost * 5 days => $66.6519"), "Actual output: {}", unit_output_2);
+
+        // Test payment reproduction
+        let payment_sheet = r#"
+cost = $37000
+apr = 1%
+sales_tax = 4%
+years = 6
+
+months = years * 12
+
+monthly = apr / 12 / 100
+principal = cost * (1 + sales_tax)
+
+payment = (monthly * principal) / (1 - (1 + monthly) ^ (-1 * months))
+payment =>
+"#;
+        let (payment_output, _) = evaluate_sheet(payment_sheet, &rates);
+        assert!(payment_output.contains("payment => $534.607"), "Actual output:\n{}", payment_output);
+
+        // Test assignment with trailing arrow
+        let assignment_arrow_sheet = r#"
+a = 10 + 20 =>
+b = a * 2 => 60
+"#;
+        let (arrow_output, _) = evaluate_sheet(assignment_arrow_sheet, &rates);
+        assert!(arrow_output.contains("a = 10 + 20 => 30"), "Actual output:\n{}", arrow_output);
+        assert!(arrow_output.contains("b = a * 2 => 60"), "Actual output:\n{}", arrow_output);
+    }
+}

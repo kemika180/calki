@@ -1,0 +1,246 @@
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    Number(f64),
+    Identifier(String),
+    Percentage, // %
+    Plus,       // +
+    Minus,      // -
+    Star,       // *
+    Slash,      // /
+    Caret,      // ^
+    Equal,      // =
+    Arrow,      // =>
+    In,         // 'in' or 'to'
+    LPar,       // (
+    RPar,       // )
+    Comma,      // ,
+}
+
+pub struct Lexer<'a> {
+    chars: std::iter::Peekable<std::str::CharIndices<'a>>,
+    input: &'a str,
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        Self {
+            chars: input.char_indices().peekable(),
+            input,
+        }
+    }
+
+    pub fn lex(mut self) -> Result<Vec<Token>, String> {
+        let mut tokens = Vec::new();
+
+        while let Some(&(idx, ch)) = self.chars.peek() {
+            if ch.is_whitespace() {
+                self.chars.next();
+                continue;
+            }
+
+            match ch {
+                '+' => {
+                    self.chars.next();
+                    tokens.push(Token::Plus);
+                }
+                '-' => {
+                    self.chars.next();
+                    tokens.push(Token::Minus);
+                }
+                '*' => {
+                    self.chars.next();
+                    tokens.push(Token::Star);
+                }
+                '/' => {
+                    self.chars.next();
+                    tokens.push(Token::Slash);
+                }
+                '^' => {
+                    self.chars.next();
+                    tokens.push(Token::Caret);
+                }
+                '(' => {
+                    self.chars.next();
+                    tokens.push(Token::LPar);
+                }
+                ')' => {
+                    self.chars.next();
+                    tokens.push(Token::RPar);
+                }
+                ',' => {
+                    self.chars.next();
+                    tokens.push(Token::Comma);
+                }
+                '%' => {
+                    self.chars.next();
+                    tokens.push(Token::Percentage);
+                }
+                '=' => {
+                    self.chars.next();
+                    if let Some(&(_, '>')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::Arrow);
+                    } else {
+                        tokens.push(Token::Equal);
+                    }
+                }
+                '$' => {
+                    // Treat currency sign as an identifier for standard parsing
+                    self.chars.next();
+                    tokens.push(Token::Identifier("$".to_string()));
+                }
+                _ if ch.is_ascii_digit() => {
+                    let token = self.lex_number(idx)?;
+                    tokens.push(token);
+                }
+                _ if ch.is_alphabetic() || ch == '_' => {
+                    let token = self.lex_identifier(idx);
+                    tokens.push(token);
+                }
+                _ => {
+                    return Err(format!("Unexpected character '{}' at position {}", ch, idx));
+                }
+            }
+        }
+
+        Ok(tokens)
+    }
+
+    fn lex_number(&mut self, start_idx: usize) -> Result<Token, String> {
+        let mut end_idx = start_idx;
+        let mut has_decimal = false;
+
+        while let Some(&(idx, ch)) = self.chars.peek() {
+            if ch.is_ascii_digit() {
+                self.chars.next();
+                end_idx = idx + ch.len_utf8();
+            } else if ch == '.' && !has_decimal {
+                // Peek ahead to ensure there is a digit after the dot
+                self.chars.next();
+                if let Some(&(_, next_ch)) = self.chars.peek() {
+                    if next_ch.is_ascii_digit() {
+                        has_decimal = true;
+                        end_idx = idx + ch.len_utf8();
+                    } else {
+                        // The dot is not followed by a digit (e.g., standard punctuation or end of input)
+                        // Treat the number as finished before the dot
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        let num_str = &self.input[start_idx..end_idx];
+        match num_str.parse::<f64>() {
+            Ok(val) => Ok(Token::Number(val)),
+            Err(e) => Err(format!("Failed to parse number '{}': {}", num_str, e)),
+        }
+    }
+
+    fn lex_identifier(&mut self, start_idx: usize) -> Token {
+        let mut end_idx = start_idx;
+
+        while let Some(&(idx, ch)) = self.chars.peek() {
+            if ch.is_alphanumeric() || ch == '_' || ch == '/' {
+                // We allow '/' inside unit identifiers (e.g., m/s or km/h)
+                self.chars.next();
+                end_idx = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        let ident_str = &self.input[start_idx..end_idx];
+        match ident_str {
+            "in" | "to" => Token::In,
+            _ => Token::Identifier(ident_str.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_lexing() {
+        let lexer = Lexer::new("x = 10 + 20.5 =>");
+        let tokens = lexer.lex().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Identifier("x".to_string()),
+                Token::Equal,
+                Token::Number(10.0),
+                Token::Plus,
+                Token::Number(20.5),
+                Token::Arrow,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_units_lexing() {
+        let lexer = Lexer::new("10m + 50cm in feet");
+        let tokens = lexer.lex().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Number(10.0),
+                Token::Identifier("m".to_string()),
+                Token::Plus,
+                Token::Number(50.0),
+                Token::Identifier("cm".to_string()),
+                Token::In,
+                Token::Identifier("feet".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_currency_symbol_lexing() {
+        let lexer = Lexer::new("$100 to EUR");
+        let tokens = lexer.lex().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Identifier("$".to_string()),
+                Token::Number(100.0),
+                Token::In,
+                Token::Identifier("EUR".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_derived_units_lexing() {
+        let lexer = Lexer::new("50km/h");
+        let tokens = lexer.lex().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Number(50.0),
+                Token::Identifier("km/h".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_percentages_lexing() {
+        let lexer = Lexer::new("100 - 15%");
+        let tokens = lexer.lex().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Number(100.0),
+                Token::Minus,
+                Token::Number(15.0),
+                Token::Percentage,
+            ]
+        );
+    }
+}
