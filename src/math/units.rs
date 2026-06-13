@@ -192,6 +192,7 @@ fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimension
             *profile.entry(dim).or_insert(0) += exp;
         }
     }
+    profile.retain(|_, &mut v| v != 0);
     Ok(profile)
 }
 
@@ -554,6 +555,10 @@ mod tests {
         assert!((val3 - 104.60736).abs() < 1e-4);
         let val4 = convert_quantity(65.0, "mph", "m/s", &rates).unwrap();
         assert!((val4 - 29.0576).abs() < 1e-4);
+
+        // miles/mph to hours
+        let val5 = convert_quantity(320.0 / 65.0, "miles/mph", "hours", &rates).unwrap();
+        assert!((val5 - (320.0 / 65.0)).abs() < 1e-9);
     }
 
     #[test]
