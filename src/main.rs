@@ -185,6 +185,7 @@ struct App {
     left_area: Rect,
     editor_area: Rect,
     right_area: Rect,
+    replace_next_char: bool,
 }
 
 impl App {
@@ -271,6 +272,7 @@ impl App {
             left_area: Rect::default(),
             editor_area: Rect::default(),
             right_area: Rect::default(),
+            replace_next_char: false,
         };
 
         if let Some(ref s) = session {
@@ -976,8 +978,42 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     continue;
                 }
 
+                // Intercept character for Vim 'r' replacement
+                if app.replace_next_char {
+                    app.replace_next_char = false;
+                    if let KeyCode::Char(c) = key.code {
+                        let row = app.editor_state.cursor.row;
+                        let col = app.editor_state.cursor.col;
+                        let mut vecs = app.editor_state.lines.clone().into_vecs();
+                        if let Some(line) = vecs.get_mut(row) {
+                            if col < line.len() {
+                                line[col] = c;
+                                let new_text: String = vecs.iter()
+                                    .map(|l| l.iter().collect::<String>())
+                                    .collect::<Vec<String>>()
+                                    .join("\n");
+                                app.editor_state.lines = Lines::from(new_text.as_str());
+                                app.re_evaluate_calculations();
+                                let _ = app.save_current_note();
+                            }
+                        }
+                    }
+                    app.update_highlights();
+                    continue;
+                }
+
                 // Global help modal toggle (F1 works in any mode, ~ works only when not in insert mode)
                 let is_insert_mode = app.focused_panel == FocusedPanel::Editor && app.editor_state.mode == EditorMode::Insert;
+
+                // Trigger 'r' replacement in Normal mode
+                if app.focused_panel == FocusedPanel::Editor 
+                    && app.editor_state.mode == EditorMode::Normal
+                    && key.code == KeyCode::Char('r') 
+                    && key.modifiers.is_empty() 
+                {
+                    app.replace_next_char = true;
+                    continue;
+                }
                 if key.code == KeyCode::F(1) || (key.code == KeyCode::Char('~') && !is_insert_mode) {
                     app.show_help = !app.show_help;
                     continue;
@@ -2030,6 +2066,40 @@ mod main_tests {
 
         // line 9: "[[miles]] = 10" -> "miles" is inside wiki link, should NOT have yellow unit highlight
         assert!(!unit_highlights.iter().any(|h| h.start.row == 9 && h.start.col == 2 && h.end.col == 6));
+    }
+
+    #[test]
+    fn test_vim_r_replacement() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_vim_r");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.editor_state = EditorState::new(edtui::Lines::from("hello world"));
+        app.editor_state.mode = EditorMode::Normal;
+        
+        // Place cursor at 'w' (index 6)
+        app.editor_state.cursor = edtui::Index2::new(0, 6);
+        
+        app.replace_next_char = true;
+        
+        let row = app.editor_state.cursor.row;
+        let col = app.editor_state.cursor.col;
+        let mut vecs = app.editor_state.lines.clone().into_vecs();
+        vecs[row][col] = 'x';
+        let new_text: String = vecs.iter()
+            .map(|l| l.iter().collect::<String>())
+            .collect::<Vec<String>>()
+            .join("\n");
+        app.editor_state.lines = Lines::from(new_text.as_str());
+        app.replace_next_char = false;
+
+        let text = app.get_editor_text();
+        assert_eq!(text, "hello xorld");
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
     }
 }
 
