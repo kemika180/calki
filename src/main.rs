@@ -827,7 +827,11 @@ fn main() -> Result<(), io::Error> {
     // Run trigger update for currency exchange rates
     trigger_background_update();
 
-    let wiki_root = PathBuf::from("./wiki");
+    let wiki_root = if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".calki").join("wiki")
+    } else {
+        PathBuf::from("./wiki")
+    };
     let mut app = match App::new(wiki_root) {
         Ok(a) => a,
         Err(e) => {
@@ -946,7 +950,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             if let Some(path) = app.delete_target_path.take() {
                                 let _ = fs::remove_file(&path);
                                 if path == app.active_path {
-                                    let home_path = app.wiki_mgr.init_wiki().unwrap_or_else(|_| PathBuf::from("./wiki/home.md"));
+                                    let home_path = app.wiki_mgr.init_wiki().unwrap_or_else(|_| app.wiki_mgr.link_to_path("home"));
                                     let _ = app.load_note(home_path);
                                     app.history_stack.clear();
                                 } else {
