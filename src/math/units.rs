@@ -185,7 +185,12 @@ fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimension
     for (unit, exp) in map {
         let (dim, _) = get_unit_info(unit)
             .ok_or_else(|| format!("Unknown unit '{}'", unit))?;
-        *profile.entry(dim).or_insert(0) += exp;
+        if dim == Dimension::Speed {
+            *profile.entry(Dimension::Length).or_insert(0) += exp;
+            *profile.entry(Dimension::Time).or_insert(0) -= exp;
+        } else {
+            *profile.entry(dim).or_insert(0) += exp;
+        }
     }
     Ok(profile)
 }
@@ -543,6 +548,12 @@ mod tests {
         // Incompatible compound units should fail
         let err = convert_quantity(1.0, "$/day", "m/s", &rates);
         assert!(err.is_err());
+
+        // Speed units compatibility (mph, km/h, m/s)
+        let val3 = convert_quantity(65.0, "mph", "km/h", &rates).unwrap();
+        assert!((val3 - 104.60736).abs() < 1e-4);
+        let val4 = convert_quantity(65.0, "mph", "m/s", &rates).unwrap();
+        assert!((val4 - 29.0576).abs() < 1e-4);
     }
 
     #[test]
