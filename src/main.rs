@@ -455,23 +455,60 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
             let mut is_math_line = false;
             let mut backtick_ranges = Vec::new();
 
-            // A. Base Block Math & Assignments (containing '=>' or '=')
-            if let Some(arrow_idx) = find_in_chars(line, "=>") {
+            // First, find all backtick ranges on this line so we can ignore any inner content for top-level line math check
+            let mut b_idx = 0;
+            while let Some(start_pos) = find_in_chars_from(line, "`", b_idx) {
+                if let Some(end_pos) = find_in_chars_from(line, "`", start_pos + 1) {
+                    backtick_ranges.push(start_pos..=end_pos);
+                    b_idx = end_pos + 1;
+                } else {
+                    break;
+                }
+            }
+
+            let is_in_backticks = |col: usize| -> bool {
+                backtick_ranges.iter().any(|r| r.contains(&col))
+            };
+
+            // A. Base Block Math & Assignments (containing '=>' or '=') outside backticks
+            let mut arrow_idx = None;
+            let mut search_idx = 0;
+            while let Some(pos) = find_in_chars_from(line, "=>", search_idx) {
+                if !is_in_backticks(pos) {
+                    arrow_idx = Some(pos);
+                    break;
+                }
+                search_idx = pos + 2;
+            }
+
+            let mut eq_idx = None;
+            if arrow_idx.is_none() {
+                let mut search_idx = 0;
+                while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
+                    if !is_in_backticks(pos) {
+                        eq_idx = Some(pos);
+                        break;
+                    }
+                    search_idx = pos + 1;
+                }
+            }
+
+            if let Some(idx) = arrow_idx {
                 is_math_line = true;
                 // Expression before '=>' (Cyan/light blue)
-                for col in 0..arrow_idx {
+                for col in 0..idx {
                     line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
                 }
                 // Operator '=>' in Bold Orange
-                for col in arrow_idx..std::cmp::min(arrow_idx + 2, n) {
+                for col in idx..std::cmp::min(idx + 2, n) {
                     line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
                 }
                 // The result after '=>' (Teal Green)
-                for col in (arrow_idx + 2)..n {
+                for col in (idx + 2)..n {
                     line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
                 }
-            } else if let Some(eq_idx) = find_in_chars(line, "=") {
-                let lhs = &line[..eq_idx];
+            } else if let Some(idx) = eq_idx {
+                let lhs = &line[..idx];
                 let lhs_str: String = lhs.iter().collect();
                 let lhs_trimmed = lhs_str.trim();
                 let is_lhs_valid = !lhs_trimmed.is_empty() 
@@ -480,32 +517,31 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 if is_lhs_valid {
                     is_math_line = true;
                     // LHS (Cyan)
-                    for col in 0..eq_idx {
+                    for col in 0..idx {
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
                     }
                     // '=' (Bold Orange)
-                    if eq_idx < n {
-                        line_styles[eq_idx] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                    if idx < n {
+                        line_styles[idx] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
                     }
                     // RHS (Teal Green)
-                    for col in (eq_idx + 1)..n {
+                    for col in (idx + 1)..n {
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
                     }
                 }
             }
 
             // B. Inline code blocks/math in backticks: `expression => result`
-            let mut b_idx = 0;
-            while let Some(start_pos) = find_in_chars_from(line, "`", b_idx) {
-                if let Some(end_pos) = find_in_chars_from(line, "`", start_pos + 1) {
-                    backtick_ranges.push(start_pos..=end_pos);
-                    // Backticks themselves (Muted Gray-Blue)
-                    if start_pos < n {
-                        line_styles[start_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
-                    }
-                    if end_pos < n {
-                        line_styles[end_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
-                    }
+            for r in &backtick_ranges {
+                let start_pos = *r.start();
+                let end_pos = *r.end();
+                // Backticks themselves (Muted Gray-Blue)
+                if start_pos < n {
+                    line_styles[start_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
+                }
+                if end_pos < n {
+                    line_styles[end_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
+                }
 
                 let inner = &line[start_pos + 1..end_pos];
                 if let Some(arrow_pos) = find_in_chars(inner, "=>") {
@@ -534,11 +570,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                         }
                     }
                 }
-                b_idx = end_pos + 1;
-            } else {
-                break;
             }
-        }
 
         // C. Outgoing Wiki Links: [[Note Name]] (Purple Underlined)
         let mut idx = 0;
@@ -2804,6 +2836,7 @@ mod main_tests {
         let lines = vec![
             "gas_cost = gas_usage * rate".chars().collect::<Vec<char>>(),
             "We bought items for `price_val * quantity_val =>` total".chars().collect::<Vec<char>>(),
+            "testing inline `price * quantity => 500` before tax".chars().collect::<Vec<char>>(),
         ];
 
         let highlights = App::compute_syntax_highlights(&lines, None);
@@ -2817,6 +2850,13 @@ mod main_tests {
             h.start.row == 1 && h.style.add_modifier.contains(Modifier::ITALIC) && h.style.fg == Some(Color::Rgb(169, 177, 214))
         });
         assert!(!has_italic_backticks_text, "Markdown italics should be ignored inside backtick blocks");
+
+        // Verify that in "testing inline `price * quantity => 500` before tax", 
+        // the text outside the backticks is not styled with the math colors (Teal/Cyan/etc.).
+        let has_spill_highlight = highlights.iter().any(|h| {
+            h.start.row == 2 && (h.start.col < 15 || h.start.col > 37) && h.style.fg == Some(Color::Rgb(125, 207, 255))
+        });
+        assert!(!has_spill_highlight, "Math highlighting should not spill outside backticks");
     }
 
     #[test]
