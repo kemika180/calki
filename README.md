@@ -2,7 +2,7 @@
 
 A terminal-based Markdown note-taking tool and interactive math sheet calculator with local wiki-style link navigation.
 
-`calki` combines the real-time calculations of tools like Calca with the inter-linked organization of a personal wiki, all inside a fast, Vim-friendly terminal interface.
+`calki` combines real-time document-based calculations with the inter-linked organization of a personal wiki, all inside a fast, Vim-friendly terminal interface.
 
 ![calki Onboarding Screen](home.png)
 
@@ -10,7 +10,7 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
 
 ## 🚀 Key Features
 
-* **Calca-Style Calculations**: Real-time evaluation of mathematical equations. Write assignments or expressions, end them with `=>`, and watch them calculate instantly when you exit Insert mode.
+* **Interactive Math Sheets**: Real-time evaluation of mathematical equations. Write assignments or expressions, end them with `=>`, and watch them calculate instantly when you exit Insert mode.
 
   ![Grocery List Budgeting](grocery-list.png)
 
