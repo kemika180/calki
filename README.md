@@ -79,6 +79,12 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 | `Ctrl-h` | Move focus to the panel on the left |
 | `Ctrl-l` | Move focus to the panel on the right |
 
+### Help & Reference Modals (Normal Mode)
+| Key | Action |
+| --- | --- |
+| `~` (tilde) | Toggle General Help Modal |
+| `F1` | Toggle Mathematical Function Guide Modal |
+
 ### Wiki Navigation (Normal Mode)
 | Key | Action |
 | --- | --- |
