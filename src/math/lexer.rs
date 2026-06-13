@@ -14,6 +14,21 @@ pub enum Token {
     LPar,       // (
     RPar,       // )
     Comma,      // ,
+    LBrack,     // [
+    RBrack,     // ]
+    
+    // Comparisons
+    Less,       // <
+    LessEq,     // <=
+    Greater,    // >
+    GreaterEq,  // >=
+    DoubleEq,   // ==
+    NotEq,      // !=
+
+    // Logical
+    And,        // and
+    Or,         // or
+    Not,        // not
 }
 
 pub struct Lexer<'a> {
@@ -71,6 +86,14 @@ impl<'a> Lexer<'a> {
                     self.chars.next();
                     tokens.push(Token::Comma);
                 }
+                '[' => {
+                    self.chars.next();
+                    tokens.push(Token::LBrack);
+                }
+                ']' => {
+                    self.chars.next();
+                    tokens.push(Token::RBrack);
+                }
                 '%' => {
                     self.chars.next();
                     tokens.push(Token::Percentage);
@@ -80,8 +103,38 @@ impl<'a> Lexer<'a> {
                     if let Some(&(_, '>')) = self.chars.peek() {
                         self.chars.next();
                         tokens.push(Token::Arrow);
+                    } else if let Some(&(_, '=')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::DoubleEq);
                     } else {
                         tokens.push(Token::Equal);
+                    }
+                }
+                '<' => {
+                    self.chars.next();
+                    if let Some(&(_, '=')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::LessEq);
+                    } else {
+                        tokens.push(Token::Less);
+                    }
+                }
+                '>' => {
+                    self.chars.next();
+                    if let Some(&(_, '=')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::GreaterEq);
+                    } else {
+                        tokens.push(Token::Greater);
+                    }
+                }
+                '!' => {
+                    self.chars.next();
+                    if let Some(&(_, '=')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::NotEq);
+                    } else {
+                        return Err(format!("Unexpected character '!' at position {}", idx));
                     }
                 }
                 '$' => {
@@ -157,6 +210,9 @@ impl<'a> Lexer<'a> {
         let ident_str = &self.input[start_idx..end_idx];
         match ident_str {
             "in" | "to" => Token::In,
+            "and" => Token::And,
+            "or" => Token::Or,
+            "not" => Token::Not,
             _ => Token::Identifier(ident_str.to_string()),
         }
     }

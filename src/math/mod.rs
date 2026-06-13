@@ -32,7 +32,11 @@ pub fn evaluate_sheet(
                 match eval::eval_expr(&expr, &mut ctx) {
                     Ok(qty) => {
                         let formatted = eval::format_quantity(&qty);
-                        vars_inspector.push((name.clone(), formatted.clone()));
+                        if let Some(pos) = vars_inspector.iter().position(|(n, _)| n == &name) {
+                            vars_inspector[pos] = (name.clone(), formatted.clone());
+                        } else {
+                            vars_inspector.push((name.clone(), formatted.clone()));
+                        }
                         ctx.variables.insert(name, qty);
                         if current_result.is_some() || raw_prefix.contains("=>") {
                             updated_lines.push(format!("{} {}", raw_prefix, formatted));
@@ -41,7 +45,12 @@ pub fn evaluate_sheet(
                         }
                     }
                     Err(err) => {
-                        vars_inspector.push((name.clone(), format!("[Error: {}]", err)));
+                        let err_msg = format!("[Error: {}]", err);
+                        if let Some(pos) = vars_inspector.iter().position(|(n, _)| n == &name) {
+                            vars_inspector[pos] = (name.clone(), err_msg.clone());
+                        } else {
+                            vars_inspector.push((name.clone(), err_msg.clone()));
+                        }
                         if current_result.is_some() || raw_prefix.contains("=>") {
                             updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
                         } else {
@@ -165,7 +174,7 @@ cost = commute / mileage * gas_cost
 cost =>
 "#;
         let (unit_output, _) = evaluate_sheet(unit_sheet, &rates);
-        assert!(unit_output.contains("cost => 13.3304$/day"), "Actual output: {}", unit_output);
+        assert!(unit_output.contains("cost => $13.3304/day"), "Actual output: {}", unit_output);
 
         // Test unit cancellation with standalone units (implied 1)
         let unit_sheet_2 = r#"
@@ -179,8 +188,8 @@ cost in $/week =>
 cost * 5 days =>
 "#;
         let (unit_output_2, _) = evaluate_sheet(unit_sheet_2, &rates);
-        assert!(unit_output_2.contains("cost => 13.3304$/day"), "Actual output: {}", unit_output_2);
-        assert!(unit_output_2.contains("cost in $/week => 93.3126$/week"), "Actual output: {}", unit_output_2);
+        assert!(unit_output_2.contains("cost => $13.3304/day"), "Actual output: {}", unit_output_2);
+        assert!(unit_output_2.contains("cost in $/week => $93.3126/week"), "Actual output: {}", unit_output_2);
         assert!(unit_output_2.contains("cost * 5 days => $66.6519"), "Actual output: {}", unit_output_2);
 
         // Test payment reproduction
@@ -209,5 +218,16 @@ b = a * 2 => 60
         let (arrow_output, _) = evaluate_sheet(assignment_arrow_sheet, &rates);
         assert!(arrow_output.contains("a = 10 + 20 => 30"), "Actual output:\n{}", arrow_output);
         assert!(arrow_output.contains("b = a * 2 => 60"), "Actual output:\n{}", arrow_output);
+
+        // Test de-duplication of variables in inspector
+        let dup_sheet = r#"
+x = 5
+y = 10
+x = 15
+"#;
+        let (_, vars) = evaluate_sheet(dup_sheet, &rates);
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0], ("x".to_string(), "15".to_string()));
+        assert_eq!(vars[1], ("y".to_string(), "10".to_string()));
     }
 }

@@ -28,7 +28,7 @@ pub enum TempUnit {
     F,
 }
 
-pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
+pub fn get_exact_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
     match name {
         // Length (Base: m)
         "m" | "meter" | "meters" => Some((Dimension::Length, Conversion::Linear(1.0))),
@@ -98,12 +98,12 @@ pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
         "F" | "fahrenheit" => Some((Dimension::Temperature, Conversion::Temperature(TempUnit::F))),
 
         // Energy (Base: Wh)
-        "Wh" | "watt-hour" => Some((Dimension::Energy, Conversion::Linear(1.0))),
+        "Wh" | "watt-hour" | "watt-hours" => Some((Dimension::Energy, Conversion::Linear(1.0))),
         "kWh" | "kilowatt-hour" => Some((Dimension::Energy, Conversion::Linear(1000.0))),
         "MWh" | "megawatt-hour" => Some((Dimension::Energy, Conversion::Linear(1000000.0))),
 
         // Power (Base: W)
-        "W" | "watt" => Some((Dimension::Power, Conversion::Linear(1.0))),
+        "W" | "watt" | "watts" => Some((Dimension::Power, Conversion::Linear(1.0))),
         "kW" | "kilowatt" => Some((Dimension::Power, Conversion::Linear(1000.0))),
         "MW" | "megawatt" => Some((Dimension::Power, Conversion::Linear(1000000.0))),
 
@@ -112,6 +112,72 @@ pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
 
         _ => None,
     }
+}
+
+const SHORT_PREFIXES: &[(&str, f64)] = &[
+    ("p", 1e-12),
+    ("n", 1e-9),
+    ("u", 1e-6),
+    ("μ", 1e-6),
+    ("m", 1e-3),
+    ("c", 1e-2),
+    ("d", 1e-1),
+    ("k", 1e3),
+    ("M", 1e6),
+    ("G", 1e9),
+    ("T", 1e12),
+];
+
+const LONG_PREFIXES: &[(&str, f64)] = &[
+    ("pico", 1e-12),
+    ("nano", 1e-9),
+    ("micro", 1e-6),
+    ("centi", 1e-2),
+    ("deci", 1e-1),
+    ("kilo", 1e3),
+    ("mega", 1e6),
+    ("giga", 1e9),
+    ("tera", 1e12),
+];
+
+fn is_short_base(base: &str) -> bool {
+    matches!(base, "m" | "g" | "s" | "sec" | "l" | "L" | "W" | "Wh" | "wh")
+}
+
+fn is_long_base(base: &str) -> bool {
+    matches!(base, "meter" | "meters" | "gram" | "grams" | "second" | "seconds" | "liter" | "liters" | "watt" | "watts" | "watt-hour" | "watt-hours")
+}
+
+pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
+    if let Some(info) = get_exact_unit_info(name) {
+        return Some(info);
+    }
+
+    // Try matching long prefixes
+    for &(prefix, multiplier) in LONG_PREFIXES {
+        if name.starts_with(prefix) && name.len() > prefix.len() {
+            let suffix = &name[prefix.len()..];
+            if is_long_base(suffix) {
+                if let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
+                    return Some((dim, Conversion::Linear(base_factor * multiplier)));
+                }
+            }
+        }
+    }
+
+    // Try matching short prefixes
+    for &(prefix, multiplier) in SHORT_PREFIXES {
+        if name.starts_with(prefix) && name.len() > prefix.len() {
+            let suffix = &name[prefix.len()..];
+            if is_short_base(suffix) {
+                if let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
+                    return Some((dim, Conversion::Linear(base_factor * multiplier)));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimension, i32>, String> {
@@ -411,21 +477,21 @@ mod tests {
 
     #[test]
     fn test_length_conversion() {
-        let mut rates = HashMap::new();
-        let val = convert_quantity(5.0, "km", "m", &mut rates).unwrap();
+        let rates = HashMap::new();
+        let val = convert_quantity(5.0, "km", "m", &rates).unwrap();
         assert_eq!(val, 5000.0);
 
-        let val2 = convert_quantity(1.0, "inch", "mm", &mut rates).unwrap();
+        let val2 = convert_quantity(1.0, "inch", "mm", &rates).unwrap();
         assert_eq!(val2, 25.4);
     }
 
     #[test]
     fn test_temperature_conversion() {
-        let mut rates = HashMap::new();
-        let f = convert_quantity(20.0, "C", "F", &mut rates).unwrap();
+        let rates = HashMap::new();
+        let f = convert_quantity(20.0, "C", "F", &rates).unwrap();
         assert_eq!(f, 68.0);
 
-        let c = convert_quantity(100.0, "F", "C", &mut rates).unwrap();
+        let c = convert_quantity(100.0, "F", "C", &rates).unwrap();
         assert_eq!((c * 100.0).round() / 100.0, 37.78);
     }
 
@@ -477,5 +543,36 @@ mod tests {
         // Incompatible compound units should fail
         let err = convert_quantity(1.0, "$/day", "m/s", &rates);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_metric_prefixes() {
+        let rates = HashMap::new();
+        
+        // test nanometers (nm) to millimeters (mm)
+        // 1000000 nm should be 1 mm
+        let val1 = convert_quantity(1000000.0, "nm", "mm", &rates).unwrap();
+        assert!((val1 - 1.0).abs() < 1e-9);
+
+        // test kilometers (km) to meters (m) using long prefix
+        let val2 = convert_quantity(2.5, "kilometers", "meters", &rates).unwrap();
+        assert!((val2 - 2500.0).abs() < 1e-9);
+
+        // test picoseconds (ps) to seconds (second)
+        let val3 = convert_quantity(1e12, "ps", "second", &rates).unwrap();
+        assert!((val3 - 1.0).abs() < 1e-9);
+
+        // test milliwatts (mW) to watts (W)
+        let val4 = convert_quantity(500.0, "mW", "W", &rates).unwrap();
+        assert!((val4 - 0.5).abs() < 1e-9);
+
+        // test gigawatt-hours (GWh) to watt-hours (Wh)
+        let val5 = convert_quantity(1.5, "GWh", "Wh", &rates).unwrap();
+        assert!((val5 - 1.5e9).abs() < 1e-9);
+
+        // test that non-metric unit prefixing fails
+        assert!(get_unit_info("kinches").is_none());
+        assert!(get_unit_info("mhours").is_none());
+        assert!(get_unit_info("kmiles").is_none());
     }
 }

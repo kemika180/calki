@@ -4,6 +4,32 @@ use crate::math::lexer::Token;
 pub struct Quantity {
     pub value: f64,
     pub unit: Option<String>,
+    pub list: Option<Vec<Quantity>>,
+    pub is_bool: bool,
+}
+
+impl Quantity {
+    pub fn scalar(value: f64, unit: Option<String>) -> Self {
+        Self { value, unit, list: None, is_bool: false }
+    }
+
+    pub fn list(elements: Vec<Quantity>) -> Self {
+        Self {
+            value: elements.first().map(|q| q.value).unwrap_or(0.0),
+            unit: elements.first().and_then(|q| q.unit.clone()),
+            list: Some(elements),
+            is_bool: false,
+        }
+    }
+
+    pub fn boolean(value: bool) -> Self {
+        Self {
+            value: if value { 1.0 } else { 0.0 },
+            unit: None,
+            list: None,
+            is_bool: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,6 +41,8 @@ pub enum Expr {
     BinaryOp(Op, Box<Expr>, Box<Expr>),
     FnCall(String, Vec<Expr>),
     Convert(Box<Expr>, String),
+    List(Vec<Expr>),
+    Not(Box<Expr>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,6 +52,14 @@ pub enum Op {
     Mul,
     Div,
     Pow,
+    Less,
+    LessEq,
+    Greater,
+    GreaterEq,
+    Eq,
+    Ne,
+    And,
+    Or,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -189,6 +225,48 @@ impl Parser {
                 let (_, right_bp) = prefix_binding_power(&Token::Plus);
                 self.parse_expression(right_bp)
             }
+            Token::Not | Token::And | Token::Or if self.peek() == Some(&Token::LPar) => {
+                let name = match token {
+                    Token::Not => "not".to_string(),
+                    Token::And => "and".to_string(),
+                    Token::Or => "or".to_string(),
+                    _ => unreachable!(),
+                };
+                self.next_token(); // consume '('
+                let mut args = Vec::new();
+                if self.peek() != Some(&Token::RPar) {
+                    loop {
+                        args.push(self.parse_expression(0)?);
+                        if self.peek() == Some(&Token::Comma) {
+                            self.next_token(); // consume ','
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(Token::RPar, "Expected ')' after function arguments")?;
+                Ok(Expr::FnCall(name, args))
+            }
+            Token::Not => {
+                let (_, right_bp) = prefix_binding_power(&Token::Not);
+                let expr = self.parse_expression(right_bp)?;
+                Ok(Expr::Not(Box::new(expr)))
+            }
+            Token::LBrack => {
+                let mut elements = Vec::new();
+                if self.peek() != Some(&Token::RBrack) {
+                    loop {
+                        elements.push(self.parse_expression(0)?);
+                        if self.peek() == Some(&Token::Comma) {
+                            self.next_token(); // consume ','
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                self.expect(Token::RBrack, "Expected ']' at end of list")?;
+                Ok(Expr::List(elements))
+            }
             _ => Err(format!("Expected expression, found token {:?}", token)),
         }
     }
@@ -214,6 +292,38 @@ impl Parser {
             Token::Caret => {
                 let right = self.parse_expression(right_bp)?;
                 Ok(Expr::BinaryOp(Op::Pow, Box::new(left), Box::new(right)))
+            }
+            Token::Less => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::Less, Box::new(left), Box::new(right)))
+            }
+            Token::LessEq => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::LessEq, Box::new(left), Box::new(right)))
+            }
+            Token::Greater => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::Greater, Box::new(left), Box::new(right)))
+            }
+            Token::GreaterEq => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::GreaterEq, Box::new(left), Box::new(right)))
+            }
+            Token::DoubleEq => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::Eq, Box::new(left), Box::new(right)))
+            }
+            Token::NotEq => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::Ne, Box::new(left), Box::new(right)))
+            }
+            Token::And => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::And, Box::new(left), Box::new(right)))
+            }
+            Token::Or => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::Or, Box::new(left), Box::new(right)))
             }
             Token::In => {
                 // Explicit conversion: [expr] in [unit]
@@ -265,6 +375,7 @@ impl Parser {
 fn prefix_binding_power(op: &Token) -> ((), u8) {
     match op {
         Token::Plus | Token::Minus => ((), 40),
+        Token::Not => ((), 5),
         _ => panic!("Not a prefix operator"),
     }
 }
@@ -278,7 +389,10 @@ fn suffix_binding_power(op: &Token) -> (u8, ()) {
 
 fn infix_binding_power(op: &Token) -> Option<(u8, u8)> {
     match op {
+        Token::Or => Some((1, 2)),
+        Token::And => Some((3, 4)),
         Token::In => Some((5, 6)),
+        Token::Less | Token::LessEq | Token::Greater | Token::GreaterEq | Token::DoubleEq | Token::NotEq => Some((7, 8)),
         Token::Plus | Token::Minus => Some((10, 11)),
         Token::Star | Token::Slash => Some((20, 21)),
         Token::Caret => Some((31, 30)), // Right-associative exponentiation
