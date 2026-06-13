@@ -588,14 +588,21 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 }
 
                 if is_unit {
-                    // Check if it overlaps with any wiki link target range
-                    let overlaps_wiki = wiki_ranges.iter().any(|r| {
-                        (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
+                    // Only highlight unit if we are in a valid math context:
+                    // either the line is a math line, OR the token falls within backticks.
+                    let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                        start >= r.start() && end <= r.end()
                     });
-                    if !overlaps_wiki {
-                        for col in *start..=*end {
-                            if col < n {
-                                line_styles[col] = Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
+                    if in_math_context {
+                        // Check if it overlaps with any wiki link target range
+                        let overlaps_wiki = wiki_ranges.iter().any(|r| {
+                            (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
+                        });
+                        if !overlaps_wiki {
+                            for col in *start..=*end {
+                                if col < n {
+                                    line_styles[col] = Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
+                                }
                             }
                         }
                     }
@@ -2592,6 +2599,8 @@ mod main_tests {
             "// comment with 88 miles".chars().collect::<Vec<char>>(),
             "# Header with 88 miles".chars().collect::<Vec<char>>(),
             "[[miles]] = 10".chars().collect::<Vec<char>>(),
+            "Let's go for 10 miles.".chars().collect::<Vec<char>>(),
+            "We run at `10m/s => 10 m/s`.".chars().collect::<Vec<char>>(),
         ];
 
         let highlights = App::compute_syntax_highlights(&lines, None);
@@ -2647,6 +2656,13 @@ mod main_tests {
 
         // line 9: "[[miles]] = 10" -> "miles" is inside wiki link, should NOT have yellow unit highlight
         assert!(!unit_highlights.iter().any(|h| h.start.row == 9 && h.start.col == 2 && h.end.col == 6));
+
+        // line 10: "Let's go for 10 miles." -> plain text block, "s" and "miles" should NOT be highlighted as units
+        assert!(!unit_highlights.iter().any(|h| h.start.row == 10));
+
+        // line 11: "We run at `10m/s => 10 m/s`." -> "m/s" inside backticks SHOULD be highlighted as unit
+        assert!(unit_highlights.iter().any(|h| h.start.row == 11 && h.start.col == 13 && h.end.col == 15));
+        assert!(unit_highlights.iter().any(|h| h.start.row == 11 && h.start.col == 23 && h.end.col == 25));
     }
 
     #[test]
