@@ -12,6 +12,10 @@ impl WikiManager {
         }
     }
 
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
+
     // Ensures the wiki directory and home.md onboarding file exist
     pub fn init_wiki(&self) -> Result<PathBuf, String> {
         if !self.root_dir.exists() {

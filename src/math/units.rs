@@ -1,4 +1,41 @@
 use std::collections::HashMap;
+use std::cell::RefCell;
+
+thread_local! {
+    pub static CUSTOM_UNIT_PROFILES: RefCell<HashMap<String, HashMap<Dimension, i32>>> = RefCell::new(HashMap::new());
+    pub static CUSTOM_UNIT_FACTORS: RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
+}
+
+pub fn register_custom_unit(name: &str, value: f64, unit_str: &str) -> Result<(), String> {
+    let map = parse_unit(unit_str);
+    let profile = get_dimension_profile(&map)?;
+
+    let mut factor = value;
+    for (u, exp) in &map {
+        let u_factor = get_linear_factor(u, &HashMap::new())?;
+        factor *= u_factor.powi(*exp);
+    }
+
+    CUSTOM_UNIT_PROFILES.with(|profiles| {
+        profiles.borrow_mut().insert(name.to_string(), profile);
+    });
+    CUSTOM_UNIT_FACTORS.with(|factors| {
+        factors.borrow_mut().insert(name.to_string(), factor);
+    });
+
+    Ok(())
+}
+
+pub fn clear_custom_units() {
+    CUSTOM_UNIT_PROFILES.with(|p| p.borrow_mut().clear());
+    CUSTOM_UNIT_FACTORS.with(|f| f.borrow_mut().clear());
+}
+
+pub fn is_custom_unit(name: &str) -> bool {
+    CUSTOM_UNIT_FACTORS.with(|f| {
+        f.borrow().contains_key(name)
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Dimension {
@@ -64,16 +101,16 @@ pub fn get_exact_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
         "hectare" | "hectares" | "ha" => Some((Dimension::Area, Conversion::Linear(10000.0))),
         "acre" | "acres" => Some((Dimension::Area, Conversion::Linear(4046.8564))),
 
-        // Volume (Base: L)
-        "L" | "l" | "liter" | "liters" => Some((Dimension::Volume, Conversion::Linear(1.0))),
-        "mL" | "ml" | "milliliter" | "milliliters" => Some((Dimension::Volume, Conversion::Linear(0.001))),
-        "m^3" | "m3" => Some((Dimension::Volume, Conversion::Linear(1000.0))),
-        "tsp" | "teaspoon" | "teaspoons" => Some((Dimension::Volume, Conversion::Linear(0.00492892159))),
-        "tbsp" | "tablespoon" | "tablespoons" => Some((Dimension::Volume, Conversion::Linear(0.0147867648))),
-        "cup" | "cups" => Some((Dimension::Volume, Conversion::Linear(0.24))),
-        "pint" | "pints" | "pt" => Some((Dimension::Volume, Conversion::Linear(0.473176473))),
-        "quart" | "quarts" | "qt" => Some((Dimension::Volume, Conversion::Linear(0.946352946))),
-        "gallon" | "gallons" | "gal" => Some((Dimension::Volume, Conversion::Linear(3.78541178))),
+        // Volume (Base: m^3)
+        "m^3" | "m3" => Some((Dimension::Volume, Conversion::Linear(1.0))),
+        "L" | "l" | "liter" | "liters" => Some((Dimension::Volume, Conversion::Linear(0.001))),
+        "mL" | "ml" | "milliliter" | "milliliters" => Some((Dimension::Volume, Conversion::Linear(0.000001))),
+        "tsp" | "teaspoon" | "teaspoons" => Some((Dimension::Volume, Conversion::Linear(0.00000492892159))),
+        "tbsp" | "tablespoon" | "tablespoons" => Some((Dimension::Volume, Conversion::Linear(0.0000147867648))),
+        "cup" | "cups" => Some((Dimension::Volume, Conversion::Linear(0.00024))),
+        "pint" | "pints" | "pt" => Some((Dimension::Volume, Conversion::Linear(0.000473176473))),
+        "quart" | "quarts" | "qt" => Some((Dimension::Volume, Conversion::Linear(0.000946352946))),
+        "gallon" | "gallons" | "gal" => Some((Dimension::Volume, Conversion::Linear(0.00378541178))),
 
         // Speed (Base: m/s)
         "m/s" => Some((Dimension::Speed, Conversion::Linear(1.0))),
@@ -97,10 +134,10 @@ pub fn get_exact_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
         "K" | "kelvin" => Some((Dimension::Temperature, Conversion::Temperature(TempUnit::K))),
         "F" | "fahrenheit" => Some((Dimension::Temperature, Conversion::Temperature(TempUnit::F))),
 
-        // Energy (Base: Wh)
-        "Wh" | "watt-hour" | "watt-hours" => Some((Dimension::Energy, Conversion::Linear(1.0))),
-        "kWh" | "kilowatt-hour" => Some((Dimension::Energy, Conversion::Linear(1000.0))),
-        "MWh" | "megawatt-hour" => Some((Dimension::Energy, Conversion::Linear(1000000.0))),
+        // Energy (Base: J)
+        "Wh" | "watt-hour" | "watt-hours" => Some((Dimension::Energy, Conversion::Linear(3600.0))),
+        "kWh" | "kilowatt-hour" => Some((Dimension::Energy, Conversion::Linear(3600000.0))),
+        "MWh" | "megawatt-hour" => Some((Dimension::Energy, Conversion::Linear(3600000000.0))),
 
         // Power (Base: W)
         "W" | "watt" | "watts" => Some((Dimension::Power, Conversion::Linear(1.0))),
@@ -149,6 +186,20 @@ fn is_long_base(base: &str) -> bool {
 }
 
 pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
+    let custom_opt = CUSTOM_UNIT_PROFILES.with(|profiles| {
+        profiles.borrow().get(name).cloned()
+    });
+    if let Some(profile) = custom_opt
+        && profile.len() == 1 {
+            let (&dim, &exp) = profile.iter().next().unwrap();
+            if exp == 1 {
+                let factor = CUSTOM_UNIT_FACTORS.with(|factors| {
+                    factors.borrow().get(name).cloned().unwrap_or(1.0)
+                });
+                return Some((dim, Conversion::Linear(factor)));
+            }
+        }
+
     if let Some(info) = get_exact_unit_info(name) {
         return Some(info);
     }
@@ -157,11 +208,10 @@ pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
     for &(prefix, multiplier) in LONG_PREFIXES {
         if name.starts_with(prefix) && name.len() > prefix.len() {
             let suffix = &name[prefix.len()..];
-            if is_long_base(suffix) {
-                if let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
+            if is_long_base(suffix)
+                && let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
                     return Some((dim, Conversion::Linear(base_factor * multiplier)));
                 }
-            }
         }
     }
 
@@ -169,27 +219,54 @@ pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
     for &(prefix, multiplier) in SHORT_PREFIXES {
         if name.starts_with(prefix) && name.len() > prefix.len() {
             let suffix = &name[prefix.len()..];
-            if is_short_base(suffix) {
-                if let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
+            if is_short_base(suffix)
+                && let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
                     return Some((dim, Conversion::Linear(base_factor * multiplier)));
                 }
-            }
         }
     }
 
     None
 }
 
-fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimension, i32>, String> {
+pub fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimension, i32>, String> {
     let mut profile = HashMap::new();
     for (unit, exp) in map {
-        let (dim, _) = get_unit_info(unit)
-            .ok_or_else(|| format!("Unknown unit '{}'", unit))?;
-        if dim == Dimension::Speed {
-            *profile.entry(Dimension::Length).or_insert(0) += exp;
-            *profile.entry(Dimension::Time).or_insert(0) -= exp;
+        let custom_opt = CUSTOM_UNIT_PROFILES.with(|profiles| {
+            profiles.borrow().get(unit).cloned()
+        });
+        if let Some(custom_profile) = custom_opt {
+            for (dim, d_exp) in custom_profile {
+                *profile.entry(dim).or_insert(0) += d_exp * exp;
+            }
         } else {
-            *profile.entry(dim).or_insert(0) += exp;
+            let (dim, _) = get_unit_info(unit)
+                .ok_or_else(|| format!("Unknown unit '{}'", unit))?;
+            match dim {
+                Dimension::Area => {
+                    *profile.entry(Dimension::Length).or_insert(0) += 2 * exp;
+                }
+                Dimension::Volume => {
+                    *profile.entry(Dimension::Length).or_insert(0) += 3 * exp;
+                }
+                Dimension::Speed => {
+                    *profile.entry(Dimension::Length).or_insert(0) += exp;
+                    *profile.entry(Dimension::Time).or_insert(0) -= exp;
+                }
+                Dimension::Energy => {
+                    *profile.entry(Dimension::Mass).or_insert(0) += exp;
+                    *profile.entry(Dimension::Length).or_insert(0) += 2 * exp;
+                    *profile.entry(Dimension::Time).or_insert(0) -= 2 * exp;
+                }
+                Dimension::Power => {
+                    *profile.entry(Dimension::Mass).or_insert(0) += exp;
+                    *profile.entry(Dimension::Length).or_insert(0) += 2 * exp;
+                    *profile.entry(Dimension::Time).or_insert(0) -= 3 * exp;
+                }
+                _ => {
+                    *profile.entry(dim).or_insert(0) += exp;
+                }
+            }
         }
     }
     profile.retain(|_, &mut v| v != 0);
@@ -197,6 +274,13 @@ fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimension
 }
 
 fn get_linear_factor(unit: &str, rates: &HashMap<String, f64>) -> Result<f64, String> {
+    let custom_factor = CUSTOM_UNIT_FACTORS.with(|factors| {
+        factors.borrow().get(unit).cloned()
+    });
+    if let Some(factor) = custom_factor {
+        return Ok(factor);
+    }
+
     let (dim, conv) = get_unit_info(unit)
         .ok_or_else(|| format!("Unknown unit '{}'", unit))?;
     match dim {
@@ -282,16 +366,48 @@ pub fn convert_quantity(
     Ok(val * from_factor / to_factor)
 }
 
+fn parse_unit_term(term: &str) -> (String, i32) {
+    let term = term.trim();
+    if term.is_empty() {
+        return ("".to_string(), 0);
+    }
+    if let Some(pos) = term.find('^') {
+        let name = term[..pos].trim().to_string();
+        let exp_str = term[pos + 1..].trim();
+        let exp = exp_str.parse::<i32>().unwrap_or(1);
+        (name, exp)
+    } else {
+        let mut name_end = term.len();
+        let chars: Vec<char> = term.chars().collect();
+        while name_end > 0 && (chars[name_end - 1].is_ascii_digit() || chars[name_end - 1] == '-') {
+            name_end -= 1;
+        }
+        if name_end > 0 && name_end < term.len() {
+            let name = term[..name_end].trim().to_string();
+            let exp_str = &term[name_end..];
+            if let Ok(exp) = exp_str.parse::<i32>() {
+                (name, exp)
+            } else {
+                (term.to_string(), 1)
+            }
+        } else {
+            (term.to_string(), 1)
+        }
+    }
+}
+
 // Helper: check if two units have the same dimension
 pub fn are_compatible(unit1: &str, unit2: &str) -> bool {
-    if let (Some((dim1, _)), Some((dim2, _))) = (get_unit_info(unit1), get_unit_info(unit2)) {
-        dim1 == dim2
+    let map1 = parse_unit(unit1);
+    let map2 = parse_unit(unit2);
+    if let (Ok(p1), Ok(p2)) = (get_dimension_profile(&map1), get_dimension_profile(&map2)) {
+        p1 == p2
     } else {
         false
     }
 }
 
-fn parse_unit(s: &str) -> HashMap<String, i32> {
+pub fn parse_unit(s: &str) -> HashMap<String, i32> {
     let mut exponents: HashMap<String, i32> = HashMap::new();
     if s.is_empty() {
         return exponents;
@@ -306,18 +422,14 @@ fn parse_unit(s: &str) -> HashMap<String, i32> {
         let c = chars[i];
         if c == '/' || c == '*' {
             if !current_token.trim().is_empty() {
-                let unit_name = current_token.trim().to_string();
-                if unit_name != "1" {
-                    let exp = if current_is_denom { -1 } else { 1 };
-                    *exponents.entry(unit_name).or_insert(0) += exp;
+                let (unit_name, term_exp) = parse_unit_term(&current_token);
+                if !unit_name.is_empty() && unit_name != "1" {
+                    let total_exp = if current_is_denom { -term_exp } else { term_exp };
+                    *exponents.entry(unit_name).or_insert(0) += total_exp;
                 }
                 current_token.clear();
             }
-            if c == '/' {
-                current_is_denom = true;
-            } else {
-                current_is_denom = false;
-            }
+            current_is_denom = c == '/';
         } else {
             current_token.push(c);
         }
@@ -325,17 +437,18 @@ fn parse_unit(s: &str) -> HashMap<String, i32> {
     }
     
     if !current_token.trim().is_empty() {
-        let unit_name = current_token.trim().to_string();
-        if unit_name != "1" {
-            let exp = if current_is_denom { -1 } else { 1 };
-            *exponents.entry(unit_name).or_insert(0) += exp;
+        let (unit_name, term_exp) = parse_unit_term(&current_token);
+        if !unit_name.is_empty() && unit_name != "1" {
+            let total_exp = if current_is_denom { -term_exp } else { term_exp };
+            *exponents.entry(unit_name).or_insert(0) += total_exp;
         }
     }
     
+    exponents.retain(|_, &mut exp| exp != 0);
     exponents
 }
 
-fn format_unit_map(exponents: &HashMap<String, i32>) -> Option<String> {
+pub fn format_unit_map(exponents: &HashMap<String, i32>) -> Option<String> {
     let mut numerators = Vec::new();
     let mut denominators = Vec::new();
 
@@ -590,5 +703,41 @@ mod tests {
         assert!(get_unit_info("kinches").is_none());
         assert!(get_unit_info("mhours").is_none());
         assert!(get_unit_info("kmiles").is_none());
+    }
+
+    #[test]
+    fn test_complex_custom_units() {
+        let rates = HashMap::new();
+
+        // 1. Verify parsing of complex units
+        let map_asterisk = parse_unit("kg*m^2*s^-2");
+        let mut expected = HashMap::new();
+        expected.insert("kg".to_string(), 1);
+        expected.insert("m".to_string(), 2);
+        expected.insert("s".to_string(), -2);
+        assert_eq!(map_asterisk, expected);
+
+        let map_slash = parse_unit("kg*m^2/s^2");
+        assert_eq!(map_slash, expected);
+
+        // 2. Verify formatting of complex units
+        assert_eq!(format_unit_map(&map_asterisk), Some("kg*m^2/s^2".to_string()));
+
+        // 3. Verify registration of custom complex unit J
+        register_custom_unit("J", 1.0, "kg*m^2*s^-2").unwrap();
+
+        // 4. Verify compatibility
+        assert!(are_compatible("J", "kg*m^2/s^2"));
+        assert!(are_compatible("J", "kg*m^2*s^-2"));
+
+        // 5. Verify conversion
+        let val1 = convert_quantity(5.0, "kg*m^2/s^2", "J", &rates).unwrap();
+        assert_eq!(val1, 5.0);
+
+        let val2 = convert_quantity(3600.0, "J", "Wh", &rates).unwrap();
+        assert!((val2 - 1.0).abs() < 1e-9);
+
+        let val3 = convert_quantity(1.0, "Wh", "J", &rates).unwrap();
+        assert_eq!(val3, 3600.0);
     }
 }

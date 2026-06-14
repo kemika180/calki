@@ -43,6 +43,7 @@ pub enum Expr {
     Convert(Box<Expr>, String),
     List(Vec<Expr>),
     Not(Box<Expr>),
+    BitNot(Box<Expr>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,6 +62,10 @@ pub enum Op {
     Ne,
     And,
     Or,
+    BitAnd,
+    BitOr,
+    LShift,
+    RShift,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -272,6 +277,10 @@ impl Parser {
                 let expr = self.parse_expression(right_bp)?;
                 Ok(Expr::Not(Box::new(expr)))
             }
+            Token::Tilde => {
+                let expr = self.parse_expression(40)?;
+                Ok(Expr::BitNot(Box::new(expr)))
+            }
             Token::LBrack => {
                 let mut elements = Vec::new();
                 if self.peek() != Some(&Token::RBrack) {
@@ -349,6 +358,22 @@ impl Parser {
                 let right = self.parse_expression(right_bp)?;
                 Ok(Expr::BinaryOp(Op::Or, Box::new(left), Box::new(right)))
             }
+            Token::Ampersand => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::BitAnd, Box::new(left), Box::new(right)))
+            }
+            Token::Pipe => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::BitOr, Box::new(left), Box::new(right)))
+            }
+            Token::LShift => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::LShift, Box::new(left), Box::new(right)))
+            }
+            Token::RShift => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::RShift, Box::new(left), Box::new(right)))
+            }
             Token::In => {
                 // Explicit conversion: [expr] in [unit]
                 // We consume all subsequent tokens that are valid in a unit expression:
@@ -415,11 +440,14 @@ fn infix_binding_power(op: &Token) -> Option<(u8, u8)> {
     match op {
         Token::Or => Some((1, 2)),
         Token::And => Some((3, 4)),
-        Token::In => Some((5, 6)),
-        Token::Less | Token::LessEq | Token::Greater | Token::GreaterEq | Token::DoubleEq | Token::NotEq => Some((7, 8)),
-        Token::Plus | Token::Minus => Some((10, 11)),
-        Token::Star | Token::Slash | Token::Percentage => Some((20, 21)),
+        Token::Pipe => Some((5, 6)),
+        Token::Ampersand => Some((7, 8)),
+        Token::Less | Token::LessEq | Token::Greater | Token::GreaterEq | Token::DoubleEq | Token::NotEq => Some((9, 10)),
+        Token::LShift | Token::RShift => Some((11, 12)),
+        Token::Plus | Token::Minus => Some((13, 14)),
+        Token::Star | Token::Slash | Token::Percentage => Some((15, 16)),
         Token::Caret => Some((31, 30)), // Right-associative exponentiation
+        Token::In => Some((5, 6)),
         _ => None,
     }
 }
@@ -442,8 +470,8 @@ pub fn parse_line(line_text: &str) -> Line {
             let right_part = trimmed[eq_pos + 1..].trim();
 
             // Check if left_part is a function signature: name(args)
-            if left_part.contains('(') && left_part.ends_with(')') {
-                if let Some(lpar_pos) = left_part.find('(') {
+            if left_part.contains('(') && left_part.ends_with(')')
+                && let Some(lpar_pos) = left_part.find('(') {
                     let fn_name = left_part[..lpar_pos].trim();
                     let args_str = &left_part[lpar_pos + 1..left_part.len() - 1];
                     let args: Vec<String> = args_str
@@ -468,7 +496,6 @@ pub fn parse_line(line_text: &str) -> Line {
                         }
                     }
                 }
-            }
 
             // Otherwise, check if left_part is a single variable name
             if !left_part.is_empty() && left_part.chars().all(|c| c.is_alphanumeric() || c == '_') {

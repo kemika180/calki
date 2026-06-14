@@ -46,7 +46,7 @@ impl SystemClipboard {
 
 fn encode_base64(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
     let mut i = 0;
     while i < input.len() {
         let chunk = &input[i..std::cmp::min(i + 3, input.len())];
@@ -107,12 +107,11 @@ impl ClipboardTrait for SystemClipboard {
 
     fn get_text(&mut self) -> String {
         // 1. Try local arboard system clipboard
-        if let Some(ref mut clip) = self.arboard_clip {
-            if let Ok(txt) = clip.get_text() {
+        if let Some(ref mut clip) = self.arboard_clip
+            && let Ok(txt) = clip.get_text() {
                 self.internal = txt;
                 return self.internal.clone();
             }
-        }
         // Fall back to internal clipboard
         self.internal.clone()
     }
@@ -163,13 +162,11 @@ impl AppConfig {
     fn load() -> Self {
         if let Some(mut path) = crate::currency::get_config_path() {
             path.push("config.json");
-            if path.exists() {
-                if let Ok(content) = fs::read_to_string(path) {
-                    if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+            if path.exists()
+                && let Ok(content) = fs::read_to_string(path)
+                    && let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
                         return config;
                     }
-                }
-            }
         }
         AppConfig::default()
     }
@@ -212,9 +209,8 @@ struct App {
     selected_link_idx: usize, // Selected link in Wiki Map panel
     selected_var_idx: usize,  // Selected variable in Variables panel
     show_help: bool,          // Whether to display the help modal
-    show_function_guide: bool, // Whether to display the function guide modal
-    help_scroll: u16,
-    function_guide_scroll: u16,
+    help_tab_idx: usize,      // Active tab in help modal
+    help_scroll: u16,         // Scroll offset in help modal
     show_delete_confirm: bool, // Whether to display the delete confirmation modal
     delete_target_name: String, // Name of page to delete
     delete_target_path: Option<PathBuf>, // Path of page to delete
@@ -228,6 +224,15 @@ struct App {
     right_area: Rect,
     replace_next_char: bool,
     config: AppConfig,
+
+    // Global Wiki Search
+    search_query: String,
+    search_active: bool,
+    search_results: Vec<String>,
+    show_search_results: bool,
+
+    // Status Message / Toast
+    status_message: Option<(String, std::time::Instant)>,
 }
 
 impl App {
@@ -310,9 +315,8 @@ impl App {
             selected_link_idx: 0,
             selected_var_idx: 0,
             show_help: false,
-            show_function_guide: false,
+            help_tab_idx: 0,
             help_scroll: 0,
-            function_guide_scroll: 0,
             show_delete_confirm: false,
             delete_target_name: String::new(),
             delete_target_path: None,
@@ -322,6 +326,11 @@ impl App {
             right_area: Rect::default(),
             replace_next_char: false,
             config,
+            search_query: String::new(),
+            search_active: false,
+            search_results: Vec::new(),
+            show_search_results: false,
+            status_message: None,
         };
 
         if let Some(ref s) = session {
@@ -395,6 +404,38 @@ impl App {
 
 fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&str>) -> Vec<edtui::Highlight> {
     let mut highlights = Vec::new();
+
+    let mut defined_vars = std::collections::HashSet::new();
+    for line in lines_vecs {
+        let line_str: String = line.iter().collect();
+        let trimmed = line_str.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.trim_start().starts_with('>') {
+            continue;
+        }
+        if let Some(eq_pos) = trimmed.find('=') {
+            let is_arrow = eq_pos + 1 < trimmed.len() && trimmed.as_bytes()[eq_pos + 1] == b'>';
+            if !is_arrow {
+                let left_part = trimmed[..eq_pos].trim();
+                if left_part.contains('(') && left_part.ends_with(')') {
+                    if let Some(lpar_pos) = left_part.find('(') {
+                        let fn_name = left_part[..lpar_pos].trim();
+                        let args_str = &left_part[lpar_pos + 1..left_part.len() - 1];
+                        if !fn_name.is_empty() && fn_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            defined_vars.insert(fn_name.to_string());
+                            for arg in args_str.split(',') {
+                                let arg_trimmed = arg.trim();
+                                if !arg_trimmed.is_empty() && arg_trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                                    defined_vars.insert(arg_trimmed.to_string());
+                                }
+                            }
+                        }
+                    }
+                } else if !left_part.is_empty() && left_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    defined_vars.insert(left_part.to_string());
+                }
+            }
+        }
+    }
 
     for (row_idx, line) in lines_vecs.iter().enumerate() {
         let line_str: String = line.iter().collect();
@@ -613,9 +654,19 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 let mut is_unit = false;
                 if is_registered_unit(name) {
                     is_unit = true;
-                } else if i > 0 {
-                    if let HighlightToken::Number { .. } = tokens[i - 1] {
+                } else if i > 0
+                    && let HighlightToken::Number { .. } = tokens[i - 1] {
                         is_unit = true;
+                    }
+
+                if is_unit && defined_vars.contains(name) {
+                    let preceded_by_number = if i > 0 {
+                        matches!(tokens[i - 1], HighlightToken::Number { .. })
+                    } else {
+                        false
+                    };
+                    if !preceded_by_number {
+                        is_unit = false;
                     }
                 }
 
@@ -629,6 +680,36 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                         // Check if it overlaps with any wiki link target range
                         let overlaps_wiki = wiki_ranges.iter().any(|r| {
                             (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
+                        });
+                        if !overlaps_wiki {
+                            for col in *start..=*end {
+                                if col < n {
+                                    line_styles[col] = Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let HighlightToken::Symbol { start, end, ch: '%' } = &tokens[i] {
+                let mut is_infix = false;
+                if i + 1 < tokens.len() {
+                    match &tokens[i + 1] {
+                        HighlightToken::Number { .. } |
+                        HighlightToken::Identifier { .. } |
+                        HighlightToken::Symbol { ch: '(', .. } |
+                        HighlightToken::Symbol { ch: '[', .. } => {
+                            is_infix = true;
+                        }
+                        _ => {}
+                    }
+                }
+                if !is_infix {
+                    let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                        *start >= *r.start() && *end <= *r.end()
+                    });
+                    if in_math_context {
+                        let overlaps_wiki = wiki_ranges.iter().any(|r| {
+                            (*start >= *r.start() && *start <= *r.end()) || (*end >= *r.start() && *end <= *r.end())
                         });
                         if !overlaps_wiki {
                             for col in *start..=*end {
@@ -829,8 +910,8 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         }
 
         // I. Selected Variable Highlight
-        if let Some(sv) = selected_var {
-            if !sv.is_empty() {
+        if let Some(sv) = selected_var
+            && !sv.is_empty() {
                 let sv_chars: Vec<char> = sv.chars().collect();
                 let sv_len = sv_chars.len();
                 let is_ident_char = |c: char| -> bool {
@@ -864,7 +945,6 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                     }
                 }
             }
-        }
 
         // Convert the style array to edtui::Highlight ranges
         let mut start_col = None;
@@ -1055,7 +1135,156 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         for link in &self.outgoing {
             links.push(link.clone());
         }
+        if self.show_search_results {
+            for link in &self.search_results {
+                links.push(link.clone());
+            }
+        }
         links
+    }
+
+    fn set_status_message<S: Into<String>>(&mut self, msg: S) {
+        self.status_message = Some((msg.into(), std::time::Instant::now()));
+    }
+
+    fn perform_wiki_search(&mut self) {
+        let query = self.search_query.trim().to_lowercase();
+        self.search_results.clear();
+        if query.is_empty() {
+            self.show_search_results = false;
+            return;
+        }
+
+        self.show_search_results = true;
+        let entries = match fs::read_dir(self.wiki_mgr.root_dir()) {
+            Ok(iter) => iter,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md")
+                && let Ok(content) = fs::read_to_string(&path)
+                    && content.to_lowercase().contains(&query) {
+                        let title = self.wiki_mgr.path_to_title(&path);
+                        self.search_results.push(title);
+                    }
+        }
+        self.selected_link_idx = 0;
+    }
+
+    fn get_left_panel_row_map(&self) -> HashMap<usize, usize> {
+        let mut row_map = HashMap::new();
+        let mut current_row = 1;
+
+        let mut current_link_idx = 0;
+        for _ in &self.backlinks {
+            row_map.insert(current_row, current_link_idx);
+            current_row += 1;
+            current_link_idx += 1;
+        }
+        if self.backlinks.is_empty() {
+            current_row += 1;
+        }
+
+        current_row += 2; // spacer + header
+
+        for _ in &self.outgoing {
+            row_map.insert(current_row, current_link_idx);
+            current_row += 1;
+            current_link_idx += 1;
+        }
+        if self.outgoing.is_empty() {
+            current_row += 1;
+        }
+
+        if self.show_search_results {
+            current_row += 2; // spacer + header
+            for _ in &self.search_results {
+                row_map.insert(current_row, current_link_idx);
+                current_row += 1;
+                current_link_idx += 1;
+            }
+            if self.search_results.is_empty() {
+                // no-op
+            }
+        }
+        row_map
+    }
+
+    fn export_current_note_to_html(&self) -> Result<PathBuf, String> {
+        let export_dir = self.wiki_mgr.root_dir().join("export");
+        if !export_dir.exists() {
+            fs::create_dir_all(&export_dir)
+                .map_err(|e| format!("Failed to create export directory: {}", e))?;
+        }
+
+        let current_text = self.get_editor_text();
+        let (evaluated, _) = evaluate_sheet(&current_text, &self.exchange_rates);
+        let title = self.wiki_mgr.path_to_title(&self.active_path);
+
+        let html_content = markdown_to_html(&evaluated, &title);
+
+        let stem = self.active_path.file_stem().and_then(|s| s.to_str()).unwrap_or("note");
+        let output_path = export_dir.join(format!("{}.html", stem));
+
+        fs::write(&output_path, html_content)
+            .map_err(|e| format!("Failed to write HTML file: {}", e))?;
+
+        Ok(output_path)
+    }
+
+    fn compile_wiki_to_markdown(&self) -> Result<PathBuf, String> {
+        let export_dir = self.wiki_mgr.root_dir().join("export");
+        if !export_dir.exists() {
+            fs::create_dir_all(&export_dir)
+                .map_err(|e| format!("Failed to create export directory: {}", e))?;
+        }
+
+        let entries = fs::read_dir(self.wiki_mgr.root_dir())
+            .map_err(|e| format!("Failed to read wiki directory: {}", e))?;
+
+        let mut paths = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                if path.parent() == Some(&export_dir) {
+                    continue;
+                }
+                paths.push(path);
+            }
+        }
+
+        paths.sort_by(|a, b| {
+            let a_name = a.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let b_name = b.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if a_name == "home.md" {
+                std::cmp::Ordering::Less
+            } else if b_name == "home.md" {
+                std::cmp::Ordering::Greater
+            } else {
+                a_name.cmp(b_name)
+            }
+        });
+
+        let mut compiled = String::new();
+        compiled.push_str("# calki Compiled Wiki 🧮 📝\n\n");
+        compiled.push_str("compiled from all notes in the wiki.\n\n---\n\n");
+
+        for path in paths {
+            let content = fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+            let (evaluated, _) = evaluate_sheet(&content, &self.exchange_rates);
+            compiled.push_str(&evaluated);
+            compiled.push_str("\n\n---\n\n");
+        }
+
+        let output_path = export_dir.join("wiki_compiled.md");
+        fs::write(&output_path, compiled)
+            .map_err(|e| format!("Failed to write compiled markdown: {}", e))?;
+
+        Ok(output_path)
     }
 }
 
@@ -1285,34 +1514,16 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
             KeyCode::PageDown => {
                 app.help_scroll = app.help_scroll.saturating_add(10);
             }
+            KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
+                app.help_tab_idx = if app.help_tab_idx == 0 { 4 } else { app.help_tab_idx - 1 };
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
+                app.help_tab_idx = (app.help_tab_idx + 1) % 5;
+                app.help_scroll = 0;
+            }
             _ => {
                 app.show_help = false;
-            }
-        }
-        return true;
-    }
-    if app.show_function_guide {
-        match key.code {
-            KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => {
-                app.function_guide_scroll = app.function_guide_scroll.saturating_sub(1);
-            }
-            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => {
-                app.function_guide_scroll = app.function_guide_scroll.saturating_add(1);
-            }
-            KeyCode::Char('y') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                app.function_guide_scroll = app.function_guide_scroll.saturating_sub(1);
-            }
-            KeyCode::Char('e') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                app.function_guide_scroll = app.function_guide_scroll.saturating_add(1);
-            }
-            KeyCode::PageUp => {
-                app.function_guide_scroll = app.function_guide_scroll.saturating_sub(10);
-            }
-            KeyCode::PageDown => {
-                app.function_guide_scroll = app.function_guide_scroll.saturating_add(10);
-            }
-            _ => {
-                app.show_function_guide = false;
             }
         }
         return true;
@@ -1348,6 +1559,29 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                 // Global exits: Ctrl-q works anywhere, regardless of mode/panel
                 if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break;
+                }
+
+                if app.search_active {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.search_active = false;
+                            app.show_search_results = false;
+                            app.search_results.clear();
+                        }
+                        KeyCode::Enter => {
+                            app.search_active = false;
+                            app.perform_wiki_search();
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                        }
+                        _ => {}
+                    }
+                    app.update_highlights();
+                    continue;
                 }
 
                 // If delete confirmation is open
@@ -1406,8 +1640,8 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         let row = app.editor_state.cursor.row;
                         let col = app.editor_state.cursor.col;
                         let mut vecs = app.editor_state.lines.clone().into_vecs();
-                        if let Some(line) = vecs.get_mut(row) {
-                            if col < line.len() {
+                        if let Some(line) = vecs.get_mut(row)
+                            && col < line.len() {
                                 line[col] = c;
                                 let new_text: String = vecs.iter()
                                     .map(|l| l.iter().collect::<String>())
@@ -1417,7 +1651,6 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                                 app.re_evaluate_calculations();
                                 let _ = app.save_current_note();
                             }
-                        }
                     }
                     app.update_highlights();
                     continue;
@@ -1436,17 +1669,45 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     continue;
                 }
                 if key.code == KeyCode::F(1) {
-                    app.show_function_guide = !app.show_function_guide;
-                    if app.show_function_guide {
-                        app.function_guide_scroll = 0;
+                    app.show_help = !app.show_help;
+                    if app.show_help {
+                        app.help_tab_idx = 0;
+                        app.help_scroll = 0;
                     }
                     continue;
                 }
-                if key.code == KeyCode::Char('~') && !is_insert_mode {
-                    app.show_help = !app.show_help;
-                    if app.show_help {
-                        app.help_scroll = 0;
+                // Global search toggle '/'
+                if key.code == KeyCode::Char('/') && !is_insert_mode && !app.search_active {
+                    app.search_active = true;
+                    app.search_query.clear();
+                    app.show_search_results = false;
+                    continue;
+                }
+                // Ctrl-s: Export current note as HTML
+                if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match app.export_current_note_to_html() {
+                        Ok(path) => {
+                            let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("note.html");
+                            app.set_status_message(format!("Exported {} to {}", filename, path.to_string_lossy()));
+                        }
+                        Err(e) => {
+                            app.set_status_message(format!("Export failed: {}", e));
+                        }
                     }
+                    app.update_highlights();
+                    continue;
+                }
+                // Ctrl-w: Compile entire wiki to Markdown
+                if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match app.compile_wiki_to_markdown() {
+                        Ok(path) => {
+                            app.set_status_message(format!("Compiled wiki to {}", path.to_string_lossy()));
+                        }
+                        Err(e) => {
+                            app.set_status_message(format!("Compile failed: {}", e));
+                        }
+                    }
+                    app.update_highlights();
                     continue;
                 }
                 // Global panel toggles
@@ -1520,20 +1781,17 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         }
 
                         // Intercept Enter key in Normal Mode
-                        if key.code == KeyCode::Enter && prev_mode == EditorMode::Normal {
-                            if app.follow_link_under_cursor() {
+                        if key.code == KeyCode::Enter && prev_mode == EditorMode::Normal
+                            && app.follow_link_under_cursor() {
                                 continue;
                             }
-                        }
 
                         // Intercept Backspace or Ctrl-o in Normal Mode to go back
                         if (key.code == KeyCode::Backspace || (key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL)))
-                            && prev_mode == EditorMode::Normal 
-                        {
-                            if app.go_back() {
+                            && prev_mode == EditorMode::Normal
+                            && app.go_back() {
                                 continue;
                             }
-                        }
 
                         // Intercept Ctrl-d in Normal Mode to delete current page
                         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -1580,16 +1838,14 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         let links = app.get_wiki_map_selectable_links();
                         if !links.is_empty() {
                             match key.code {
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    if app.selected_link_idx > 0 {
+                                KeyCode::Up | KeyCode::Char('k')
+                                    if app.selected_link_idx > 0 => {
                                         app.selected_link_idx -= 1;
                                     }
-                                }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    if app.selected_link_idx < links.len() - 1 {
+                                KeyCode::Down | KeyCode::Char('j')
+                                    if app.selected_link_idx < links.len() - 1 => {
                                         app.selected_link_idx += 1;
                                     }
-                                }
                                 KeyCode::Enter => {
                                     let target_name = &links[app.selected_link_idx];
                                     let target_path = app.wiki_mgr.link_to_path(target_name);
@@ -1621,30 +1877,26 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     FocusedPanel::Variables => {
                         let vars_len = app.variables_cache.len();
                         match key.code {
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                if vars_len > 0 && app.selected_var_idx > 0 {
+                            KeyCode::Up | KeyCode::Char('k')
+                                if vars_len > 0 && app.selected_var_idx > 0 => {
                                     app.selected_var_idx -= 1;
                                 }
-                            }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                if vars_len > 0 && app.selected_var_idx < vars_len - 1 {
+                            KeyCode::Down | KeyCode::Char('j')
+                                if vars_len > 0 && app.selected_var_idx < vars_len - 1 => {
                                     app.selected_var_idx += 1;
                                 }
-                            }
-                            KeyCode::Char('y') => {
-                                if vars_len > 0 && app.selected_var_idx < vars_len {
+                            KeyCode::Char('y')
+                                if vars_len > 0 && app.selected_var_idx < vars_len => {
                                     let (_, ref val) = app.variables_cache[app.selected_var_idx];
                                     let mut clip = SystemClipboard::new();
                                     clip.set_text(val.clone());
                                 }
-                            }
-                            KeyCode::Enter | KeyCode::Char('i') => {
-                                if vars_len > 0 && app.selected_var_idx < vars_len {
+                            KeyCode::Enter | KeyCode::Char('i')
+                                if vars_len > 0 && app.selected_var_idx < vars_len => {
                                     let name = app.variables_cache[app.selected_var_idx].0.clone();
                                     app.insert_text_at_cursor(&name);
                                     app.focused_panel = FocusedPanel::Editor;
                                 }
-                            }
                             KeyCode::Esc => {
                                 app.focused_panel = FocusedPanel::Editor;
                             }
@@ -1660,8 +1912,6 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
             Event::Mouse(mouse) => {
                     if app.show_help {
                         app.show_help = false;
-                    } else if app.show_function_guide {
-                        app.show_function_guide = false;
                     } else {
                         let col = mouse.column;
                         let row = mouse.row;
@@ -1676,19 +1926,9 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             app.focused_panel = FocusedPanel::WikiMap;
                             if mouse.kind == event::MouseEventKind::Down(event::MouseButton::Left) {
                                 let click_row = row as i32 - app.left_area.y as i32 - 1;
-                                if click_row > 0 {
-                                    let backlinks_len = app.backlinks.len();
-                                    let mut selected = None;
-                                    if (click_row as usize) <= backlinks_len {
-                                        selected = Some((click_row - 1) as usize);
-                                    } else {
-                                        let outgoing_start_row = backlinks_len + 2;
-                                        let click_idx = (click_row as usize).saturating_sub(outgoing_start_row);
-                                        if click_idx < app.outgoing.len() {
-                                            selected = Some(backlinks_len + click_idx);
-                                        }
-                                    }
-                                    if let Some(idx) = selected {
+                                if click_row >= 0 {
+                                    let row_map = app.get_left_panel_row_map();
+                                    if let Some(&idx) = row_map.get(&(click_row as usize)) {
                                         app.selected_link_idx = idx;
                                         let links = app.get_wiki_map_selectable_links();
                                         if idx < links.len() {
@@ -1758,7 +1998,22 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-    let workspace_area = f.area();
+    let show_bottom_bar = app.search_active || if let Some((_, inst)) = &app.status_message {
+        inst.elapsed() < std::time::Duration::from_secs(5)
+    } else {
+        false
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![
+            Constraint::Min(1),
+            if show_bottom_bar { Constraint::Length(1) } else { Constraint::Length(0) },
+        ])
+        .split(f.area());
+
+    let workspace_area = chunks[0];
+    let status_area = chunks[1];
 
     // 2. Compute dynamic horizontal panel layouts
     let left_constraint = if app.left_panel_open { Constraint::Length(22) } else { Constraint::Length(0) };
@@ -1838,6 +2093,25 @@ fn ui(f: &mut Frame, app: &mut App) {
             list_items.push(ListItem::new("  (none)").fg(border_dim_color).italic());
         }
 
+        if app.show_search_results {
+            list_items.push(ListItem::new("")); // Spacer
+            list_items.push(ListItem::new("🔍 Search Results").bold().fg(Color::Rgb(255, 158, 100))); // Orange
+            for link in &app.search_results {
+                let is_selected = is_focused && current_link_idx == app.selected_link_idx;
+                let style = if is_selected {
+                    Style::default().bg(Color::Rgb(59, 66, 97)).fg(Color::Rgb(125, 207, 255)).bold()
+                } else {
+                    Style::default().fg(text_fg_color)
+                };
+                let prefix = if is_selected { " ▶ " } else { " - " };
+                list_items.push(ListItem::new(format!("{}{}", prefix, link)).style(style));
+                current_link_idx += 1;
+            }
+            if app.search_results.is_empty() {
+                list_items.push(ListItem::new("  (no matches)").fg(border_dim_color).italic());
+            }
+        }
+
         let list = List::new(list_items).block(block);
         f.render_widget(list, left_area);
     }
@@ -1913,11 +2187,10 @@ fn ui(f: &mut Frame, app: &mut App) {
             .theme(editor_theme)
             .wrap(true);
         f.render_widget(editor_widget, inner_editor_area);
-        if is_focused {
-            if let Some(pos) = app.editor_state.cursor_screen_position() {
+        if is_focused
+            && let Some(pos) = app.editor_state.cursor_screen_position() {
                 f.set_cursor_position(pos);
             }
-        }
     }
 
     // RENDER 3: Right Panel (Variables Inspector)
@@ -1976,84 +2249,330 @@ fn ui(f: &mut Frame, app: &mut App) {
         f.render_widget(list, right_area);
     }
 
-    // Help popup modal (opened via ~)
+    // Unified Help popup modal with tabs (opened via F1, ?, ~)
     if app.show_help {
-        let area = centered_rect(70, 75, f.area());
+        let area = centered_rect(85, 80, f.area());
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .border_style(Style::default().fg(Color::Rgb(255, 158, 100))) // Orange border
-            .bg(Color::Rgb(22, 22, 30)) // Darker bg for popups
-            .title(Span::styled(" Keyboard Shortcuts & Help ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
+            .bg(Color::Rgb(22, 22, 30))
+            .title(Span::styled(" calki Quick Reference & Help ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
 
-        let help_text = vec![
-            Line::from(vec![Span::styled("── Global & Navigation ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" F1          ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Toggle Function Guide", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" F2 / F3     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Toggle Wiki Map / Variables Panel", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" ~           ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Toggle Keyboard Shortcuts", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Esc         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Escape modes / Return focus to Editor", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Ctrl-q      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Exit the program (from any mode/panel)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" ZZ          ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Save and Exit (Normal mode in Editor)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Shift-H / L ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Move Focus Left / Right between active panels", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Editor & Wiki Navigation ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" Enter       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Follow [[Link]] (Normal) / Wrap selection (Visual)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Backspace   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Go back in note history (Normal)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Ctrl-d      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Delete current note/file (Normal)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Wiki Map Panel (when focused) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" d/x/Delete  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Delete selected note/file", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Variables Panel (when focused) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" y           ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Yank/copy variable value to clipboard", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Enter / i   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Insert variable name at editor cursor", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(" Press any key to close this help window ", Style::default().fg(Color::Rgb(255, 158, 100)).italic()),
-            ]),
+        // We construct the tab headers row:
+        let tab_headers = [
+            " 1. General ",
+            " 2. Math & Trig ",
+            " 3. Complex & Symbolic ",
+            " 4. Lists & Stats ",
+            " 5. Constants ",
         ];
+
+        let mut header_spans = Vec::new();
+        for (i, title) in tab_headers.iter().enumerate() {
+            if i > 0 {
+                header_spans.push(Span::styled("   ", Style::default().fg(Color::Rgb(86, 95, 137))));
+            }
+            if i == app.help_tab_idx {
+                header_spans.push(Span::styled(format!("▶{}◀", title), Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
+            } else {
+                header_spans.push(Span::styled(format!(" {} ", title), Style::default().fg(Color::Rgb(86, 95, 137))));
+            }
+        }
+        let tab_row = Line::from(header_spans);
+
+        // Help text content based on active tab:
+        let mut help_text = vec![
+            tab_row,
+            Line::from(""),
+        ];
+
+        let mut content = match app.help_tab_idx {
+            0 => vec![
+                Line::from(vec![Span::styled("── Global & Panel Navigation ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" F1          ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Toggle this Help Guide modal", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" h / l       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Switch between Help Tabs (Left / Right)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" j / k       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Scroll Help Content (Down / Up)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" F2 / F3     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Toggle Wiki Map / Variables Panel", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" /           ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Search entire Wiki for keyword / notes", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Shift-H / L ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Move Focus Left / Right between active panels", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Esc         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Escape modes / Return focus to Editor", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Ctrl-q      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Exit the program (from any mode/panel)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Editor & Wiki Note Operations ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" Enter       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Follow [[Link]] (Normal) / Wrap selection in Link (Visual)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Backspace   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Go back in note history (Normal mode)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Ctrl-d      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Delete current wiki note / file", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Ctrl-s      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Export current note to HTML", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Ctrl-w      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Compile entire wiki to Markdown files", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Wiki Map Panel (focused) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" d / x / Del ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Delete selected note file", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Variables Panel (focused) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" y           ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Yank/copy variable value to system clipboard", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Enter / i   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Insert variable name at editor cursor", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            1 => vec![
+                Line::from(vec![Span::styled("── Basic Arithmetic & Functions ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" abs(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Absolute value of x", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" sqrt(x)            ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Square root of x (negative inputs return complex)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" round(x, [n])      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Round x to n decimal places (default 0)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" ceil(x) / floor(x) ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Ceiling / Floor function", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" mod(x, y)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Modulo remainder (also infix x % y)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Exponentials & Logarithms ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" exp(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Exponential e^x", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" ln(x)              ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Natural logarithm (negative real inputs return complex)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" log(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Base-10 logarithm", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" log(x, base)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Logarithm of x with arbitrary base (e.g. log(8, 2) => 3)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" log2(x)            ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Base-2 logarithm", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Trigonometry ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" sin / cos / tan    ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Trigonometric sine, cosine, tangent (supports complex)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" asin / acos / atan ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Inverse arc sine, cosine, tangent", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" sinh / cosh / tanh ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Hyperbolic sine, cosine, tangent", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" asinh / acosh / atanh ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Inverse hyperbolic functions", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            2 => vec![
+                Line::from(vec![Span::styled("── Complex Numbers ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" imaginary unit 'i' ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Literal suffix (e.g. 3i, 2 + 5i)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Complex Arithmetic ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Supports +, -, *, /, powers, and trig/log/sqrt/abs functions", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Symbolic Calculus & Solving ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" diff(f, x) / der(f, x)", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Symbolic derivative of f with respect to variable x", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" solve(eq, x)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Solve linear equation eq for x (e.g. solve(2*x + 5 == 15, x) => 5)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Radix Notation & Bitwise ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" 0x... / 0b...      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Hexadecimal / Binary integer literals", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" in hex / in bin    ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Convert and format output (e.g. 15 in hex => 0xF)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" &  |  ~  <<  >>  xor", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Bitwise AND, OR, NOT (~), Left/Right Shift, and XOR", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            3 => vec![
+                Line::from(vec![Span::styled("── List Functional Operations ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" map(expr, list)    ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Transforms list elements (e.g. map(x^2, [1, 2, 3]) => [1, 4, 9])", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" reduce(expr, list) ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Accumulates list (e.g. reduce(x + y, [1, 2, 3]) => 6)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" prod(x, ...)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Product of list elements / arguments (combines units)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Statistics ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" sum(x, ...)        ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Sum of elements / arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" mean / average     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Arithmetic mean of arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" median(x, ...)     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Median value of arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" stddev / variance  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Sample standard deviation / variance", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" count(x, ...)      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Count the number of scalar items in lists/arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Vectors, Matrices & Plotting ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" len(list)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Length of list / vector", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" plot(list)         ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Draws Unicode sparkline trend (e.g. ▄▅▇█)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" vdot / vadd / vsub ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Vector dot product, addition, and subtraction", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" transpose / matmul ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Matrix transpose and matrix multiplication", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            4 => vec![
+                Line::from(vec![Span::styled("── Predefined Constants ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" pi                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("3.1415926535... (Ratio of circle circumference to diameter)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" e                  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("2.7182818284... (Euler's number)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" c                  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("299,792,458 m/s (Speed of light constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" g                  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("9.80665 m/s^2 (Standard acceleration of gravity)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" G                  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("6.6743e-11 m^3/(kg*s^2) (Newtonian gravity constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" h                  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("6.62607015e-34 kg*m^2/s (Planck constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" hbar               ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("1.054571817e-34 kg*m^2/s (Reduced Planck constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" kb                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("1.380649e-23 kg*m^2/(s^2*K) (Boltzmann constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" NA                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("6.02214076e23 (Avogadro constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" R                  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("8.314462618 kg*m^2/(s^2*K) (Molar gas constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" me                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("9.1093837015e-31 kg (Electron mass)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" mp                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("1.67262192369e-27 kg (Proton mass)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            _ => Vec::new(),
+        };
+
+        help_text.append(&mut content);
+        help_text.push(Line::from(""));
+        help_text.push(Line::from(vec![
+            Span::styled(" Press h/l (Left/Right) to switch tabs  •  Press any other key to close ", Style::default().fg(Color::Rgb(255, 158, 100)).italic()),
+        ]));
 
         let max_scroll = if help_text.len() > area.height as usize {
             (help_text.len() - area.height as usize) as u16
@@ -2068,192 +2587,6 @@ fn ui(f: &mut Frame, app: &mut App) {
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((app.help_scroll, 0));
-        f.render_widget(Clear, area); // Clear background
-        f.render_widget(paragraph, area);
-    }
-
-    // Function Guide popup modal (opened via F1)
-    if app.show_function_guide {
-        let area = centered_rect(80, 85, f.area());
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Double)
-            .border_style(Style::default().fg(Color::Rgb(158, 206, 106))) // Green border
-            .bg(Color::Rgb(22, 22, 30))
-            .title(Span::styled(" calki Function Guide ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
-
-        let guide_text = vec![
-            Line::from(vec![Span::styled("── Basic Math & Rounding ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" abs(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Absolute value of x", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" sqrt(x)            ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Square root of x (x >= 0)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" round(x, [n])      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Round x to n decimal places (default 0)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" ceil(x) / floor(x) ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Ceiling / Floor function", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" min(x, y)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Minimum of two compatible values", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" max(x, y)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Maximum of two compatible values", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" mod(x, y)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Modulo / remainder function (or infix x % y)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Trigonometry & Exponential ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" sin / cos / tan    ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Trigonometric sine, cosine, tangent", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" asin / acos / atan ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Inverse trigonometric arc sine, cosine, tangent", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" sinh / cosh / tanh ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Hyperbolic sine, cosine, tangent", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" log(x) / ln(x)     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Base-10 log / Natural log of x", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" exp(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Exponential e^x", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Statistics ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" sum(x, ...)        ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Sum of compatible values (e.g. sum(10m, 200cm) => 12m)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" mean / average     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Average/mean value of arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" median(x, ...)     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Median value of arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" stddev / stdev     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Sample standard deviation (Bessel's corrected)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" variance / var     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Sample variance of arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" count(x, ...)      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Count the number of scalar items across lists/scalars", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Financial (End-of-period) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" pmt(rate, nper, pv)", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Loan payment per period", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" fv(r, nper, pmt, [pv])", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Future value of investment", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" pv(r, nper, pmt, [fv])", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Present value of investment", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Logic & Comparisons ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" if(cond, then, else)", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Returns 'then' if cond != 0, else 'else'", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" and(a, b, ...)     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Logical AND (1 if all non-zero, else 0)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" or(a, b, ...)      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Logical OR (1 if any non-zero, else 0)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" not(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Logical NOT (1 if x == 0, else 0)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" eq(a, b) / ne(a, b)", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Equal / Not equal (handles units conversion)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" lt / lte / gt / gte", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Less / Less-Equal / Greater / Greater-Equal", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-
-            Line::from(vec![Span::styled("── Vectors & Matrices ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-            Line::from(vec![
-                Span::styled(" len(list)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Length of list/vector", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" plot(list)         ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Draws an ASCII/Unicode sparkline trend of values", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" vdot(v1, v2)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Dot product of two vectors", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" vadd(v1, v2)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Element-wise vector/matrix addition", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" vsub(v1, v2)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Element-wise vector/matrix subtraction", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" transpose(m)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Transpose of a matrix or vector", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" matmul(m1, m2)     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                Span::styled("Matrix multiplication (supports 1D/2D numpy-like)", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(" Press any key to close this guide ", Style::default().fg(Color::Rgb(255, 158, 100)).italic()),
-            ]),
-        ];
-
-        let max_scroll = if guide_text.len() > area.height as usize {
-            (guide_text.len() - area.height as usize) as u16
-        } else {
-            0
-        };
-        if app.function_guide_scroll > max_scroll {
-            app.function_guide_scroll = max_scroll;
-        }
-
-        let paragraph = Paragraph::new(guide_text)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((app.function_guide_scroll, 0));
         f.render_widget(Clear, area); // Clear background
         f.render_widget(paragraph, area);
     }
@@ -2289,6 +2622,38 @@ fn ui(f: &mut Frame, app: &mut App) {
         f.render_widget(Clear, area);
         f.render_widget(paragraph, area);
     }
+
+    // RENDER STATUS LINE
+    if show_bottom_bar {
+        let status_bg = Color::Rgb(22, 22, 30);
+        let status_block = Block::default().bg(status_bg);
+
+        let status_line = if let Some((msg, inst)) = &app.status_message {
+            if inst.elapsed() < Duration::from_secs(5) {
+                Line::from(vec![
+                    Span::styled(" ✔  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled(msg, Style::default().fg(Color::Rgb(158, 206, 106))),
+                ])
+            } else {
+                Line::from("")
+            }
+        } else if app.search_active {
+            Line::from(vec![
+                Span::styled(" 🔍 Search: ", Style::default().fg(Color::Rgb(255, 158, 100)).bold()),
+                Span::styled(&app.search_query, Style::default().fg(Color::Rgb(125, 207, 255))),
+                Span::styled("█", Style::default().fg(Color::Rgb(125, 207, 255)).bold()), // cursor
+            ])
+        } else {
+            Line::from("")
+        };
+
+        let p = Paragraph::new(status_line).block(status_block);
+        f.render_widget(p, status_area);
+    } else {
+        if app.status_message.is_some() {
+            app.status_message = None;
+        }
+    }
 }
 fn find_in_chars(chars: &[char], sub: &str) -> Option<usize> {
     let sub_chars: Vec<char> = sub.chars().collect();
@@ -2322,11 +2687,11 @@ enum HighlightToken {
 }
 
 fn is_registered_unit(word: &str) -> bool {
-    if get_unit_info(word).is_some() || word == "$" {
+    if crate::math::units::is_custom_unit(word) || get_unit_info(word).is_some() || word == "$" {
         return true;
     }
     // Check compound unit: e.g. miles/kWh or kWh/hr or $/kWh or miles*day
-    let parts: Vec<&str> = word.split(|c| c == '/' || c == '*').collect();
+    let parts: Vec<&str> = word.split(['/', '*']).collect();
     if parts.len() > 1 {
         for part in parts {
             let clean = part.trim_end_matches(|c: char| c.is_ascii_digit() || c == '^');
@@ -2412,6 +2777,309 @@ fn tokenize_line_for_highlighting(line: &[char]) -> Vec<HighlightToken> {
         }
     }
     tokens
+}
+
+fn markdown_to_html(md: &str, title: &str) -> String {
+    let mut html = String::new();
+    let mut in_list = false;
+
+    for line in md.lines() {
+        let trimmed = line.trim();
+        
+        if in_list && !trimmed.starts_with('*') && !trimmed.starts_with('-') {
+            html.push_str("</ul>\n");
+            in_list = false;
+        }
+
+        if trimmed.is_empty() {
+            html.push_str("<p></p>\n");
+            continue;
+        }
+
+        if let Some(stripped) = trimmed.strip_prefix("# ") {
+            html.push_str(&format!("<h1>{}</h1>\n", parse_inline_elements(stripped)));
+        } else if let Some(stripped) = trimmed.strip_prefix("## ") {
+            html.push_str(&format!("<h2>{}</h2>\n", parse_inline_elements(stripped)));
+        } else if let Some(stripped) = trimmed.strip_prefix("### ") {
+            html.push_str(&format!("<h3>{}</h3>\n", parse_inline_elements(stripped)));
+        } else if let Some(stripped) = trimmed.strip_prefix("#### ") {
+            html.push_str(&format!("<h4>{}</h4>\n", parse_inline_elements(stripped)));
+        } else if let Some(stripped) = trimmed.strip_prefix('>') {
+            html.push_str(&format!("<blockquote>{}</blockquote>\n", parse_inline_elements(stripped.trim())));
+        } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            html.push_str("<hr/>\n");
+        } else if trimmed.starts_with('*') || trimmed.starts_with('-') {
+            if !in_list {
+                html.push_str("<ul>\n");
+                in_list = true;
+            }
+            let stripped = trimmed.strip_prefix('*').or_else(|| trimmed.strip_prefix('-')).unwrap_or(trimmed);
+            html.push_str(&format!("<li>{}</li>\n", parse_inline_elements(stripped.trim())));
+        } else if trimmed.contains("=>") && !trimmed.contains('`') {
+            if let Some(pos) = trimmed.find("=>") {
+                let expr = trimmed[..pos].trim();
+                let val = trimmed[pos + 2..].trim();
+                let val_class = if val.contains("[Error") { "val error" } else { "val" };
+                html.push_str(&format!(
+                    "<div class=\"math-block\"><span class=\"expr\">{}</span> <span class=\"arrow\">=&gt;</span> <span class=\"{}\">{}</span></div>\n",
+                    parse_inline_elements(expr),
+                    val_class,
+                    parse_inline_elements(val)
+                ));
+            } else {
+                html.push_str(&format!("<p>{}</p>\n", parse_inline_elements(trimmed)));
+            }
+        } else {
+            html.push_str(&format!("<p>{}</p>\n", parse_inline_elements(trimmed)));
+        }
+    }
+
+    if in_list {
+        html.push_str("</ul>\n");
+    }
+
+    let template = get_html_template();
+    template.replace("{title}", title).replace("{content}", &html)
+}
+
+fn parse_inline_elements(text: &str) -> String {
+    let mut result = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            let mut inner = String::new();
+            let mut closed = false;
+            for next_ch in chars.by_ref() {
+                if next_ch == '`' {
+                    closed = true;
+                    break;
+                }
+                inner.push(next_ch);
+            }
+
+            if closed {
+                if let Some(arrow_pos) = inner.find("=>") {
+                    let expr = &inner[..arrow_pos].trim();
+                    let val = &inner[arrow_pos + 2..].trim();
+                    let val_class = if val.contains("[Error") { "val error" } else { "val" };
+                    result.push_str(&format!(
+                        "<code class=\"math-eval\"><span class=\"expr\">{}</span> =&gt; <span class=\"{}\">{}</span></code>",
+                        html_escape(expr),
+                        val_class,
+                        html_escape(val)
+                    ));
+                } else {
+                    result.push_str(&format!("<code>{}</code>", html_escape(&inner)));
+                }
+            } else {
+                result.push('`');
+                result.push_str(&inner);
+            }
+        } else if ch == '[' && chars.peek() == Some(&'[') {
+            chars.next();
+            let mut link_name = String::new();
+            let mut closed = false;
+            while let Some(next_ch) = chars.next() {
+                if next_ch == ']' && chars.peek() == Some(&']') {
+                    chars.next();
+                    closed = true;
+                    break;
+                }
+                link_name.push(next_ch);
+            }
+            if closed {
+                let link_name_trimmed = link_name.trim();
+                let clean_name = link_name_trimmed
+                    .to_lowercase()
+                    .replace(|c: char| !c.is_alphanumeric() && c != ' ', "")
+                    .replace(' ', "-");
+                let href = format!("{}.html", clean_name);
+                result.push_str(&format!(
+                    "<a href=\"{}\" class=\"wiki-link\">{}</a>",
+                    href,
+                    html_escape(link_name_trimmed)
+                ));
+            } else {
+                result.push_str("[[");
+                result.push_str(&link_name);
+            }
+        } else {
+            match ch {
+                '<' => result.push_str("&lt;"),
+                '>' => result.push_str("&gt;"),
+                '&' => result.push_str("&amp;"),
+                '"' => result.push_str("&quot;"),
+                _ => result.push(ch),
+            }
+        }
+    }
+    result
+}
+
+fn html_escape(text: &str) -> String {
+    let mut escaped = String::new();
+    for ch in text.chars() {
+        match ch {
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn get_html_template() -> &'static str {
+    r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #1a1b26;
+            --panel-bg: #24283b;
+            --text-color: #a9b1d6;
+            --text-muted: #565f89;
+            --accent-purple: #bb9af7;
+            --accent-blue: #7aa2f7;
+            --accent-cyan: #7dcfff;
+            --accent-green: #9ece6a;
+            --accent-orange: #ff9e64;
+            --accent-red: #f7768e;
+            --border-color: #3b426b;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Outfit', sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--panel-bg);
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #ffffff;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-weight: 700;
+        }
+        h1 {
+            font-size: 2.5rem;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 0.3em;
+            margin-top: 0;
+            background: linear-gradient(45deg, var(--accent-purple), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        h2 {
+            font-size: 1.8rem;
+            color: var(--accent-blue);
+        }
+        h3 {
+            font-size: 1.4rem;
+            color: var(--accent-purple);
+        }
+        p {
+            margin: 0 0 1em;
+        }
+        a, .wiki-link {
+            color: var(--accent-cyan);
+            text-decoration: none;
+            border-bottom: 1px dashed var(--accent-cyan);
+            transition: all 0.2s ease;
+        }
+        a:hover, .wiki-link:hover {
+            color: var(--accent-blue);
+            border-bottom-style: solid;
+        }
+        ul, ol {
+            margin: 0 0 1.5em;
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 0.5em;
+        }
+        code {
+            font-family: 'Fira Code', monospace;
+            background-color: var(--bg-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: var(--accent-orange);
+            border: 1px solid var(--border-color);
+        }
+        .math-block {
+            font-family: 'Fira Code', monospace;
+            background-color: var(--bg-color);
+            padding: 12px 18px;
+            border-radius: 8px;
+            margin: 1em 0;
+            border-left: 4px solid var(--accent-cyan);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .math-block .expr {
+            color: var(--accent-cyan);
+        }
+        .math-block .val {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+        .math-eval {
+            font-family: 'Fira Code', monospace;
+            background-color: var(--bg-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+        .math-eval .expr {
+            color: var(--accent-cyan);
+        }
+        .math-eval .val {
+            color: var(--accent-green);
+            font-weight: bold;
+        }
+        .error {
+            color: var(--accent-red) !important;
+            font-weight: bold;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 2em 0;
+        }
+        blockquote {
+            border-left: 4px solid var(--accent-green);
+            margin: 1em 0;
+            padding-left: 15px;
+            color: var(--accent-green);
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {content}
+    </div>
+</body>
+</html>"#
 }
 
 #[cfg(test)]
@@ -2860,6 +3528,46 @@ mod main_tests {
     }
 
     #[test]
+    fn test_compute_syntax_highlights_defined_vars_with_unit_names() {
+        let lines = vec![
+            "m = 10".chars().collect::<Vec<char>>(),
+            "y = m * 2".chars().collect::<Vec<char>>(),
+            "z = 5 m".chars().collect::<Vec<char>>(),
+        ];
+
+        let highlights = App::compute_syntax_highlights(&lines, None);
+
+        let pink = Color::Rgb(244, 143, 177);
+
+        // Row 0: "m = 10" -> "m" is the LHS variable, should NOT be pink
+        assert!(!highlights.iter().any(|h| h.start.row == 0 && h.start.col == 0 && h.style.fg == Some(pink)));
+
+        // Row 1: "y = m * 2" -> "m" at index 4 is used as variable, should NOT be pink
+        assert!(!highlights.iter().any(|h| h.start.row == 1 && h.start.col <= 4 && h.end.col >= 4 && h.style.fg == Some(pink)));
+
+        // Row 2: "z = 5 m" -> "m" at index 6 is preceded by number "5", so it acts as unit, MUST be pink
+        assert!(highlights.iter().any(|h| h.start.row == 2 && h.start.col <= 6 && h.end.col >= 6 && h.style.fg == Some(pink)));
+    }
+
+    #[test]
+    fn test_compute_syntax_highlights_percentage() {
+        let lines = vec![
+            "val = 10%".chars().collect::<Vec<char>>(),
+            "mod_val = 10 % 3".chars().collect::<Vec<char>>(),
+        ];
+
+        let highlights = App::compute_syntax_highlights(&lines, None);
+
+        let pink = Color::Rgb(244, 143, 177);
+
+        // Row 0: "val = 10%" -> "%" at index 8 is acting as a postfix percentage (unit), MUST be pink
+        assert!(highlights.iter().any(|h| h.start.row == 0 && h.start.col <= 8 && h.end.col >= 8 && h.style.fg == Some(pink)));
+
+        // Row 1: "mod_val = 10 % 3" -> "%" at index 13 is acting as infix modulo (symbol), should NOT be pink
+        assert!(!highlights.iter().any(|h| h.start.row == 1 && h.start.col <= 13 && h.end.col >= 13 && h.style.fg == Some(pink)));
+    }
+
+    #[test]
     fn test_compute_syntax_highlights_no_markdown_in_equations() {
         let lines = vec![
             "gas_cost = gas_usage * rate".chars().collect::<Vec<char>>(),
@@ -2978,5 +3686,43 @@ mod main_tests {
             }
         }
     }
+
+    #[test]
+    fn test_search_and_export() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_search_export");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+
+        // 1. Create a dummy note with some search keyword
+        let dummy_path = wiki_root.join("dummy-note.md");
+        std::fs::write(&dummy_path, "# Dummy Note\nThis is a unique_keyword inside a note.").unwrap();
+
+        // 2. Perform search
+        app.search_query = "unique_keyword".to_string();
+        app.perform_wiki_search();
+
+        assert!(app.show_search_results);
+        assert_eq!(app.search_results.len(), 1);
+        assert_eq!(app.search_results[0], "Dummy Note");
+
+        // 3. Export HTML
+        let html_path = app.export_current_note_to_html().unwrap();
+        assert!(html_path.exists());
+        let html_content = std::fs::read_to_string(&html_path).unwrap();
+        assert!(html_content.contains("<!DOCTYPE html>"));
+
+        // 4. Compile Wiki to Markdown
+        let md_path = app.compile_wiki_to_markdown().unwrap();
+        assert!(md_path.exists());
+        let md_content = std::fs::read_to_string(&md_path).unwrap();
+        assert!(md_content.contains("# calki Compiled Wiki"));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
 }
+
 

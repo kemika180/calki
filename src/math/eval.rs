@@ -2,6 +2,382 @@ use crate::math::parser::{Expr, Op, Quantity};
 use crate::math::units::{are_compatible, combine_units_with_multiplier, convert_quantity};
 use std::collections::HashMap;
 
+fn is_complex(qty: &Quantity) -> bool {
+    qty.unit.as_deref() == Some("i") || (qty.unit.as_deref() == Some("complex") && qty.list.is_some())
+}
+
+fn to_complex_parts(qty: &Quantity) -> (f64, f64) {
+    if qty.unit.as_deref() == Some("i") {
+        (0.0, qty.value)
+    } else if qty.unit.as_deref() == Some("complex") {
+        if let Some(ref list) = qty.list
+            && list.len() >= 2 {
+                return (list[0].value, list[1].value);
+            }
+        (qty.value, 0.0)
+    } else {
+        (qty.value, 0.0)
+    }
+}
+
+fn make_complex_qty(re: f64, im: f64) -> Quantity {
+    if im == 0.0 {
+        Quantity { value: re, unit: None, list: None, is_bool: false }
+    } else if re == 0.0 {
+        Quantity { value: im, unit: Some("i".to_string()), list: None, is_bool: false }
+    } else {
+        Quantity {
+            value: re,
+            unit: Some("complex".to_string()),
+            list: Some(vec![
+                Quantity { value: re, unit: None, list: None, is_bool: false },
+                Quantity { value: im, unit: Some("i".to_string()), list: None, is_bool: false },
+            ]),
+            is_bool: false,
+        }
+    }
+}
+
+fn differentiate(expr: &Expr, var: &str) -> Result<Expr, String> {
+    match expr {
+        Expr::Number(_) => Ok(Expr::Number(0.0)),
+        Expr::Quantity(_, _) => Ok(Expr::Number(0.0)),
+        Expr::Variable(name) => {
+            if name == var {
+                Ok(Expr::Number(1.0))
+            } else {
+                Ok(Expr::Number(0.0))
+            }
+        }
+        Expr::Percentage(inner) => {
+            let d_inner = differentiate(inner, var)?;
+            Ok(Expr::Percentage(Box::new(d_inner)))
+        }
+        Expr::BinaryOp(op, left, right) => {
+            match op {
+                Op::Add => {
+                    let dl = differentiate(left, var)?;
+                    let dr = differentiate(right, var)?;
+                    Ok(Expr::BinaryOp(Op::Add, Box::new(dl), Box::new(dr)))
+                }
+                Op::Sub => {
+                    let dl = differentiate(left, var)?;
+                    let dr = differentiate(right, var)?;
+                    Ok(Expr::BinaryOp(Op::Sub, Box::new(dl), Box::new(dr)))
+                }
+                Op::Mul => {
+                    let dl = differentiate(left, var)?;
+                    let dr = differentiate(right, var)?;
+                    Ok(Expr::BinaryOp(Op::Add,
+                        Box::new(Expr::BinaryOp(Op::Mul, Box::new(dl), right.clone())),
+                        Box::new(Expr::BinaryOp(Op::Mul, left.clone(), Box::new(dr)))
+                    ))
+                }
+                Op::Div => {
+                    let dl = differentiate(left, var)?;
+                    let dr = differentiate(right, var)?;
+                    Ok(Expr::BinaryOp(Op::Div,
+                        Box::new(Expr::BinaryOp(Op::Sub,
+                            Box::new(Expr::BinaryOp(Op::Mul, Box::new(dl), right.clone())),
+                            Box::new(Expr::BinaryOp(Op::Mul, left.clone(), Box::new(dr)))
+                        )),
+                        Box::new(Expr::BinaryOp(Op::Pow, right.clone(), Box::new(Expr::Number(2.0))))
+                    ))
+                }
+                Op::Pow => {
+                    let left_has = expr_contains_var(left, var);
+                    let right_has = expr_contains_var(right, var);
+                    if left_has && !right_has {
+                        let du = differentiate(left, var)?;
+                        Ok(Expr::BinaryOp(Op::Mul,
+                            Box::new(Expr::BinaryOp(Op::Mul,
+                                right.clone(),
+                                Box::new(Expr::BinaryOp(Op::Pow,
+                                    left.clone(),
+                                    Box::new(Expr::BinaryOp(Op::Sub, right.clone(), Box::new(Expr::Number(1.0))))
+                                ))
+                            )),
+                            Box::new(du)
+                        ))
+                    } else if !left_has && right_has {
+                        let du = differentiate(right, var)?;
+                        Ok(Expr::BinaryOp(Op::Mul,
+                            Box::new(Expr::BinaryOp(Op::Mul,
+                                Box::new(expr.clone()),
+                                Box::new(Expr::FnCall("ln".to_string(), vec![*left.clone()]))
+                            )),
+                            Box::new(du)
+                        ))
+                    } else if left_has && right_has {
+                        let du = differentiate(left, var)?;
+                        let dv = differentiate(right, var)?;
+                        let term1 = Expr::BinaryOp(Op::Mul, Box::new(dv), Box::new(Expr::FnCall("ln".to_string(), vec![*left.clone()])));
+                        let term2 = Expr::BinaryOp(Op::Div,
+                            Box::new(Expr::BinaryOp(Op::Mul, right.clone(), Box::new(du))),
+                            left.clone()
+                        );
+                        Ok(Expr::BinaryOp(Op::Mul,
+                            Box::new(expr.clone()),
+                            Box::new(Expr::BinaryOp(Op::Add, Box::new(term1), Box::new(term2)))
+                        ))
+                    } else {
+                        Ok(Expr::Number(0.0))
+                    }
+                }
+                _ => Err(format!("Cannot differentiate operation {:?}", op)),
+            }
+        }
+        Expr::FnCall(name, args) => {
+            if args.len() != 1 {
+                return Err("Differentiating multi-argument functions is not supported".to_string());
+            }
+            let u = &args[0];
+            let du = differentiate(u, var)?;
+            match name.as_str() {
+                "sin" => {
+                    Ok(Expr::BinaryOp(Op::Mul,
+                        Box::new(Expr::FnCall("cos".to_string(), vec![u.clone()])),
+                        Box::new(du)
+                    ))
+                }
+                "cos" => {
+                    Ok(Expr::BinaryOp(Op::Mul,
+                        Box::new(Expr::BinaryOp(Op::Sub,
+                            Box::new(Expr::Number(0.0)),
+                            Box::new(Expr::FnCall("sin".to_string(), vec![u.clone()]))
+                        )),
+                        Box::new(du)
+                    ))
+                }
+                "exp" => {
+                    Ok(Expr::BinaryOp(Op::Mul,
+                        Box::new(Expr::FnCall("exp".to_string(), vec![u.clone()])),
+                        Box::new(du)
+                    ))
+                }
+                "ln" | "log" => {
+                    Ok(Expr::BinaryOp(Op::Div, Box::new(du), Box::new(u.clone())))
+                }
+                _ => Err(format!("Differentiating function '{}' is not supported", name)),
+            }
+        }
+        Expr::Convert(inner, unit) => {
+            let d_inner = differentiate(inner, var)?;
+            Ok(Expr::Convert(Box::new(d_inner), unit.clone()))
+        }
+        Expr::List(elements) => {
+            let mut d_elements = Vec::new();
+            for el in elements {
+                d_elements.push(differentiate(el, var)?);
+            }
+            Ok(Expr::List(d_elements))
+        }
+        _ => Err("Unsupported expression for differentiation".to_string()),
+    }
+}
+
+fn simplify(expr: &Expr) -> Expr {
+    match expr {
+        Expr::BinaryOp(op, left, right) => {
+            let sl = simplify(left);
+            let sr = simplify(right);
+            match op {
+                Op::Add => {
+                    match (&sl, &sr) {
+                        (Expr::Number(n), _) if *n == 0.0 => sr,
+                        (_, Expr::Number(n)) if *n == 0.0 => sl,
+                        (Expr::Number(a), Expr::Number(b)) => Expr::Number(a + b),
+                        (left, Expr::BinaryOp(Op::Sub, zero, right)) => {
+                            if let Expr::Number(n) = &**zero {
+                                if *n == 0.0 {
+                                    Expr::BinaryOp(Op::Sub, Box::new(left.clone()), right.clone())
+                                } else {
+                                    Expr::BinaryOp(Op::Add, Box::new(sl), Box::new(sr))
+                                }
+                            } else {
+                                Expr::BinaryOp(Op::Add, Box::new(sl), Box::new(sr))
+                            }
+                        }
+                        _ => Expr::BinaryOp(Op::Add, Box::new(sl), Box::new(sr)),
+                    }
+                }
+                Op::Sub => {
+                    match (&sl, &sr) {
+                        (_, Expr::Number(n)) if *n == 0.0 => sl,
+                        (Expr::Number(a), Expr::Number(b)) => Expr::Number(a - b),
+                        (left, Expr::BinaryOp(Op::Sub, zero, right)) => {
+                            if let Expr::Number(n) = &**zero {
+                                if *n == 0.0 {
+                                    Expr::BinaryOp(Op::Add, Box::new(left.clone()), right.clone())
+                                } else {
+                                    Expr::BinaryOp(Op::Sub, Box::new(sl), Box::new(sr))
+                                }
+                            } else {
+                                Expr::BinaryOp(Op::Sub, Box::new(sl), Box::new(sr))
+                            }
+                        }
+                        _ => Expr::BinaryOp(Op::Sub, Box::new(sl), Box::new(sr)),
+                    }
+                }
+                Op::Mul => {
+                    match (&sl, &sr) {
+                        (Expr::Number(n), _) if *n == 0.0 => Expr::Number(0.0),
+                        (_, Expr::Number(n)) if *n == 0.0 => Expr::Number(0.0),
+                        (Expr::Number(n), _) if *n == 1.0 => sr,
+                        (_, Expr::Number(n)) if *n == 1.0 => sl,
+                        (Expr::Number(a), Expr::Number(b)) => Expr::Number(a * b),
+                        _ => Expr::BinaryOp(Op::Mul, Box::new(sl), Box::new(sr)),
+                    }
+                }
+                Op::Div => {
+                    match (&sl, &sr) {
+                        (Expr::Number(n), _) if *n == 0.0 => Expr::Number(0.0),
+                        (_, Expr::Number(n)) if *n == 1.0 => sl,
+                        (Expr::Number(a), Expr::Number(b)) if *b != 0.0 => Expr::Number(a / b),
+                        _ => Expr::BinaryOp(Op::Div, Box::new(sl), Box::new(sr)),
+                    }
+                }
+                Op::Pow => {
+                    match (&sl, &sr) {
+                        (_, Expr::Number(n)) if *n == 0.0 => Expr::Number(1.0),
+                        (_, Expr::Number(n)) if *n == 1.0 => sl,
+                        (Expr::Number(n), _) if *n == 1.0 => Expr::Number(1.0),
+                        (Expr::Number(a), Expr::Number(b)) => Expr::Number(a.powf(*b)),
+                        _ => Expr::BinaryOp(Op::Pow, Box::new(sl), Box::new(sr)),
+                    }
+                }
+                _ => Expr::BinaryOp(*op, Box::new(sl), Box::new(sr)),
+            }
+        }
+        Expr::Percentage(inner) => {
+            let si = simplify(inner);
+            match si {
+                Expr::Number(n) => Expr::Number(n * 0.01),
+                _ => Expr::Percentage(Box::new(si)),
+            }
+        }
+        Expr::FnCall(name, args) => {
+            let s_args = args.iter().map(simplify).collect();
+            Expr::FnCall(name.clone(), s_args)
+        }
+        _ => expr.clone(),
+    }
+}
+
+fn get_op_precedence(op: &Op) -> u8 {
+    match op {
+        Op::Or => 1,
+        Op::And => 2,
+        Op::BitOr => 3,
+        Op::BitAnd => 4,
+        Op::Eq | Op::Ne | Op::Less | Op::LessEq | Op::Greater | Op::GreaterEq => 5,
+        Op::LShift | Op::RShift => 6,
+        Op::Add | Op::Sub => 7,
+        Op::Mul | Op::Div | Op::Mod => 8,
+        Op::Pow => 9,
+    }
+}
+
+fn expr_to_string(expr: &Expr) -> String {
+    match expr {
+        Expr::Number(val) => {
+            if val.fract() == 0.0 {
+                format!("{}", *val as i64)
+            } else {
+                format!("{:.4}", val).trim_end_matches('0').trim_end_matches('.').to_string()
+            }
+        }
+        Expr::Quantity(val, unit) => {
+            let rounded = if val.fract() == 0.0 {
+                format!("{}", *val as i64)
+            } else {
+                format!("{:.4}", val).trim_end_matches('0').trim_end_matches('.').to_string()
+            };
+            format!("{}{}", rounded, unit)
+        }
+        Expr::Variable(name) => name.clone(),
+        Expr::Percentage(inner) => format!("{}%", expr_to_string(inner)),
+        Expr::BinaryOp(op, left, right) => {
+            if *op == Op::Sub
+                && let Expr::Number(n) = &**left
+                    && *n == 0.0 {
+                        let right_precedence = match &**right {
+                            Expr::BinaryOp(right_op, _, _) => get_op_precedence(right_op),
+                            _ => 100,
+                        };
+                        let right_str = if right_precedence < 7 {
+                            format!("({})", expr_to_string(right))
+                        } else {
+                            expr_to_string(right)
+                        };
+                        return format!("-{}", right_str);
+                    }
+
+            let op_str = match op {
+                Op::Add => " + ",
+                Op::Sub => " - ",
+                Op::Mul => " * ",
+                Op::Div => " / ",
+                Op::Pow => "^",
+                Op::Mod => " % ",
+                Op::BitAnd => " & ",
+                Op::BitOr => " | ",
+                Op::LShift => " << ",
+                Op::RShift => " >> ",
+                Op::Eq => " == ",
+                Op::Ne => " != ",
+                Op::Less => " < ",
+                Op::LessEq => " <= ",
+                Op::Greater => " > ",
+                Op::GreaterEq => " >= ",
+                Op::And => " and ",
+                Op::Or => " or ",
+            };
+
+            let parent_prec = get_op_precedence(op);
+
+            let left_str = match &**left {
+                Expr::BinaryOp(left_op, _, _) => {
+                    if get_op_precedence(left_op) < parent_prec {
+                        format!("({})", expr_to_string(left))
+                    } else {
+                        expr_to_string(left)
+                    }
+                }
+                _ => expr_to_string(left),
+            };
+
+            let right_str = match &**right {
+                Expr::BinaryOp(right_op, _, _) => {
+                    let is_pow = *op == Op::Pow;
+                    let right_prec = get_op_precedence(right_op);
+                    if right_prec < parent_prec || (right_prec == parent_prec && !is_pow) {
+                        format!("({})", expr_to_string(right))
+                    } else {
+                        expr_to_string(right)
+                    }
+                }
+                _ => expr_to_string(right),
+            };
+
+            format!("{}{}{}", left_str, op_str, right_str)
+        }
+        Expr::FnCall(name, args) => {
+            let args_str: Vec<String> = args.iter().map(expr_to_string).collect();
+            format!("{}({})", name, args_str.join(", "))
+        }
+        Expr::Convert(inner, unit) => {
+            format!("{} in {}", expr_to_string(inner), unit)
+        }
+        Expr::List(elements) => {
+            let els: Vec<String> = elements.iter().map(expr_to_string).collect();
+            format!("[{}]", els.join(", "))
+        }
+        Expr::Not(inner) => format!("not {}", expr_to_string(inner)),
+        Expr::BitNot(inner) => format!("~{}", expr_to_string(inner)),
+    }
+}
+
 fn flatten_quantity(qty: &Quantity, target: &mut Vec<Quantity>) {
     if let Some(ref elements) = qty.list {
         for el in elements {
@@ -79,6 +455,146 @@ fn quantity_sub(q1: &Quantity, q2: &Quantity, ctx: &Context) -> Result<Quantity,
             }
         }
         _ => Err("Cannot subtract a list and a scalar".to_string()),
+    }
+}
+
+fn quantity_mul(left_qty: &Quantity, right_qty: &Quantity, ctx: &Context) -> Result<Quantity, String> {
+    let (unit, multiplier) = combine_units_with_multiplier(
+        left_qty.unit.as_deref(),
+        right_qty.unit.as_deref(),
+        false,
+        &ctx.exchange_rates,
+    );
+    let value = left_qty.value * right_qty.value * multiplier;
+    Ok(Quantity { is_bool: false, list: None, value, unit })
+}
+
+fn quantity_div(left_qty: &Quantity, right_qty: &Quantity, ctx: &Context) -> Result<Quantity, String> {
+    if right_qty.value == 0.0 {
+        return Err("Division by zero".to_string());
+    }
+    let (unit, multiplier) = combine_units_with_multiplier(
+        left_qty.unit.as_deref(),
+        right_qty.unit.as_deref(),
+        true,
+        &ctx.exchange_rates,
+    );
+    let value = (left_qty.value / right_qty.value) * multiplier;
+    Ok(Quantity { is_bool: false, list: None, value, unit })
+}
+
+fn quantity_pow(left_qty: &Quantity, right_qty: &Quantity) -> Result<Quantity, String> {
+    if right_qty.unit.is_some() {
+        return Err("Exponent power must be a dimensionless scalar".to_string());
+    }
+    let value = left_qty.value.powf(right_qty.value);
+    Ok(Quantity { is_bool: false, list: None,
+        value,
+        unit: left_qty.unit.clone(),
+    })
+}
+
+fn expr_contains_var(expr: &Expr, var_name: &str) -> bool {
+    match expr {
+        Expr::Variable(name) => name == var_name,
+        Expr::Percentage(inner) | Expr::Not(inner) | Expr::BitNot(inner) | Expr::Convert(inner, _) => {
+            expr_contains_var(inner, var_name)
+        }
+        Expr::BinaryOp(_, left, right) => {
+            expr_contains_var(left, var_name) || expr_contains_var(right, var_name)
+        }
+        Expr::FnCall(_, args) | Expr::List(args) => {
+            args.iter().any(|arg| expr_contains_var(arg, var_name))
+        }
+        Expr::Number(_) | Expr::Quantity(_, _) => false,
+    }
+}
+
+fn solve_equation(expr: &Expr, var_name: &str, ctx: &mut Context) -> Result<Quantity, String> {
+    match expr {
+        Expr::BinaryOp(Op::Eq, left, right) => {
+            let left_has = expr_contains_var(left, var_name);
+            let right_has = expr_contains_var(right, var_name);
+            if left_has && !right_has {
+                let target_val = eval_expr(right, ctx)?;
+                solve_rec(left, target_val, var_name, ctx)
+            } else if right_has && !left_has {
+                let target_val = eval_expr(left, ctx)?;
+                solve_rec(right, target_val, var_name, ctx)
+            } else if !left_has && !right_has {
+                Err("Equation does not contain the variable to solve for".to_string())
+            } else {
+                Err("Variable appears on both sides of the equation, which is not supported by the simple solver".to_string())
+            }
+        }
+        _ => {
+            // Solve expr == 0
+            let target_val = Quantity { is_bool: false, list: None, value: 0.0, unit: None };
+            solve_rec(expr, target_val, var_name, ctx)
+        }
+    }
+}
+
+fn solve_rec(expr: &Expr, target_val: Quantity, var_name: &str, ctx: &mut Context) -> Result<Quantity, String> {
+    match expr {
+        Expr::Variable(name) if name == var_name => {
+            Ok(target_val)
+        }
+        Expr::BinaryOp(op, left, right) => {
+            let left_has = expr_contains_var(left, var_name);
+            let right_has = expr_contains_var(right, var_name);
+            if left_has && !right_has {
+                let r_val = eval_expr(right, ctx)?;
+                let next_target = match op {
+                    Op::Add => {
+                        quantity_sub(&target_val, &r_val, ctx)?
+                    }
+                    Op::Sub => {
+                        quantity_add(&target_val, &r_val, ctx)?
+                    }
+                    Op::Mul => {
+                        quantity_div(&target_val, &r_val, ctx)?
+                    }
+                    Op::Div => {
+                        quantity_mul(&target_val, &r_val, ctx)?
+                    }
+                    Op::Pow => {
+                        let one_over_r = Quantity {
+                            is_bool: false,
+                            list: None,
+                            value: 1.0 / r_val.value,
+                            unit: None,
+                        };
+                        quantity_pow(&target_val, &one_over_r)?
+                    }
+                    _ => return Err(format!("Unsupported operator '{:?}' in equation solving", op)),
+                };
+                solve_rec(left, next_target, var_name, ctx)
+            } else if right_has && !left_has {
+                let l_val = eval_expr(left, ctx)?;
+                let next_target = match op {
+                    Op::Add => {
+                        quantity_sub(&target_val, &l_val, ctx)?
+                    }
+                    Op::Sub => {
+                        quantity_sub(&l_val, &target_val, ctx)?
+                    }
+                    Op::Mul => {
+                        quantity_div(&target_val, &l_val, ctx)?
+                    }
+                    Op::Div => {
+                        quantity_div(&l_val, &target_val, ctx)?
+                    }
+                    _ => return Err(format!("Unsupported operator '{:?}' in equation solving", op)),
+                };
+                solve_rec(right, next_target, var_name, ctx)
+            } else if !left_has && !right_has {
+                Err("Sub-expression does not contain the variable".to_string())
+            } else {
+                Err("Variable appears on both sides of a sub-expression".to_string())
+            }
+        }
+        _ => Err("Equation is too complex or non-algebraic".to_string()),
     }
 }
 
@@ -217,17 +733,14 @@ fn eval_eq_logic(q1: &Quantity, q2: &Quantity, exchange_rates: &HashMap<String, 
         }
         (None, None) => {
             match (&q1.unit, &q2.unit) {
-                (Some(u1), Some(u2)) => {
-                    if are_compatible(u1, u2) {
+                (Some(u1), Some(u2))
+                    if are_compatible(u1, u2) => {
                         if let Ok(q2_conv) = convert_quantity(q2.value, u2, u1, exchange_rates) {
                             (q1.value - q2_conv).abs() < 1e-9
                         } else {
                             false
                         }
-                    } else {
-                        false
                     }
-                }
                 (None, None) => (q1.value - q2.value).abs() < 1e-9,
                 _ => false,
             }
@@ -347,6 +860,35 @@ impl Default for Context {
             },
         );
 
+        // Common physical and mathematical constants
+        let constants = vec![
+            ("c", 299792458.0, Some("m/s")),
+            ("g", 9.80665, Some("m/s^2")),
+            ("G", 6.6743e-11, Some("m^3/kg/s^2")),
+            ("h", 6.62607015e-34, Some("kg*m^2/s")),
+            ("hbar", 1.054571817e-34, Some("kg*m^2/s")),
+            ("kb", 1.380649e-23, Some("kg*m^2/s^2/K")),
+            ("NA", 6.02214076e23, None),
+            ("R", 8.314462618, Some("kg*m^2/s^2/K")),
+            ("me", 9.1093837015e-31, Some("kg")),
+            ("mp", 1.67262192369e-27, Some("kg")),
+        ];
+
+        for &(name, value, unit) in &constants {
+            variables.insert(
+                name.to_string(),
+                Quantity {
+                    is_bool: false,
+                    list: None,
+                    value,
+                    unit: unit.map(|u| u.to_string()),
+                },
+            );
+            if let Some(unit_str) = unit {
+                let _ = crate::math::units::register_custom_unit(name, value, unit_str);
+            }
+        }
+
         Self {
             variables,
             functions: HashMap::new(),
@@ -384,6 +926,14 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
         }
         Expr::Convert(inner_expr, target_unit) => {
             let qty = eval_expr(inner_expr, ctx)?;
+            if target_unit == "hex" || target_unit == "HEX" || target_unit == "bin" || target_unit == "BIN" {
+                return Ok(Quantity {
+                    is_bool: qty.is_bool,
+                    list: qty.list,
+                    value: qty.value,
+                    unit: Some(target_unit.to_lowercase()),
+                });
+            }
             let src_unit = qty.unit.ok_or_else(|| {
                 format!(
                     "Cannot convert dimensionless value to unit '{}'",
@@ -411,7 +961,122 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             }
             Ok(Quantity::boolean(qty.value == 0.0))
         }
+        Expr::BitNot(inner) => {
+            let qty = eval_expr(inner, ctx)?;
+            if qty.list.is_some() {
+                return Err("Bitwise NOT cannot be applied to a list".to_string());
+            }
+            let val = !(qty.value as i64);
+            Ok(Quantity { is_bool: false, list: None, value: val as f64, unit: qty.unit })
+        }
         Expr::FnCall(name, args) => {
+            if name == "solve" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'solve' expects 2 arguments".to_string());
+                }
+                let solve_expr = &args[0];
+                let var_expr = &args[1];
+                let var_name = match var_expr {
+                    Expr::Variable(v) => v.clone(),
+                    _ => return Err("Second argument to 'solve' must be a variable name".to_string()),
+                };
+                return solve_equation(solve_expr, &var_name, ctx);
+            }
+            if name == "diff" || name == "der" {
+                if args.len() != 2 {
+                    return Err(format!("Built-in function '{}' expects 2 arguments", name));
+                }
+                let diff_expr = &args[0];
+                let var_expr = &args[1];
+                let var_name = match var_expr {
+                    Expr::Variable(v) => v.clone(),
+                    _ => return Err(format!("Second argument to '{}' must be a variable name", name)),
+                };
+                let derived_ast = differentiate(diff_expr, &var_name)?;
+                let simplified_ast = simplify(&derived_ast);
+                if ctx.variables.contains_key(&var_name) {
+                    return eval_expr(&simplified_ast, ctx);
+                } else {
+                    let formula_str = expr_to_string(&simplified_ast);
+                    return Ok(Quantity {
+                        is_bool: false,
+                        list: None,
+                        value: 1.0,
+                        unit: Some(format!("formula:{}", formula_str)),
+                    });
+                }
+            }
+
+            if name == "map" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'map' expects 2 arguments".to_string());
+                }
+                let map_expr = &args[0];
+                let list_qty = eval_expr(&args[1], ctx)?;
+                let elements = list_qty.list.as_ref().ok_or("Second argument to 'map' must be a list")?;
+                
+                let var_name = find_variable_in_expr(map_expr).unwrap_or_else(|| "x".to_string());
+                
+                let mut mapped_elements = Vec::new();
+                for el in elements {
+                    let prev_val = ctx.variables.insert(var_name.clone(), el.clone());
+                    let res = eval_expr(map_expr, ctx);
+                    if let Some(pv) = prev_val {
+                        ctx.variables.insert(var_name.clone(), pv);
+                    } else {
+                        ctx.variables.remove(&var_name);
+                    }
+                    mapped_elements.push(res?);
+                }
+                return Ok(Quantity::list(mapped_elements));
+            }
+            if name == "reduce" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'reduce' expects 2 arguments".to_string());
+                }
+                let reduce_expr = &args[0];
+                let list_qty = eval_expr(&args[1], ctx)?;
+                let elements = list_qty.list.as_ref().ok_or("Second argument to 'reduce' must be a list")?;
+                if elements.is_empty() {
+                    return Err("Cannot reduce an empty list".to_string());
+                }
+                
+                let vars = find_all_variables_in_expr(reduce_expr);
+                let (acc_var, el_var) = if vars.len() >= 2 {
+                    (vars[0].clone(), vars[1].clone())
+                } else if vars.len() == 1 {
+                    if vars[0] == "y" {
+                        ("x".to_string(), "y".to_string())
+                    } else {
+                        (vars[0].clone(), "y".to_string())
+                    }
+                } else {
+                    ("x".to_string(), "y".to_string())
+                };
+                
+                let mut acc = elements[0].clone();
+                for el in &elements[1..] {
+                    let prev_acc = ctx.variables.insert(acc_var.clone(), acc.clone());
+                    let prev_el = ctx.variables.insert(el_var.clone(), el.clone());
+                    
+                    let res = eval_expr(reduce_expr, ctx);
+                    
+                    if let Some(pa) = prev_acc {
+                        ctx.variables.insert(acc_var.clone(), pa);
+                    } else {
+                        ctx.variables.remove(&acc_var);
+                    }
+                    if let Some(pe) = prev_el {
+                        ctx.variables.insert(el_var.clone(), pe);
+                    } else {
+                        ctx.variables.remove(&el_var);
+                    }
+                    
+                    acc = res?;
+                }
+                return Ok(acc);
+            }
+
             // Evaluate arguments
             let mut arg_vals = Vec::new();
             for arg in args {
@@ -422,6 +1087,10 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             match name.as_str() {
                 "sin" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        return Ok(make_complex_qty(a.sin() * b.cosh(), a.cos() * b.sinh()));
+                    }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.sin(),
                         unit: None,
@@ -429,6 +1098,10 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 }
                 "cos" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        return Ok(make_complex_qty(a.cos() * b.cosh(), -a.sin() * b.sinh()));
+                    }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.cos(),
                         unit: None,
@@ -436,6 +1109,21 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 }
                 "tan" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        let sz = make_complex_qty(a.sin() * b.cosh(), a.cos() * b.sinh());
+                        let cz = make_complex_qty(a.cos() * b.cosh(), -a.sin() * b.sinh());
+                        let (s_re, s_im) = to_complex_parts(&sz);
+                        let (c_re, c_im) = to_complex_parts(&cz);
+                        let denom = c_re * c_re + c_im * c_im;
+                        if denom == 0.0 {
+                            return Err("Division by zero in complex tan".to_string());
+                        }
+                        return Ok(make_complex_qty(
+                            (s_re * c_re + s_im * c_im) / denom,
+                            (s_im * c_re - s_re * c_im) / denom
+                        ));
+                    }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.tan(),
                         unit: None,
@@ -444,7 +1132,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "asin" => {
                     check_built_in_args(name, &arg_vals, 1)?;
                     let val = arg_vals[0].value;
-                    if val < -1.0 || val > 1.0 {
+                    if !(-1.0..=1.0).contains(&val) {
                         return Err("Argument to 'asin' must be between -1.0 and 1.0".to_string());
                     }
                     Ok(Quantity { is_bool: false, list: None,
@@ -455,7 +1143,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "acos" => {
                     check_built_in_args(name, &arg_vals, 1)?;
                     let val = arg_vals[0].value;
-                    if val < -1.0 || val > 1.0 {
+                    if !(-1.0..=1.0).contains(&val) {
                         return Err("Argument to 'acos' must be between -1.0 and 1.0".to_string());
                     }
                     Ok(Quantity { is_bool: false, list: None,
@@ -491,8 +1179,42 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         unit: None,
                     })
                 }
+                "asinh" => {
+                    check_built_in_args(name, &arg_vals, 1)?;
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: arg_vals[0].value.asinh(),
+                        unit: None,
+                    })
+                }
+                "acosh" => {
+                    check_built_in_args(name, &arg_vals, 1)?;
+                    let val = arg_vals[0].value;
+                    if val < 1.0 {
+                        return Err("Argument to 'acosh' must be greater than or equal to 1.0".to_string());
+                    }
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: val.acosh(),
+                        unit: None,
+                    })
+                }
+                "atanh" => {
+                    check_built_in_args(name, &arg_vals, 1)?;
+                    let val = arg_vals[0].value;
+                    if val <= -1.0 || val >= 1.0 {
+                        return Err("Argument to 'atanh' must be between -1.0 and 1.0 (exclusive)".to_string());
+                    }
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: val.atanh(),
+                        unit: None,
+                    })
+                }
                 "exp" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        let r = a.exp();
+                        return Ok(make_complex_qty(r * b.cos(), r * b.sin()));
+                    }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.exp(),
                         unit: None,
@@ -531,6 +1253,35 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     Ok(Quantity { is_bool: false, list: None,
                         value: total,
                         unit: target_unit.clone(),
+                    })
+                }
+                "prod" | "product" => {
+                    if arg_vals.is_empty() {
+                        return Err("Function 'prod' expects at least 1 argument".to_string());
+                    }
+                    let mut flat_args = Vec::new();
+                    for arg in &arg_vals {
+                        flatten_quantity(arg, &mut flat_args);
+                    }
+                    if flat_args.is_empty() {
+                        return Err("Function 'prod' expects at least 1 argument or non-empty list".to_string());
+                    }
+                    let mut total_val = 1.0;
+                    let mut current_unit: Option<String> = None;
+                    for q in flat_args {
+                        total_val *= q.value;
+                        let (new_unit, multiplier) = combine_units_with_multiplier(
+                            current_unit.as_deref(),
+                            q.unit.as_deref(),
+                            false,
+                            &ctx.exchange_rates,
+                        );
+                        total_val *= multiplier;
+                        current_unit = new_unit;
+                    }
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: total_val,
+                        unit: current_unit,
                     })
                 }
                 "mean" | "average" => {
@@ -886,31 +1637,126 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     Ok(Quantity::boolean(res))
                 }
                 "log" => {
-                    check_built_in_args(name, &arg_vals, 1)?;
-                    Ok(Quantity { is_bool: false, list: None,
-                        value: arg_vals[0].value.log10(),
-                        unit: None,
-                    })
+                    if arg_vals.len() != 1 && arg_vals.len() != 2 {
+                        return Err("Function 'log' expects 1 or 2 arguments".to_string());
+                    }
+                    if arg_vals.len() == 2 {
+                        if arg_vals[1].unit.is_some() || is_complex(&arg_vals[1]) {
+                            return Err("Second argument to 'log' (base) must be a real dimensionless number".to_string());
+                        }
+                        let base = arg_vals[1].value;
+                        if base <= 0.0 || base == 1.0 {
+                            return Err("Logarithm base must be positive and not equal to 1".to_string());
+                        }
+                        if is_complex(&arg_vals[0]) {
+                            let (a, b) = to_complex_parts(&arg_vals[0]);
+                            let r = (a * a + b * b).sqrt();
+                            let theta = b.atan2(a);
+                            let ln_z = make_complex_qty(r.ln(), theta);
+                            let (ln_re, ln_im) = to_complex_parts(&ln_z);
+                            let ln_base = base.ln();
+                            return Ok(make_complex_qty(ln_re / ln_base, ln_im / ln_base));
+                        }
+                        if arg_vals[0].value < 0.0 {
+                            let ln_re = (-arg_vals[0].value).ln();
+                            let ln_im = std::f64::consts::PI;
+                            let ln_base = base.ln();
+                            return Ok(make_complex_qty(ln_re / ln_base, ln_im / ln_base));
+                        }
+                        Ok(Quantity {
+                            is_bool: false,
+                            list: None,
+                            value: arg_vals[0].value.log(base),
+                            unit: None,
+                        })
+                    } else {
+                        if is_complex(&arg_vals[0]) {
+                            let (a, b) = to_complex_parts(&arg_vals[0]);
+                            let r = (a * a + b * b).sqrt();
+                            let theta = b.atan2(a);
+                            let ln_z = make_complex_qty(r.ln(), theta);
+                            let (ln_re, ln_im) = to_complex_parts(&ln_z);
+                            let ln_10 = 10.0f64.ln();
+                            return Ok(make_complex_qty(ln_re / ln_10, ln_im / ln_10));
+                        }
+                        if arg_vals[0].value < 0.0 {
+                            let ln_re = (-arg_vals[0].value).ln();
+                            let ln_im = std::f64::consts::PI;
+                            let ln_10 = 10.0f64.ln();
+                            return Ok(make_complex_qty(ln_re / ln_10, ln_im / ln_10));
+                        }
+                        Ok(Quantity { is_bool: false, list: None,
+                            value: arg_vals[0].value.log10(),
+                            unit: None,
+                        })
+                    }
                 }
                 "ln" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        let r = (a * a + b * b).sqrt();
+                        let theta = b.atan2(a);
+                        return Ok(make_complex_qty(r.ln(), theta));
+                    }
+                    if arg_vals[0].value < 0.0 {
+                        return Ok(make_complex_qty((-arg_vals[0].value).ln(), std::f64::consts::PI));
+                    }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.ln(),
                         unit: None,
                     })
                 }
+                "log2" => {
+                    check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        let r = (a * a + b * b).sqrt();
+                        let theta = b.atan2(a);
+                        let ln_z = make_complex_qty(r.ln(), theta);
+                        let (ln_re, ln_im) = to_complex_parts(&ln_z);
+                        let ln_2 = 2.0f64.ln();
+                        return Ok(make_complex_qty(ln_re / ln_2, ln_im / ln_2));
+                    }
+                    if arg_vals[0].value < 0.0 {
+                        let ln_re = (-arg_vals[0].value).ln();
+                        let ln_im = std::f64::consts::PI;
+                        let ln_2 = 2.0f64.ln();
+                        return Ok(make_complex_qty(ln_re / ln_2, ln_im / ln_2));
+                    }
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: arg_vals[0].value.log2(),
+                        unit: None,
+                    })
+                }
                 "sqrt" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        let r = (a * a + b * b).sqrt();
+                        let theta = b.atan2(a);
+                        let r_sqrt = r.sqrt();
+                        let half_theta = theta / 2.0;
+                        return Ok(make_complex_qty(r_sqrt * half_theta.cos(), r_sqrt * half_theta.sin()));
+                    }
                     if arg_vals[0].value < 0.0 {
-                        return Err("Cannot compute square root of a negative number".to_string());
+                        let val = (-arg_vals[0].value).sqrt();
+                        return Ok(make_complex_qty(0.0, val));
                     }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.sqrt(),
-                        unit: arg_vals[0].unit.clone(), // sqrt(9m^2) would ideally be 3m, but simply forward unit
+                        unit: arg_vals[0].unit.clone(),
                     })
                 }
                 "abs" => {
                     check_built_in_args(name, &arg_vals, 1)?;
+                    if is_complex(&arg_vals[0]) {
+                        let (a, b) = to_complex_parts(&arg_vals[0]);
+                        return Ok(Quantity { is_bool: false, list: None,
+                            value: (a * a + b * b).sqrt(),
+                            unit: None,
+                        });
+                    }
                     Ok(Quantity { is_bool: false, list: None,
                         value: arg_vals[0].value.abs(),
                         unit: arg_vals[0].unit.clone(),
@@ -935,6 +1781,12 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         value: rounded,
                         unit: arg_vals[0].unit.clone(),
                     })
+                }
+                "xor" => {
+                    check_built_in_args(name, &arg_vals, 2)?;
+                    let val = (arg_vals[0].value as i64) ^ (arg_vals[1].value as i64);
+                    let unit = arg_vals[0].unit.clone().or(arg_vals[1].unit.clone());
+                    Ok(Quantity { is_bool: false, list: None, value: val as f64, unit })
                 }
                 "ceil" => {
                     check_built_in_args(name, &arg_vals, 1)?;
@@ -1011,7 +1863,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                             })
                         }
                         _ => {
-                            return Err("Cannot compare a quantity with a dimensionless value in mod()".to_string());
+                            Err("Cannot compare a quantity with a dimensionless value in mod()".to_string())
                         }
                     }
                 }
@@ -1198,7 +2050,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     let original_variables = ctx.variables.clone();
 
                     // Bind parameters to argument values
-                    for (param_name, arg_qty) in params.iter().zip(arg_vals.into_iter()) {
+                    for (param_name, arg_qty) in params.iter().zip(arg_vals) {
                         ctx.variables.insert(param_name.clone(), arg_qty);
                     }
 
@@ -1240,6 +2092,15 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
 
             match op {
                 Op::Add | Op::Sub => {
+                    if is_complex(&left_qty) || is_complex(&right_qty) {
+                        let (a, b) = to_complex_parts(&left_qty);
+                        let (c, d) = to_complex_parts(&right_qty);
+                        return match op {
+                            Op::Add => Ok(make_complex_qty(a + c, b + d)),
+                            Op::Sub => Ok(make_complex_qty(a - c, b - d)),
+                            _ => unreachable!(),
+                        };
+                    }
                     match (&left_qty.unit, &right_qty.unit) {
                         (None, None) => {
                             let value = match op {
@@ -1277,6 +2138,11 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     }
                 }
                 Op::Mul => {
+                    if is_complex(&left_qty) || is_complex(&right_qty) {
+                        let (a, b) = to_complex_parts(&left_qty);
+                        let (c, d) = to_complex_parts(&right_qty);
+                        return Ok(make_complex_qty(a * c - b * d, a * d + b * c));
+                    }
                     let (unit, multiplier) = combine_units_with_multiplier(
                         left_qty.unit.as_deref(),
                         right_qty.unit.as_deref(),
@@ -1287,6 +2153,15 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     Ok(Quantity { is_bool: false, list: None, value, unit })
                 }
                 Op::Div => {
+                    if is_complex(&left_qty) || is_complex(&right_qty) {
+                        let (a, b) = to_complex_parts(&left_qty);
+                        let (c, d) = to_complex_parts(&right_qty);
+                        let denom = c * c + d * d;
+                        if denom == 0.0 {
+                            return Err("Division by zero in complex division".to_string());
+                        }
+                        return Ok(make_complex_qty((a * c + b * d) / denom, (b * c - a * d) / denom));
+                    }
                     if right_qty.value == 0.0 {
                         return Err("Division by zero".to_string());
                     }
@@ -1300,14 +2175,39 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     Ok(Quantity { is_bool: false, list: None, value, unit })
                 }
                 Op::Pow => {
+                    if is_complex(&left_qty) || is_complex(&right_qty) {
+                        let (a, b) = to_complex_parts(&left_qty);
+                        let (c, d) = to_complex_parts(&right_qty);
+                        if d != 0.0 {
+                            return Err("Complex exponent is not supported".to_string());
+                        }
+                        let n = c; // real exponent
+                        let r = (a * a + b * b).sqrt();
+                        let theta = b.atan2(a);
+                        let r_n = r.powf(n);
+                        let n_theta = n * theta;
+                        return Ok(make_complex_qty(r_n * n_theta.cos(), r_n * n_theta.sin()));
+                    }
                     if right_qty.unit.is_some() {
                         return Err("Exponent power must be a dimensionless scalar".to_string());
                     }
                     let value = left_qty.value.powf(right_qty.value);
-                    Ok(Quantity { is_bool: false, list: None,
-                        value,
-                        unit: left_qty.unit, // Simplified: assume unit stays unchanged (e.g. m^2 area needs derived unit support, but for now we forward unit)
-                    })
+                    let unit = if let Some(ref u) = left_qty.unit {
+                        let power = right_qty.value;
+                        if power == 0.0 {
+                            None
+                        } else {
+                            let mut map = crate::math::units::parse_unit(u);
+                            for exp in map.values_mut() {
+                                *exp = (*exp as f64 * power).round() as i32;
+                            }
+                            map.retain(|_, &mut exp| exp != 0);
+                            crate::math::units::format_unit_map(&map)
+                        }
+                    } else {
+                        None
+                    };
+                    Ok(Quantity { is_bool: false, list: None, value, unit })
                 }
                 Op::Mod => {
                     let u1 = &left_qty.unit;
@@ -1331,7 +2231,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                             })
                         }
                         _ => {
-                            return Err("Cannot compare a quantity with a dimensionless value in modulo operator".to_string());
+                            Err("Cannot compare a quantity with a dimensionless value in modulo operator".to_string())
                         }
                     }
                 }
@@ -1367,6 +2267,26 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     let res = eval_or_logic(&left_qty, &right_qty)?;
                     Ok(Quantity::boolean(res))
                 }
+                Op::BitAnd => {
+                    let val = (left_qty.value as i64) & (right_qty.value as i64);
+                    let unit = left_qty.unit.or(right_qty.unit);
+                    Ok(Quantity { is_bool: false, list: None, value: val as f64, unit })
+                }
+                Op::BitOr => {
+                    let val = (left_qty.value as i64) | (right_qty.value as i64);
+                    let unit = left_qty.unit.or(right_qty.unit);
+                    Ok(Quantity { is_bool: false, list: None, value: val as f64, unit })
+                }
+                Op::LShift => {
+                    let val = (left_qty.value as i64) << (right_qty.value as i64);
+                    let unit = left_qty.unit;
+                    Ok(Quantity { is_bool: false, list: None, value: val as f64, unit })
+                }
+                Op::RShift => {
+                    let val = (left_qty.value as i64) >> (right_qty.value as i64);
+                    let unit = left_qty.unit;
+                    Ok(Quantity { is_bool: false, list: None, value: val as f64, unit })
+                }
             }
         }
     }
@@ -1390,6 +2310,30 @@ pub fn format_quantity(qty: &Quantity) -> String {
         if u.starts_with("sparkline:") {
             return u["sparkline:".len()..].to_string();
         }
+        if u.starts_with("formula:") {
+            return u["formula:".len()..].to_string();
+        }
+        if u == "complex"
+            && let Some(ref list) = qty.list
+                && list.len() >= 2 {
+                    let re = list[0].value;
+                    let im = list[1].value;
+                    let re_str = if re.fract() == 0.0 {
+                        format!("{}", re as i64)
+                    } else {
+                        format!("{:.4}", re).trim_end_matches('0').trim_end_matches('.').to_string()
+                    };
+                    let im_str = if im.abs().fract() == 0.0 {
+                        format!("{}", im.abs() as i64)
+                    } else {
+                        format!("{:.4}", im.abs()).trim_end_matches('0').trim_end_matches('.').to_string()
+                    };
+                    if im < 0.0 {
+                        return format!("{} - {}i", re_str, im_str);
+                    } else {
+                        return format!("{} + {}i", re_str, im_str);
+                    }
+                }
     }
 
     if qty.is_bool {
@@ -1397,28 +2341,45 @@ pub fn format_quantity(qty: &Quantity) -> String {
     }
 
     if let Some(ref elements) = qty.list {
-        let formatted: Vec<String> = elements.iter().map(|el| format_quantity(el)).collect();
+        let formatted: Vec<String> = elements.iter().map(format_quantity).collect();
         return format!("[{}]", formatted.join(", "));
     }
 
-    let rounded = if qty.value.fract() == 0.0 {
-        format!("{}", qty.value as i64)
+    let rounded = if let Some(ref u) = qty.unit {
+        if u == "hex" {
+            format!("0x{:X}", qty.value as i64)
+        } else if u == "bin" {
+            format!("0b{:b}", qty.value as i64)
+        } else {
+            if qty.value.fract() == 0.0 {
+                format!("{}", qty.value as i64)
+            } else {
+                format!("{:.4}", qty.value)
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .to_string()
+            }
+        }
     } else {
-        // limit to 4 decimal places
-        format!("{:.4}", qty.value)
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
+        if qty.value.fract() == 0.0 {
+            format!("{}", qty.value as i64)
+        } else {
+            format!("{:.4}", qty.value)
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string()
+        }
     };
 
     match &qty.unit {
         Some(u) => {
-            if u.starts_with('$') {
-                let suffix = &u[1..];
+            if u == "hex" || u == "bin" {
+                rounded
+            } else if let Some(suffix) = u.strip_prefix('$') {
                 format!("${}{}", rounded, suffix)
             } else {
                 let starts_with_word = u.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false);
-                if starts_with_word {
+                if starts_with_word && u != "i" {
                     format!("{} {}", rounded, u) // postfix format with space for words
                 } else {
                     format!("{}{}", rounded, u) // postfix format without space for symbols
@@ -1426,6 +2387,70 @@ pub fn format_quantity(qty: &Quantity) -> String {
             }
         }
         None => rounded,
+    }
+}
+
+fn find_variable_in_expr(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Variable(name) => Some(name.clone()),
+        Expr::Percentage(inner) => find_variable_in_expr(inner),
+        Expr::BinaryOp(_, left, right) => {
+            find_variable_in_expr(left).or_else(|| find_variable_in_expr(right))
+        }
+        Expr::FnCall(_, args) => {
+            for arg in args {
+                if let Some(v) = find_variable_in_expr(arg) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        Expr::Convert(inner, _) => find_variable_in_expr(inner),
+        Expr::List(elements) => {
+            for el in elements {
+                if let Some(v) = find_variable_in_expr(el) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        Expr::Not(inner) => find_variable_in_expr(inner),
+        Expr::BitNot(inner) => find_variable_in_expr(inner),
+        _ => None,
+    }
+}
+
+fn find_all_variables_in_expr(expr: &Expr) -> Vec<String> {
+    let mut vars = Vec::new();
+    find_all_variables_in_expr_helper(expr, &mut vars);
+    vars
+}
+
+fn find_all_variables_in_expr_helper(expr: &Expr, vars: &mut Vec<String>) {
+    match expr {
+        Expr::Variable(name)
+            if !vars.contains(name) => {
+                vars.push(name.clone());
+            }
+        Expr::Percentage(inner) => find_all_variables_in_expr_helper(inner, vars),
+        Expr::BinaryOp(_, left, right) => {
+            find_all_variables_in_expr_helper(left, vars);
+            find_all_variables_in_expr_helper(right, vars);
+        }
+        Expr::FnCall(_, args) => {
+            for arg in args {
+                find_all_variables_in_expr_helper(arg, vars);
+            }
+        }
+        Expr::Convert(inner, _) => find_all_variables_in_expr_helper(inner, vars),
+        Expr::List(elements) => {
+            for el in elements {
+                find_all_variables_in_expr_helper(el, vars);
+            }
+        }
+        Expr::Not(inner) => find_all_variables_in_expr_helper(inner, vars),
+        Expr::BitNot(inner) => find_all_variables_in_expr_helper(inner, vars),
+        _ => {}
     }
 }
 
@@ -1731,5 +2756,225 @@ mod tests {
 
         let plot_qty2 = eval_expr(&parse_line("plot(10, 10, 10) =>").unwrap_expr(), &mut ctx).unwrap();
         assert_eq!(format_quantity(&plot_qty2), "▄▄▄");
+    }
+
+    #[test]
+    fn test_equation_solver_and_custom_units() {
+        let mut ctx = Context::default();
+
+        // 1. Test basic equation solving
+        let expr1 = parse_line("solve(2 * x + 5 == 15, x) =>").unwrap_expr();
+        let res1 = eval_expr(&expr1, &mut ctx).unwrap();
+        assert_eq!(res1.value, 5.0);
+
+        // 2. Test equation solving with units
+        let expr2 = parse_line("solve(3 * y - 10m == 20m, y) =>").unwrap_expr();
+        let res2 = eval_expr(&expr2, &mut ctx).unwrap();
+        assert_eq!(res2.value, 10.0);
+        assert_eq!(res2.unit, Some("m".to_string()));
+
+        // 3. Test custom units via evaluate_sheet
+        let rates = HashMap::new();
+        let sheet = r#"
+widget = 15cm
+res = 2 widget + 10cm
+res =>
+res_cm = 2 widget in cm
+res_cm =>
+"#;
+        let (output, _) = crate::math::evaluate_sheet(sheet, &rates);
+        assert!(output.contains("res => 2.6667 widget"), "Actual output: {}", output);
+        assert!(output.contains("res_cm => 30 cm"), "Actual output: {}", output);
+
+        // 4. Test complex custom unit: J = 1 kg * m^2 / s^2
+        let sheet_complex = r#"
+J = 1 kg * m^2 / s^2
+res_j = 2 J + 5 kg * m^2 / s^2
+res_j =>
+"#;
+        let (output_complex, _) = crate::math::evaluate_sheet(sheet_complex, &rates);
+        assert!(output_complex.contains("res_j => 7 J"), "Actual output: {}", output_complex);
+    }
+
+    #[test]
+    fn test_hex_and_bin_support() {
+        let mut ctx = Context::default();
+
+        // 1. Basic parsing
+        let expr1 = parse_line("0xA9 =>").unwrap_expr();
+        let res1 = eval_expr(&expr1, &mut ctx).unwrap();
+        assert_eq!(res1.value, 169.0);
+
+        let expr2 = parse_line("0b1010 =>").unwrap_expr();
+        let res2 = eval_expr(&expr2, &mut ctx).unwrap();
+        assert_eq!(res2.value, 10.0);
+
+        // 2. Formatting in hex / bin
+        let expr3 = parse_line("0xA9 + 5 in hex =>").unwrap_expr();
+        let res3 = eval_expr(&expr3, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res3), "0xAE");
+
+        let expr4 = parse_line("0b1010 & 0b0011 in bin =>").unwrap_expr();
+        let res4 = eval_expr(&expr4, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res4), "0b10");
+
+        // 3. Bitwise OR and XOR
+        let expr5 = parse_line("0b1010 | 0b0011 in bin =>").unwrap_expr();
+        let res5 = eval_expr(&expr5, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res5), "0b1011");
+
+        let expr6 = parse_line("xor(0b1010, 0b0011) in bin =>").unwrap_expr();
+        let res6 = eval_expr(&expr6, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res6), "0b1001");
+
+        // 4. Bitwise Shift
+        let expr7 = parse_line("0b1010 << 1 in bin =>").unwrap_expr();
+        let res7 = eval_expr(&expr7, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res7), "0b10100");
+    }
+
+    #[test]
+    fn test_symbolic_differentiation() {
+        let mut ctx = Context::default();
+
+        // 1. Symbolic formula
+        let expr1 = parse_line("diff(x^2 + 5 * x - 3, x) =>").unwrap_expr();
+        let res1 = eval_expr(&expr1, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res1), "2 * x + 5");
+
+        let expr2 = parse_line("der(sin(y) + cos(y), y) =>").unwrap_expr();
+        let res2 = eval_expr(&expr2, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res2), "cos(y) - sin(y)");
+
+        // 2. Evaluation with variable defined
+        let sheet = r#"
+        x = 10
+        res = diff(x^2 + 5 * x, x)
+        res =>
+        "#;
+        let rates = HashMap::new();
+        let (output, _) = crate::math::evaluate_sheet(sheet, &rates);
+        assert!(output.contains("res => 25"), "Actual output: {}", output);
+    }
+
+    #[test]
+    fn test_complex_numbers_support() {
+        let mut ctx = Context::default();
+
+        // 1. imaginary literals
+        let expr1 = parse_line("3i =>").unwrap_expr();
+        let res1 = eval_expr(&expr1, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res1), "3i");
+
+        // 2. complex addition and subtraction
+        let expr2 = parse_line("(2 + 3i) + (4 - 5i) =>").unwrap_expr();
+        let res2 = eval_expr(&expr2, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res2), "6 - 2i");
+
+        // 3. complex multiplication
+        let expr3 = parse_line("(2 + 3i) * (4 + 5i) =>").unwrap_expr();
+        let res3 = eval_expr(&expr3, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res3), "-7 + 22i");
+
+        // 4. complex division
+        let expr4 = parse_line("(2 + 3i) / (1 + 2i) =>").unwrap_expr();
+        let res4 = eval_expr(&expr4, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res4), "1.6 - 0.2i");
+
+        // 5. negative square roots
+        let expr5 = parse_line("sqrt(-4) =>").unwrap_expr();
+        let res5 = eval_expr(&expr5, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res5), "2i");
+
+        // 6. complex modulus / absolute value
+        let expr6 = parse_line("abs(3 + 4i) =>").unwrap_expr();
+        let res6 = eval_expr(&expr6, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res6), "5");
+    }
+
+    #[test]
+    fn test_calca_extension_capabilities() {
+        let mut ctx = Context::default();
+
+        // 1. Inverse Hyperbolic Functions
+        let expr_asinh = parse_line("asinh(0.5) =>").unwrap_expr();
+        let res_asinh = eval_expr(&expr_asinh, &mut ctx).unwrap();
+        assert!((res_asinh.value - 0.481211825).abs() < 1e-6);
+
+        let expr_acosh = parse_line("acosh(2.0) =>").unwrap_expr();
+        let res_acosh = eval_expr(&expr_acosh, &mut ctx).unwrap();
+        assert!((res_acosh.value - 1.316957896).abs() < 1e-6);
+
+        let expr_atanh = parse_line("atanh(0.5) =>").unwrap_expr();
+        let res_atanh = eval_expr(&expr_atanh, &mut ctx).unwrap();
+        assert!((res_atanh.value - 0.549306144).abs() < 1e-6);
+
+        // 2. Extended Logarithms
+        let expr_log = parse_line("log(100) =>").unwrap_expr();
+        let res_log = eval_expr(&expr_log, &mut ctx).unwrap();
+        assert_eq!(res_log.value, 2.0);
+
+        let expr_log_base = parse_line("log(8, 2) =>").unwrap_expr();
+        let res_log_base = eval_expr(&expr_log_base, &mut ctx).unwrap();
+        assert_eq!(res_log_base.value, 3.0);
+
+        let expr_log2 = parse_line("log2(16) =>").unwrap_expr();
+        let res_log2 = eval_expr(&expr_log2, &mut ctx).unwrap();
+        assert_eq!(res_log2.value, 4.0);
+
+        let expr_log_neg = parse_line("ln(-1) =>").unwrap_expr();
+        let res_log_neg = eval_expr(&expr_log_neg, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res_log_neg), "3.1416i");
+
+        // 3. List Product
+        let expr_prod = parse_line("prod([2, 3, 4]) =>").unwrap_expr();
+        let res_prod = eval_expr(&expr_prod, &mut ctx).unwrap();
+        assert_eq!(res_prod.value, 24.0);
+
+        let expr_prod_units = parse_line("prod(2m, 3m) =>").unwrap_expr();
+        let res_prod_units = eval_expr(&expr_prod_units, &mut ctx).unwrap();
+        assert_eq!(res_prod_units.value, 6.0);
+        assert_eq!(res_prod_units.unit, Some("m^2".to_string()));
+
+        // 4. Functional Map & Reduce
+        let expr_map = parse_line("map(x^2, [1, 2, 3]) =>").unwrap_expr();
+        let res_map = eval_expr(&expr_map, &mut ctx).unwrap();
+        assert_eq!(format_quantity(&res_map), "[1, 4, 9]");
+
+        let expr_reduce = parse_line("reduce(x + y, [10, 20, 30]) =>").unwrap_expr();
+        let res_reduce = eval_expr(&expr_reduce, &mut ctx).unwrap();
+        assert_eq!(res_reduce.value, 60.0);
+
+        let expr_reduce_custom = parse_line("reduce(a * b, [2, 3, 4]) =>").unwrap_expr();
+        let res_reduce_custom = eval_expr(&expr_reduce_custom, &mut ctx).unwrap();
+        assert_eq!(res_reduce_custom.value, 24.0);
+    }
+
+    #[test]
+    fn test_common_constants() {
+        let mut ctx = Context::default();
+
+        // 1. Test c (speed of light)
+        let expr_c = parse_line("c =>").unwrap_expr();
+        let res_c = eval_expr(&expr_c, &mut ctx).unwrap();
+        assert_eq!(res_c.value, 299792458.0);
+        assert_eq!(res_c.unit, Some("m/s".to_string()));
+
+        // 2. Test g (acceleration of gravity)
+        let expr_g = parse_line("g =>").unwrap_expr();
+        let res_g = eval_expr(&expr_g, &mut ctx).unwrap();
+        assert_eq!(res_g.value, 9.80665);
+        assert_eq!(res_g.unit, Some("m/s^2".to_string()));
+
+        // 3. Test unit conversion using constant unit (e.g. converting speed to c)
+        let expr_conv = parse_line("599584916 m/s in c =>").unwrap_expr();
+        let res_conv = eval_expr(&expr_conv, &mut ctx).unwrap();
+        assert_eq!(res_conv.value, 2.0);
+        assert_eq!(res_conv.unit, Some("c".to_string()));
+
+        // 4. Test hbar
+        let expr_hbar = parse_line("hbar =>").unwrap_expr();
+        let res_hbar = eval_expr(&expr_hbar, &mut ctx).unwrap();
+        assert_eq!(res_hbar.value, 1.054571817e-34);
     }
 }

@@ -13,6 +13,8 @@ pub fn evaluate_sheet(
     sheet_text: &str,
     exchange_rates: &HashMap<String, f64>,
 ) -> (String, Vec<(String, String)>) {
+    units::clear_custom_units();
+
     let mut ctx = eval::Context::default();
     ctx.exchange_rates = exchange_rates.clone();
 
@@ -37,7 +39,10 @@ pub fn evaluate_sheet(
                         } else {
                             vars_inspector.push((name.clone(), formatted.clone()));
                         }
-                        ctx.variables.insert(name, qty);
+                        ctx.variables.insert(name.clone(), qty.clone());
+                        if let Some(ref unit_str) = qty.unit {
+                            let _ = units::register_custom_unit(&name, qty.value, unit_str);
+                        }
                         if current_result.is_some() || raw_prefix.contains("=>") {
                             updated_lines.push(format!("{} {}", raw_prefix, formatted));
                         } else {
@@ -95,7 +100,7 @@ fn evaluate_inline_math(text: &str, ctx: &mut eval::Context) -> String {
         if ch == '`' {
             let mut inner = String::new();
             let mut closed = false;
-            while let Some(next_ch) = chars.next() {
+            for next_ch in chars.by_ref() {
                 if next_ch == '`' {
                     closed = true;
                     break;
@@ -129,7 +134,7 @@ fn evaluate_inline_math(text: &str, ctx: &mut eval::Context) -> String {
                     result.push_str(&format!("`{}`", inner)); // no arrow
                 }
             } else {
-                result.push_str("`");
+                result.push('`');
                 result.push_str(&inner);
             }
         } else {

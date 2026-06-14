@@ -29,6 +29,13 @@ pub enum Token {
     And,        // and
     Or,         // or
     Not,        // not
+
+    // Bitwise
+    Ampersand,  // &
+    Pipe,       // |
+    Tilde,      // ~
+    LShift,     // <<
+    RShift,     // >>
 }
 
 pub struct Lexer<'a> {
@@ -74,6 +81,18 @@ impl<'a> Lexer<'a> {
                     self.chars.next();
                     tokens.push(Token::Caret);
                 }
+                '&' => {
+                    self.chars.next();
+                    tokens.push(Token::Ampersand);
+                }
+                '|' => {
+                    self.chars.next();
+                    tokens.push(Token::Pipe);
+                }
+                '~' => {
+                    self.chars.next();
+                    tokens.push(Token::Tilde);
+                }
                 '(' => {
                     self.chars.next();
                     tokens.push(Token::LPar);
@@ -115,6 +134,9 @@ impl<'a> Lexer<'a> {
                     if let Some(&(_, '=')) = self.chars.peek() {
                         self.chars.next();
                         tokens.push(Token::LessEq);
+                    } else if let Some(&(_, '<')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::LShift);
                     } else {
                         tokens.push(Token::Less);
                     }
@@ -124,6 +146,9 @@ impl<'a> Lexer<'a> {
                     if let Some(&(_, '=')) = self.chars.peek() {
                         self.chars.next();
                         tokens.push(Token::GreaterEq);
+                    } else if let Some(&(_, '>')) = self.chars.peek() {
+                        self.chars.next();
+                        tokens.push(Token::RShift);
                     } else {
                         tokens.push(Token::Greater);
                     }
@@ -143,6 +168,25 @@ impl<'a> Lexer<'a> {
                     tokens.push(Token::Identifier("$".to_string()));
                 }
                 _ if ch.is_ascii_digit() => {
+                    // Check for hex or binary prefix
+                    let mut chars_clone = self.chars.clone();
+                    chars_clone.next(); // consume current digit (which would be '0' for hex/bin)
+                    if ch == '0'
+                        && let Some((_, next_ch)) = chars_clone.peek() {
+                            if *next_ch == 'x' || *next_ch == 'X' {
+                                self.chars.next();
+                                self.chars.next();
+                                let token = self.lex_hex_number(idx + 2)?;
+                                tokens.push(token);
+                                continue;
+                            } else if *next_ch == 'b' || *next_ch == 'B' {
+                                self.chars.next();
+                                self.chars.next();
+                                let token = self.lex_bin_number(idx + 2)?;
+                                tokens.push(token);
+                                continue;
+                            }
+                        }
                     let token = self.lex_number(idx)?;
                     tokens.push(token);
                 }
@@ -157,6 +201,46 @@ impl<'a> Lexer<'a> {
         }
 
         Ok(tokens)
+    }
+
+    fn lex_hex_number(&mut self, start_idx: usize) -> Result<Token, String> {
+        let mut end_idx = start_idx;
+        while let Some(&(idx, ch)) = self.chars.peek() {
+            if ch.is_ascii_hexdigit() {
+                self.chars.next();
+                end_idx = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end_idx == start_idx {
+            return Err(format!("Empty hexadecimal literal at position {}", start_idx));
+        }
+        let hex_str = &self.input[start_idx..end_idx];
+        match i64::from_str_radix(hex_str, 16) {
+            Ok(val) => Ok(Token::Number(val as f64)),
+            Err(e) => Err(format!("Failed to parse hex number '{}': {}", hex_str, e)),
+        }
+    }
+
+    fn lex_bin_number(&mut self, start_idx: usize) -> Result<Token, String> {
+        let mut end_idx = start_idx;
+        while let Some(&(idx, ch)) = self.chars.peek() {
+            if ch == '0' || ch == '1' {
+                self.chars.next();
+                end_idx = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end_idx == start_idx {
+            return Err(format!("Empty binary literal at position {}", start_idx));
+        }
+        let bin_str = &self.input[start_idx..end_idx];
+        match i64::from_str_radix(bin_str, 2) {
+            Ok(val) => Ok(Token::Number(val as f64)),
+            Err(e) => Err(format!("Failed to parse binary number '{}': {}", bin_str, e)),
+        }
     }
 
     fn lex_number(&mut self, start_idx: usize) -> Result<Token, String> {
