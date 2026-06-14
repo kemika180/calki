@@ -62,6 +62,10 @@ impl WikiManager {
             let _ = fs::rename(&legacy_index_path, &home_path);
         }
 
+        let grocery_path = self.root_dir.join("grocery-list.md");
+        let savings_path = self.root_dir.join("savings-plan.md");
+        let trip_path = self.root_dir.join("trip-planning.md");
+
         if !home_path.exists() {
             let onboarding_content = r#"# Welcome to calki! 🧮 📝
 
@@ -106,12 +110,10 @@ We've pre-generated a few demo notes to showcase different capabilities. Press *
 "#;
             fs::write(&home_path, onboarding_content)
                 .map_err(|e| format!("Failed to write onboarding home.md: {}", e))?;
-        }
 
-        // Generate sample pages if they don't exist
-        let grocery_path = self.root_dir.join("grocery-list.md");
-        if !grocery_path.exists() {
-            let grocery_content = r#"# Grocery List 🛒
+            // Generate sample pages if they don't exist
+            if !grocery_path.exists() {
+                let grocery_content = r#"# Grocery List 🛒
 
 Planning this week's groceries and budgeting with tax and discounts.
 
@@ -136,12 +138,11 @@ total => $19.1091
 
 Back to [[Home]].
 "#;
-            let _ = fs::write(&grocery_path, grocery_content);
-        }
+                let _ = fs::write(&grocery_path, grocery_content);
+            }
 
-        let savings_path = self.root_dir.join("savings-plan.md");
-        if !savings_path.exists() {
-            let savings_content = r#"# Savings Plan 💰
+            if !savings_path.exists() {
+                let savings_content = r#"# Savings Plan 💰
 
 Let's plan for a big purchase or retirement using financial compounding functions.
 
@@ -170,12 +171,11 @@ additional_pmt = shortfall * monthly_rate / (1 - (1 + monthly_rate)^(-1 * months
 
 Back to [[Home]].
 "#;
-            let _ = fs::write(&savings_path, savings_content);
-        }
+                let _ = fs::write(&savings_path, savings_content);
+            }
 
-        let trip_path = self.root_dir.join("trip-planning.md");
-        if !trip_path.exists() {
-            let trip_content = r#"# Trip Planning 🚗 ✈️
+            if !trip_path.exists() {
+                let trip_content = r#"# Trip Planning 🚗 ✈️
 
 Calculating driving times, fuel costs, and speed conversions for a road trip.
 
@@ -205,14 +205,23 @@ metric_speed => 104.6074 km/h
 
 Back to [[Home]].
 "#;
-            let _ = fs::write(&trip_path, trip_content);
+                let _ = fs::write(&trip_path, trip_content);
+            }
         }
 
-        // Scan newly initialized files so registry starts populated
-        self.scan_outgoing_links(&home_path);
-        self.scan_outgoing_links(&grocery_path);
-        self.scan_outgoing_links(&savings_path);
-        self.scan_outgoing_links(&trip_path);
+        // Scan existing files so registry starts populated
+        if home_path.exists() {
+            self.scan_outgoing_links(&home_path);
+        }
+        if grocery_path.exists() {
+            self.scan_outgoing_links(&grocery_path);
+        }
+        if savings_path.exists() {
+            self.scan_outgoing_links(&savings_path);
+        }
+        if trip_path.exists() {
+            self.scan_outgoing_links(&trip_path);
+        }
 
         Ok(home_path)
     }
@@ -403,6 +412,34 @@ mod tests {
 
         let backlinks_updated = mgr.scan_backlinks(&note2);
         assert!(backlinks_updated.is_empty());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_init_wiki_conditional_onboarding() {
+        let temp_dir = std::env::current_dir().unwrap().join("test_wiki_temp_conditional");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Write home.md beforehand
+        let home_path = temp_dir.join("home.md");
+        fs::write(&home_path, "# Custom Home\n").unwrap();
+
+        let mgr = WikiManager::new(&temp_dir);
+        let init_res = mgr.init_wiki();
+        assert!(init_res.is_ok());
+
+        // The custom home should not be overwritten
+        let home_content = fs::read_to_string(&home_path).unwrap();
+        assert_eq!(home_content, "# Custom Home\n");
+
+        // The default sample files (grocery-list.md, etc.) should not be generated
+        assert!(!temp_dir.join("grocery-list.md").exists());
+        assert!(!temp_dir.join("savings-plan.md").exists());
+        assert!(!temp_dir.join("trip-planning.md").exists());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
