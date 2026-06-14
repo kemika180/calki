@@ -131,7 +131,7 @@ impl SessionState {
     fn load() -> Option<Self> {
         #[cfg(test)]
         {
-            return None;
+            None
         }
         #[cfg(not(test))]
         {
@@ -145,7 +145,7 @@ impl SessionState {
     fn save(&self) -> Option<()> {
         #[cfg(test)]
         {
-            return Some(());
+            Some(())
         }
         #[cfg(not(test))]
         {
@@ -174,6 +174,8 @@ struct AppConfig {
     mouse_focus_on_hover: bool,
     #[serde(default = "default_false")]
     expand_variables_on_select: bool,
+    #[serde(default)]
+    ignored_update_hash: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -182,6 +184,7 @@ impl Default for AppConfig {
             scrolloff: 5,
             mouse_focus_on_hover: true,
             expand_variables_on_select: false,
+            ignored_update_hash: None,
         }
     }
 }
@@ -275,6 +278,11 @@ struct App {
 
     // Status Message / Toast
     status_message: Option<(String, std::time::Instant)>,
+
+    // Update checking
+    update_receiver: Option<std::sync::mpsc::Receiver<String>>,
+    update_available: Option<String>,
+    show_update_modal: bool,
 }
 
 fn trim_char_slice(mut slice: &[char]) -> &[char] {
@@ -304,6 +312,61 @@ fn trim_start_slice(mut slice: &[char]) -> &[char] {
         }
     }
     slice
+}
+
+fn check_for_updates() -> Option<std::sync::mpsc::Receiver<String>> {
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(not(test))]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        
+        std::thread::spawn(move || {
+            // 1. Get local commit hash
+            let manifest_dir = env!("CARGO_MANIFEST_DIR");
+            let local_output = std::process::Command::new("git")
+                .args(["-C", manifest_dir, "rev-parse", "HEAD"])
+                .output();
+                
+            let local_hash = match local_output {
+                Ok(output) if output.status.success() => {
+                    String::from_utf8_lossy(&output.stdout).trim().to_string()
+                }
+                _ => return,
+            };
+            
+            if local_hash.is_empty() {
+                return;
+            }
+
+            // 2. Fetch latest commit hash from GitHub API
+            let url = "https://api.github.com/repos/kemika180/calki/commits/main";
+            let agent = ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_secs(3))
+                .build();
+
+            let response = match agent.get(url).set("User-Agent", "calki-app").call() {
+                Ok(res) => res,
+                Err(_) => return,
+            };
+
+            let json_val: serde_json::Value = match response.into_json() {
+                Ok(json) => json,
+                Err(_) => return,
+            };
+
+            if let Some(remote_hash) = json_val["sha"].as_str() {
+                let remote_hash = remote_hash.trim().to_string();
+                if !remote_hash.is_empty() && local_hash != remote_hash {
+                    let _ = tx.send(remote_hash);
+                }
+            }
+        });
+
+        Some(rx)
+    }
 }
 
 impl App {
@@ -371,6 +434,8 @@ impl App {
         let config = AppConfig::load();
         let _ = config.save();
 
+        let update_receiver = check_for_updates();
+
         let mut app = Self {
             wiki_mgr,
             active_path,
@@ -402,6 +467,9 @@ impl App {
             search_results: Vec::new(),
             show_search_results: false,
             status_message: None,
+            update_receiver,
+            update_available: None,
+            show_update_modal: false,
         };
 
         if let Some(ref s) = session {
@@ -1664,6 +1732,17 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
 fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String> {
     let mut last_key_was_z = false;
     loop {
+        // Check for updates channel
+        if let Some(ref rx) = app.update_receiver
+            && let Ok(new_hash) = rx.try_recv()
+        {
+            app.update_available = Some(new_hash.clone());
+            if app.config.ignored_update_hash.as_ref() != Some(&new_hash) {
+                app.show_update_modal = true;
+            }
+            app.update_receiver = None; // Only check/notify once
+        }
+
         app.update_highlights();
         terminal.draw(|f| ui(f, app)).map_err(|e| e.to_string())?;
 
@@ -1689,6 +1768,19 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                 // Global exits: Ctrl-q works anywhere, regardless of mode/panel
                 if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break;
+                }
+
+                // If update modal is open
+                if app.show_update_modal {
+                    if let KeyCode::Char('i') | KeyCode::Char('I') = key.code
+                        && let Some(ref hash) = app.update_available
+                    {
+                        app.config.ignored_update_hash = Some(hash.clone());
+                        let _ = app.config.save();
+                    }
+                    app.show_update_modal = false;
+                    app.update_highlights();
+                    continue;
                 }
 
                 if app.search_active {
@@ -2779,6 +2871,37 @@ fn ui(f: &mut Frame, app: &mut App) {
         f.render_widget(paragraph, area);
     }
 
+    // Update available confirmation popup
+    if app.show_update_modal {
+        let area = centered_rect(65, 30, f.area());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(Color::Rgb(125, 207, 255))) // Cyan border for info
+            .bg(Color::Rgb(22, 22, 30))
+            .title(Span::styled(" Update Available ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
+
+        let text = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" A new version of ", Style::default().fg(text_fg_color)),
+                Span::styled("calki", Style::default().bold().fg(Color::Rgb(187, 154, 247))),
+                Span::styled(" is available on GitHub!", Style::default().fg(text_fg_color)),
+            ]).centered(),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  [i] ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                Span::styled("Ignore this update  ", Style::default().fg(text_fg_color)),
+                Span::styled("  [any other key] ", Style::default().fg(Color::Rgb(255, 158, 100)).bold()),
+                Span::styled("Dismiss  ", Style::default().fg(text_fg_color)),
+            ]).centered(),
+        ];
+
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+        f.render_widget(Clear, area);
+        f.render_widget(paragraph, area);
+    }
+
     // RENDER STATUS LINE
     if show_bottom_bar {
         let status_bg = Color::Rgb(22, 22, 30);
@@ -3529,6 +3652,66 @@ mod main_tests {
         let _ = std::fs::remove_dir_all(&wiki_root);
     }
 
+    #[test]
+    fn test_update_available_flow() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_update_flow");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.update_available = None;
+        app.show_update_modal = false;
+
+        // Setup a mock update channel
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.update_receiver = Some(rx);
+
+        // Send a mock hash
+        let new_hash = "mock_hash_12345".to_string();
+        tx.send(new_hash.clone()).unwrap();
+
+        // Simulate update check in run_app loop
+        if let Some(ref rx) = app.update_receiver
+            && let Ok(new_hash) = rx.try_recv()
+        {
+            app.update_available = Some(new_hash.clone());
+            if app.config.ignored_update_hash.as_ref() != Some(&new_hash) {
+                app.show_update_modal = true;
+            }
+            app.update_receiver = None;
+        }
+
+        assert_eq!(app.update_available, Some(new_hash.clone()));
+        assert!(app.show_update_modal);
+        assert!(app.update_receiver.is_none());
+
+        // Now ignore this hash and verify it is bypassed next time
+        app.config.ignored_update_hash = Some(new_hash.clone());
+        app.show_update_modal = false;
+
+        // Re-setup channel and send the same hash
+        let (tx2, rx2) = std::sync::mpsc::channel();
+        app.update_receiver = Some(rx2);
+        tx2.send(new_hash.clone()).unwrap();
+
+        if let Some(ref rx) = app.update_receiver
+            && let Ok(new_hash) = rx.try_recv()
+        {
+            app.update_available = Some(new_hash.clone());
+            if app.config.ignored_update_hash.as_ref() != Some(&new_hash) {
+                app.show_update_modal = true;
+            }
+            app.update_receiver = None;
+        }
+
+        assert!(!app.show_update_modal); // ignored, so should stay false!
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+
 
     #[test]
     fn test_compute_syntax_highlights_units() {
@@ -3899,18 +4082,21 @@ mod main_tests {
         assert_eq!(default_config.scrolloff, 5);
         assert!(default_config.mouse_focus_on_hover);
         assert!(!default_config.expand_variables_on_select);
+        assert_eq!(default_config.ignored_update_hash, None);
 
         // Test serialization and deserialization
         let custom_config = AppConfig {
             scrolloff: 8,
             mouse_focus_on_hover: false,
             expand_variables_on_select: true,
+            ignored_update_hash: Some("test_hash_val".to_string()),
         };
         let serialized = serde_json::to_string_pretty(&custom_config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.scrolloff, 8);
         assert!(!deserialized.mouse_focus_on_hover);
         assert!(deserialized.expand_variables_on_select);
+        assert_eq!(deserialized.ignored_update_hash, Some("test_hash_val".to_string()));
 
         // Test fallback defaults during deserialization (e.g. if fields are missing in JSON)
         let partial_json = r#"{"scrolloff": 12}"#;
