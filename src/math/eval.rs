@@ -944,60 +944,74 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     })
                 }
                 "min" => {
-                    check_built_in_args(name, &arg_vals, 2)?;
-                    let q1 = &arg_vals[0];
-                    let q2 = &arg_vals[1];
-                    let (u1, u2) = (&q1.unit, &q2.unit);
-                    match (u1, u2) {
-                        (Some(unit1), Some(unit2)) => {
-                            if !are_compatible(unit1, unit2) {
-                                return Err(format!("Incompatible units in min(): '{}' and '{}'", unit1, unit2));
+                    if arg_vals.is_empty() {
+                        return Err("Function 'min' expects at least 1 argument".to_string());
+                    }
+                    let mut flat_args = Vec::new();
+                    for arg in &arg_vals {
+                        flatten_quantity(arg, &mut flat_args);
+                    }
+                    if flat_args.is_empty() {
+                        return Err("Function 'min' expects at least 1 argument or non-empty list".to_string());
+                    }
+                    let mut min_val = flat_args[0].value;
+                    let target_unit = &flat_args[0].unit;
+                    for q in &flat_args[1..] {
+                        match (target_unit, &q.unit) {
+                            (Some(u1), Some(u2)) => {
+                                if !are_compatible(u1, u2) {
+                                    return Err(format!("Incompatible units in min(): '{}' and '{}'", u1, u2));
+                                }
+                                let converted = convert_quantity(q.value, u2, u1, &ctx.exchange_rates)?;
+                                min_val = min_val.min(converted);
                             }
-                            let q2_val_converted = convert_quantity(q2.value, unit2, unit1, &ctx.exchange_rates)?;
-                            let min_val = q1.value.min(q2_val_converted);
-                            Ok(Quantity { is_bool: false, list: None,
-                                value: min_val,
-                                unit: Some(unit1.clone()),
-                            })
-                        }
-                        (None, None) => {
-                            Ok(Quantity { is_bool: false, list: None,
-                                value: q1.value.min(q2.value),
-                                unit: None,
-                            })
-                        }
-                        _ => {
-                            return Err("Cannot compare a quantity with a dimensionless value in min()".to_string());
+                            (None, None) => {
+                                min_val = min_val.min(q.value);
+                            }
+                            _ => {
+                                return Err("Cannot compare a quantity with a dimensionless value in min()".to_string());
+                            }
                         }
                     }
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: min_val,
+                        unit: target_unit.clone(),
+                    })
                 }
                 "max" => {
-                    check_built_in_args(name, &arg_vals, 2)?;
-                    let q1 = &arg_vals[0];
-                    let q2 = &arg_vals[1];
-                    let (u1, u2) = (&q1.unit, &q2.unit);
-                    match (u1, u2) {
-                        (Some(unit1), Some(unit2)) => {
-                            if !are_compatible(unit1, unit2) {
-                                return Err(format!("Incompatible units in max(): '{}' and '{}'", unit1, unit2));
+                    if arg_vals.is_empty() {
+                        return Err("Function 'max' expects at least 1 argument".to_string());
+                    }
+                    let mut flat_args = Vec::new();
+                    for arg in &arg_vals {
+                        flatten_quantity(arg, &mut flat_args);
+                    }
+                    if flat_args.is_empty() {
+                        return Err("Function 'max' expects at least 1 argument or non-empty list".to_string());
+                    }
+                    let mut max_val = flat_args[0].value;
+                    let target_unit = &flat_args[0].unit;
+                    for q in &flat_args[1..] {
+                        match (target_unit, &q.unit) {
+                            (Some(u1), Some(u2)) => {
+                                if !are_compatible(u1, u2) {
+                                    return Err(format!("Incompatible units in max(): '{}' and '{}'", u1, u2));
+                                }
+                                let converted = convert_quantity(q.value, u2, u1, &ctx.exchange_rates)?;
+                                max_val = max_val.max(converted);
                             }
-                            let q2_val_converted = convert_quantity(q2.value, unit2, unit1, &ctx.exchange_rates)?;
-                            let max_val = q1.value.max(q2_val_converted);
-                            Ok(Quantity { is_bool: false, list: None,
-                                value: max_val,
-                                unit: Some(unit1.clone()),
-                            })
-                        }
-                        (None, None) => {
-                            Ok(Quantity { is_bool: false, list: None,
-                                value: q1.value.max(q2.value),
-                                unit: None,
-                            })
-                        }
-                        _ => {
-                            return Err("Cannot compare a quantity with a dimensionless value in max()".to_string());
+                            (None, None) => {
+                                max_val = max_val.max(q.value);
+                            }
+                            _ => {
+                                return Err("Cannot compare a quantity with a dimensionless value in max()".to_string());
+                            }
                         }
                     }
+                    Ok(Quantity { is_bool: false, list: None,
+                        value: max_val,
+                        unit: target_unit.clone(),
+                    })
                 }
                 "pmt" => {
                     check_built_in_args(name, &arg_vals, 3)?;
@@ -1558,6 +1572,18 @@ mod tests {
 
         let mean_list = eval_expr(&parse_line("mean([2, 4, 6]) =>").unwrap_expr(), &mut ctx).unwrap();
         assert_eq!(mean_list.value, 4.0);
+
+        let min_list = eval_expr(&parse_line("min([3, 1, 5]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(min_list.value, 1.0);
+
+        let max_list = eval_expr(&parse_line("max([3, 1, 5]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(max_list.value, 5.0);
+
+        let min_mixed = eval_expr(&parse_line("min([10, 20], 5, [15, 30]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(min_mixed.value, 5.0);
+
+        let max_mixed = eval_expr(&parse_line("max([10, 20], 5, [15, 30]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(max_mixed.value, 30.0);
 
         // 3. Vector/matrix utilities
         let length = eval_expr(&parse_line("len([10, 20, 30, 40]) =>").unwrap_expr(), &mut ctx).unwrap();
