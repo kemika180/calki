@@ -2212,6 +2212,10 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Span::styled("Length of list/vector", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(vec![
+                Span::styled(" plot(list)         ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                Span::styled("Draws an ASCII/Unicode sparkline trend of values", Style::default().fg(Color::Rgb(169, 177, 214))),
+            ]),
+            Line::from(vec![
                 Span::styled(" vdot(v1, v2)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                 Span::styled("Dot product of two vectors", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),

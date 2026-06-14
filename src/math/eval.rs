@@ -950,6 +950,44 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         unit: arg_vals[0].unit.clone(),
                     })
                 }
+                "plot" | "sparkline" => {
+                    if arg_vals.is_empty() {
+                        return Err("Function 'plot' expects at least 1 argument".to_string());
+                    }
+                    let mut flat_args = Vec::new();
+                    for arg in &arg_vals {
+                        flatten_quantity(arg, &mut flat_args);
+                    }
+                    if flat_args.is_empty() {
+                        return Err("Function 'plot' expects at least 1 argument or non-empty list".to_string());
+                    }
+
+                    let min_val = flat_args.iter().map(|q| q.value).fold(f64::INFINITY, f64::min);
+                    let max_val = flat_args.iter().map(|q| q.value).fold(f64::NEG_INFINITY, f64::max);
+
+                    let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                    let mut sparkline = String::new();
+
+                    if max_val == min_val {
+                        for _ in 0..flat_args.len() {
+                            sparkline.push('▄');
+                        }
+                    } else {
+                        let range = max_val - min_val;
+                        for q in &flat_args {
+                            let norm = (q.value - min_val) / range;
+                            let idx = (norm * 7.0).round() as usize;
+                            sparkline.push(blocks[idx]);
+                        }
+                    }
+
+                    Ok(Quantity {
+                        is_bool: false,
+                        list: None,
+                        value: 0.0,
+                        unit: Some(format!("sparkline:{}", sparkline)),
+                    })
+                }
                 "mod" => {
                     check_built_in_args(name, &arg_vals, 2)?;
                     let q1 = &arg_vals[0];
@@ -1348,6 +1386,12 @@ fn check_built_in_args(name: &str, args: &[Quantity], expected: usize) -> Result
 
 // Formats a Quantity nicely for buffer output
 pub fn format_quantity(qty: &Quantity) -> String {
+    if let Some(ref u) = qty.unit {
+        if u.starts_with("sparkline:") {
+            return u["sparkline:".len()..].to_string();
+        }
+    }
+
     if qty.is_bool {
         return if qty.value != 0.0 { "True".to_string() } else { "False".to_string() };
     }
@@ -1680,5 +1724,12 @@ mod tests {
 
         let matmul_val2 = eval_expr(&parse_line("matmul([[1, 2], [3, 4]], [5, 6]) =>").unwrap_expr(), &mut ctx).unwrap();
         assert_eq!(format_quantity(&matmul_val2), "[17, 39]");
+
+        // Let's test plot/sparkline
+        let plot_qty1 = eval_expr(&parse_line("plot([1, 3, 2, 5, 4]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(format_quantity(&plot_qty1), " ▅▃█▆");
+
+        let plot_qty2 = eval_expr(&parse_line("plot(10, 10, 10) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(format_quantity(&plot_qty2), "▄▄▄");
     }
 }
