@@ -30,7 +30,14 @@ impl WikiManager {
 
 calki is a terminal-based Markdown note editor and interactive math sheet calculator with local wiki-style link navigation.
 
-## 1. Interactive Math Sheets
+## 1. Editing Modes & Exiting
+calki uses Vim-style modal editing. You can navigate the editor using standard Vim motions (`h`/`j`/`k`/`l`).
+* **Switch to Insert Mode**: Press **`i`** to type text and equations.
+* **Switch to Visual Mode**: Press **`v`** to select/highlight text.
+* **Return to Normal Mode**: Press **`Esc`** at any time.
+* **Exit the Program**: In Normal Mode, press **`Ctrl-q`** or **`ZZ`** to save your work and exit.
+
+## 2. Interactive Math Sheets
 Write variables and equations, ending evaluation lines with `=>`. Values are calculated in real time when you exit Insert mode (`Esc`).
 
 price = 100
@@ -42,25 +49,18 @@ price * quantity * (1 + tax_rate) => 542.5
 
 We can also write calculations inline: `price * quantity => 500` before tax.
 
-## 2. Dynamic Wiki Links & Creating Pages
+## 3. Dynamic Wiki Links & Creating Pages
 Notes can be linked together using double square brackets like `[[Grocery List]]`.
 * **Follow links**: Place your cursor over a link and press **Enter** in Normal mode to jump to it.
 * **Go back**: Press **Backspace** or **Ctrl-o** to return in history.
 * **Create links**: In Visual mode, highlight any text and press **Enter** to instantly wrap it in a wiki link.
 * **Create new pages**: Simply write a new link name (e.g. `[[My New Project]]`) and press **Enter** over it. `calki` will automatically create the new page and open it for editing!
 
-## 3. Sample Sheets
+## 4. Sample Sheets
 We've pre-generated a few demo notes to showcase different capabilities. Press **Enter** on these links to explore:
 * **Budgeting & Quantities**: [[Grocery List]]
 * **Financial Forecasting**: [[Savings Plan]]
 * **Unit Conversions & Speed**: [[Trip Planning]]
-
-## 4. Editing Modes & Exiting
-calki uses Vim-style modal editing. You can navigate the editor using standard Vim motions (`h`/`j`/`k`/`l`).
-* **Switch to Insert Mode**: Press **`i`** to type text and equations.
-* **Switch to Visual Mode**: Press **`v`** to select/highlight text.
-* **Return to Normal Mode**: Press **`Esc`** at any time.
-* **Exit the Program**: In Normal Mode, press **`Ctrl-q`** or **`ZZ`** to save your work and exit.
 
 ## 5. Sidebar Panels
 * Press **F2** to toggle the left **Wiki Map** (shows backlinks and references).
