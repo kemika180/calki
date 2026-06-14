@@ -3945,6 +3945,7 @@ mod main_tests {
             "[[miles]] = 10".chars().collect::<Vec<char>>(),
             "Let's go for 10 miles.".chars().collect::<Vec<char>>(),
             "We run at `10m/s => 10 m/s`.".chars().collect::<Vec<char>>(),
+            "monthly_cost = annual_cost / 12 month/year => $244.3901/month".chars().collect::<Vec<char>>(),
         ];
 
         let highlights = App::compute_syntax_highlights(&lines, None);
@@ -4007,6 +4008,9 @@ mod main_tests {
         // line 11: "We run at `10m/s => 10 m/s`." -> "m/s" inside backticks SHOULD be highlighted as unit
         assert!(unit_highlights.iter().any(|h| h.start.row == 11 && h.start.col == 13 && h.end.col == 15));
         assert!(unit_highlights.iter().any(|h| h.start.row == 11 && h.start.col == 23 && h.end.col == 25));
+
+        // line 12: "monthly_cost = annual_cost / 12 month/year => $244.3901/month" -> "month" at [56, 60] should be a unit
+        assert!(unit_highlights.iter().any(|h| h.start.row == 12 && h.start.col == 56 && h.end.col == 60));
     }
 
     #[test]

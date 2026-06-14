@@ -84,6 +84,7 @@ pub fn get_exact_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
         "hour" | "hours" | "hr" | "hrs" | "h" => Some((Dimension::Time, Conversion::Linear(3600.0))),
         "day" | "days" => Some((Dimension::Time, Conversion::Linear(86400.0))),
         "week" | "weeks" => Some((Dimension::Time, Conversion::Linear(604800.0))),
+        "month" | "months" => Some((Dimension::Time, Conversion::Linear(2628000.0))),
         "year" | "years" | "yr" | "yrs" => Some((Dimension::Time, Conversion::Linear(31536000.0))),
 
         // Mass (Base: kg)
@@ -612,6 +613,16 @@ mod tests {
 
         let c = convert_quantity(100.0, "F", "C", &rates).unwrap();
         assert_eq!((c * 100.0).round() / 100.0, 37.78);
+    }
+
+    #[test]
+    fn test_time_conversion() {
+        let rates = HashMap::new();
+        let months = convert_quantity(1.0, "year", "month", &rates).unwrap();
+        assert_eq!(months, 12.0);
+
+        let years = convert_quantity(24.0, "months", "years", &rates).unwrap();
+        assert_eq!(years, 2.0);
     }
 
     #[test]
