@@ -1,14 +1,47 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::cell::RefCell;
 
 pub struct WikiManager {
     root_dir: PathBuf,
+    registry: RefCell<HashMap<String, Vec<String>>>,
 }
 
 impl WikiManager {
     pub fn new<P: AsRef<Path>>(root: P) -> Self {
+        let root_dir = root.as_ref().to_path_buf();
+        let registry_path = root_dir.join(".calki-links.json");
+        let mut registry_map = HashMap::new();
+
+        if registry_path.exists() {
+            if let Ok(content) = fs::read_to_string(&registry_path) {
+                if let Ok(map) = serde_json::from_str(&content) {
+                    registry_map = map;
+                }
+            }
+        } else if root_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&root_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                        if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                            let outgoing = Self::parse_outgoing_links(&path);
+                            registry_map.insert(file_name.to_string(), outgoing);
+                        }
+                    }
+                }
+            }
+            if !registry_map.is_empty() {
+                if let Ok(content) = serde_json::to_string_pretty(&registry_map) {
+                    let _ = fs::write(&registry_path, content);
+                }
+            }
+        }
+
         Self {
-            root_dir: root.as_ref().to_path_buf(),
+            root_dir,
+            registry: RefCell::new(registry_map),
         }
     }
 
@@ -175,6 +208,12 @@ Back to [[Home]].
             let _ = fs::write(&trip_path, trip_content);
         }
 
+        // Scan newly initialized files so registry starts populated
+        self.scan_outgoing_links(&home_path);
+        self.scan_outgoing_links(&grocery_path);
+        self.scan_outgoing_links(&savings_path);
+        self.scan_outgoing_links(&trip_path);
+
         Ok(home_path)
     }
 
@@ -210,8 +249,30 @@ Back to [[Home]].
         }
     }
 
-    // Scans a specific file for outgoing wiki links: [[Link Name]]
-    pub fn scan_outgoing_links(&self, file_path: &Path) -> Vec<String> {
+    // Updates the registry entry for a file, saving it to disk
+    pub fn update_registry_entry(&self, file_path: &Path, outgoing: Vec<String>) {
+        if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
+            self.registry.borrow_mut().insert(file_name.to_string(), outgoing);
+            let registry_path = self.root_dir.join(".calki-links.json");
+            if let Ok(content) = serde_json::to_string_pretty(&*self.registry.borrow()) {
+                let _ = fs::write(&registry_path, content);
+            }
+        }
+    }
+
+    // Removes the registry entry for a file, saving it to disk
+    pub fn remove_registry_entry(&self, file_path: &Path) {
+        if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
+            self.registry.borrow_mut().remove(file_name);
+            let registry_path = self.root_dir.join(".calki-links.json");
+            if let Ok(content) = serde_json::to_string_pretty(&*self.registry.borrow()) {
+                let _ = fs::write(&registry_path, content);
+            }
+        }
+    }
+
+    // Parses a specific file for outgoing wiki links: [[Link Name]] without registry side-effects
+    fn parse_outgoing_links(file_path: &Path) -> Vec<String> {
         let mut links = Vec::new();
         let content = match fs::read_to_string(file_path) {
             Ok(txt) => txt,
@@ -243,35 +304,37 @@ Back to [[Home]].
         links
     }
 
+    // Scans a specific file for outgoing wiki links: [[Link Name]]
+    pub fn scan_outgoing_links(&self, file_path: &Path) -> Vec<String> {
+        let links = Self::parse_outgoing_links(file_path);
+        self.update_registry_entry(file_path, links.clone());
+        links
+    }
+
     // Scans all files in the wiki directory to see which ones contain a link to the target path
     pub fn scan_backlinks(&self, target_path: &Path) -> Vec<String> {
         let mut backlinks = Vec::new();
         let target_title = self.path_to_title(target_path).to_lowercase();
         let target_file_name = target_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
 
-        let entries = match fs::read_dir(&self.root_dir) {
-            Ok(iter) => iter,
-            Err(_) => return backlinks,
-        };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-                // Don't backlink to itself
-                if path == target_path {
+        let registry = self.registry.borrow();
+        for (file_name, outgoing) in registry.iter() {
+            // Don't backlink to itself
+            if let Some(target_name) = target_path.file_name().and_then(|s| s.to_str()) {
+                if file_name == target_name {
                     continue;
                 }
+            }
 
-                let outgoing = self.scan_outgoing_links(&path);
-                let is_referenced = outgoing.iter().any(|link| {
-                    let linked_path = self.link_to_path(link);
-                    let linked_file_name = linked_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                    linked_file_name == target_file_name || link.to_lowercase() == target_title
-                });
+            let is_referenced = outgoing.iter().any(|link| {
+                let linked_path = self.link_to_path(link);
+                let linked_file_name = linked_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                linked_file_name == target_file_name || link.to_lowercase() == target_title
+            });
 
-                if is_referenced {
-                    backlinks.push(self.path_to_title(&path));
-                }
+            if is_referenced {
+                let path = self.root_dir.join(file_name);
+                backlinks.push(self.path_to_title(&path));
             }
         }
 
@@ -307,5 +370,40 @@ mod tests {
 
         let home_title = mgr.path_to_title(&PathBuf::from("/tmp/calki-test-wiki/home.md"));
         assert_eq!(home_title, "Home");
+    }
+
+    #[test]
+    fn test_wiki_link_registry() {
+        let temp_dir = std::env::current_dir().unwrap().join("test_wiki_temp_registry");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // 1. Create a few notes
+        let note1 = temp_dir.join("home.md");
+        fs::write(&note1, "# Home\nSee [[Grocery List]]").unwrap();
+        let note2 = temp_dir.join("grocery-list.md");
+        fs::write(&note2, "# Grocery List\nGo back to [[Home]]").unwrap();
+
+        // 2. Initialize manager and scan
+        let mgr = WikiManager::new(&temp_dir);
+        // Explicitly trigger scan by loading registry
+        assert_eq!(mgr.registry.borrow().len(), 2);
+        assert!(mgr.registry.borrow().contains_key("home.md"));
+        assert!(mgr.registry.borrow().contains_key("grocery-list.md"));
+
+        // 3. Test backlinks query using registry
+        let backlinks = mgr.scan_backlinks(&note2);
+        assert_eq!(backlinks, vec!["Home"]);
+
+        // 4. Update note
+        fs::write(&note1, "# Home\nNo more links").unwrap();
+        mgr.scan_outgoing_links(&note1); // updates registry
+
+        let backlinks_updated = mgr.scan_backlinks(&note2);
+        assert!(backlinks_updated.is_empty());
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

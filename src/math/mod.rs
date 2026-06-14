@@ -65,7 +65,13 @@ pub fn evaluate_sheet(
                 }
             }
             Line::FnDefinition { name, args, expr, raw_prefix: _ } => {
-                ctx.functions.insert(name.clone(), (args, expr));
+                ctx.functions.insert(name.clone(), (args.clone(), expr.clone()));
+                let formatted_fn = format!("({}) = {}", args.join(", "), eval::expr_to_string(&expr));
+                if let Some(pos) = vars_inspector.iter().position(|(n, _)| n == &name) {
+                    vars_inspector[pos] = (name.clone(), formatted_fn);
+                } else {
+                    vars_inspector.push((name.clone(), formatted_fn));
+                }
                 updated_lines.push(line_text.to_string());
             }
             Line::Evaluation { expr, raw_prefix, .. } => {

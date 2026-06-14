@@ -22,7 +22,7 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorView, Lines};
+use edtui::{EditorEventHandler, EditorMode, EditorState, EditorView, Lines, RowIndex};
 use edtui::actions::Chainable;
 use edtui::events::{KeyEventRegister, KeyInput};
 use edtui::clipboard::ClipboardTrait;
@@ -235,6 +235,35 @@ struct App {
     status_message: Option<(String, std::time::Instant)>,
 }
 
+fn trim_char_slice(mut slice: &[char]) -> &[char] {
+    while let Some((first, rest)) = slice.split_first() {
+        if first.is_whitespace() {
+            slice = rest;
+        } else {
+            break;
+        }
+    }
+    while let Some((last, rest)) = slice.split_last() {
+        if last.is_whitespace() {
+            slice = rest;
+        } else {
+            break;
+        }
+    }
+    slice
+}
+
+fn trim_start_slice(mut slice: &[char]) -> &[char] {
+    while let Some((first, rest)) = slice.split_first() {
+        if first.is_whitespace() {
+            slice = rest;
+        } else {
+            break;
+        }
+    }
+    slice
+}
+
 impl App {
     fn new(wiki_root: PathBuf) -> Result<Self, String> {
         let wiki_mgr = WikiManager::new(wiki_root);
@@ -334,11 +363,10 @@ impl App {
         };
 
         if let Some(ref s) = session {
-            let vecs = app.editor_state.lines.clone().into_vecs();
-            let row_count = vecs.len();
+            let row_count = app.editor_state.lines.len();
             if row_count > 0 {
                 let target_row = s.cursor_row.min(row_count - 1);
-                let col_count = vecs[target_row].len();
+                let col_count = app.editor_state.lines.get(RowIndex::new(target_row)).map(|r| r.len()).unwrap_or(0);
                 let target_col = if col_count > 0 {
                     s.cursor_col.min(col_count.saturating_sub(1))
                 } else {
@@ -355,8 +383,7 @@ impl App {
 
     // Converts editor lines back to String
     fn get_editor_text(&self) -> String {
-        let vecs = self.editor_state.lines.clone().into_vecs();
-        vecs.iter()
+        self.editor_state.lines.iter_row()
             .map(|row| row.iter().collect::<String>())
             .collect::<Vec<String>>()
             .join("\n")
@@ -382,8 +409,7 @@ impl App {
             }
             self.editor_state.cursor.row = target_row;
 
-            let vecs = self.editor_state.lines.clone().into_vecs();
-            let row_len = vecs.get(target_row).map(|r| r.len()).unwrap_or(0);
+            let row_len = self.editor_state.lines.get(RowIndex::new(target_row)).map(|r| r.len()).unwrap_or(0);
             let max_col = row_len.saturating_sub(1);
             if self.editor_state.cursor.col > max_col {
                 self.editor_state.cursor.col = max_col;
@@ -402,51 +428,67 @@ impl App {
         }
     }
 
-fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&str>) -> Vec<edtui::Highlight> {
+    // Updates outgoing links only (useful when editing active file, avoiding directory-wide backlink scans)
+    fn update_outgoing_links(&mut self) {
+        self.outgoing = self.wiki_mgr.scan_outgoing_links(&self.active_path);
+
+        let total_links = self.backlinks.len() + self.outgoing.len();
+        if self.selected_link_idx >= total_links {
+            self.selected_link_idx = total_links.saturating_sub(1);
+        }
+    }
+
+fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: Option<&str>) -> Vec<edtui::Highlight> {
     let mut highlights = Vec::new();
 
     let mut defined_vars = std::collections::HashSet::new();
     for line in lines_vecs {
-        let line_str: String = line.iter().collect();
-        let trimmed = line_str.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") || trimmed.trim_start().starts_with('>') {
+        let line = line.as_ref();
+        let trimmed = trim_char_slice(line);
+        if trimmed.is_empty() 
+            || trimmed.first() == Some(&'#') 
+            || (trimmed.len() >= 2 && trimmed[0] == '/' && trimmed[1] == '/') 
+            || trimmed.first() == Some(&'>') 
+        {
             continue;
         }
-        if let Some(eq_pos) = trimmed.find('=') {
-            let is_arrow = eq_pos + 1 < trimmed.len() && trimmed.as_bytes()[eq_pos + 1] == b'>';
+        if let Some(eq_pos) = trimmed.iter().position(|&c| c == '=') {
+            let is_arrow = eq_pos + 1 < trimmed.len() && trimmed[eq_pos + 1] == '>';
             if !is_arrow {
-                let left_part = trimmed[..eq_pos].trim();
-                if left_part.contains('(') && left_part.ends_with(')') {
-                    if let Some(lpar_pos) = left_part.find('(') {
-                        let fn_name = left_part[..lpar_pos].trim();
-                        let args_str = &left_part[lpar_pos + 1..left_part.len() - 1];
-                        if !fn_name.is_empty() && fn_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                            defined_vars.insert(fn_name.to_string());
-                            for arg in args_str.split(',') {
-                                let arg_trimmed = arg.trim();
-                                if !arg_trimmed.is_empty() && arg_trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                                    defined_vars.insert(arg_trimmed.to_string());
+                let left_part = trim_char_slice(&trimmed[..eq_pos]);
+                if left_part.contains(&'(') && left_part.last() == Some(&')') {
+                    if let Some(lpar_pos) = left_part.iter().position(|&c| c == '(') {
+                        let fn_name = trim_char_slice(&left_part[..lpar_pos]);
+                        let args_slice = &left_part[lpar_pos + 1..left_part.len() - 1];
+                        if !fn_name.is_empty() && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_') {
+                            defined_vars.insert(fn_name.iter().collect::<String>());
+                            for arg in args_slice.split(|&c| c == ',') {
+                                let arg_trimmed = trim_char_slice(arg);
+                                if !arg_trimmed.is_empty() && arg_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_') {
+                                    defined_vars.insert(arg_trimmed.iter().collect::<String>());
                                 }
                             }
                         }
                     }
-                } else if !left_part.is_empty() && left_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    defined_vars.insert(left_part.to_string());
+                } else if !left_part.is_empty() && left_part.iter().all(|&c| c.is_alphanumeric() || c == '_') {
+                    defined_vars.insert(left_part.iter().collect::<String>());
                 }
             }
         }
     }
 
+    let sv_chars: Option<Vec<char>> = selected_var.map(|sv| sv.chars().collect());
+
     for (row_idx, line) in lines_vecs.iter().enumerate() {
-        let line_str: String = line.iter().collect();
+        let line = line.as_ref();
         let n = line.len();
         let mut line_styles: Vec<Option<Style>> = vec![None; n];
         let mut is_special_line = false;
 
         // 1. Markdown Headers (lines starting with '#' followed by space or more '#')
-        if line_str.starts_with('#') {
-            let header_len = line_str.chars().take_while(|&c| c == '#').count();
-            if line_str.chars().nth(header_len) == Some(' ') || line_str.len() == header_len {
+        if line.first() == Some(&'#') {
+            let header_len = line.iter().take_while(|&&c| c == '#').count();
+            if line.get(header_len) == Some(&' ') || line.len() == header_len {
                 let header_style = match header_len {
                     1 => Style::default().fg(Color::Rgb(187, 154, 247)).bold(), // Purple
                     2 => Style::default().fg(Color::Rgb(125, 207, 255)).bold(), // Cyan
@@ -463,8 +505,9 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         }
 
         // 1b. Blockquotes (lines starting with '>')
-        if !is_special_line && line_str.trim_start().starts_with('>') {
-            let start_col = line_str.len() - line_str.trim_start().len();
+        let trimmed_start = trim_start_slice(line);
+        if !is_special_line && trimmed_start.first() == Some(&'>') {
+            let start_col = line.len() - trimmed_start.len();
             let quote_style = Style::default().fg(Color::Rgb(158, 206, 106)).italic(); // Italic Green #9ece6a
             for col in start_col..n {
                 line_styles[col] = Some(quote_style);
@@ -473,8 +516,8 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         }
 
         // 1c. Horizontal Rule
-        let trimmed = line_str.trim();
-        if !is_special_line && (trimmed == "---" || trimmed == "***" || trimmed == "___") && line_str.len() >= 3 {
+        let trimmed = trim_char_slice(line);
+        if !is_special_line && (trimmed == &['-', '-', '-'] || trimmed == &['*', '*', '*'] || trimmed == &['_', '_', '_']) && line.len() >= 3 {
             let hr_style = Style::default().fg(Color::Rgb(86, 95, 137)).dim(); // Muted Gray dim
             for col in 0..n {
                 line_styles[col] = Some(hr_style);
@@ -483,8 +526,8 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         }
 
         // 3. Comments
-        if !is_special_line && line_str.trim_start().starts_with("//") {
-            let start_col = line_str.len() - line_str.trim_start().len();
+        if !is_special_line && trimmed_start.len() >= 2 && trimmed_start[0] == '/' && trimmed_start[1] == '/' {
+            let start_col = line.len() - trimmed_start.len();
             let comment_style = Style::default().fg(Color::Rgb(86, 95, 137)).italic(); // Muted Gray-Blue
             for col in start_col..n {
                 line_styles[col] = Some(comment_style);
@@ -550,10 +593,9 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 }
             } else if let Some(idx) = eq_idx {
                 let lhs = &line[..idx];
-                let lhs_str: String = lhs.iter().collect();
-                let lhs_trimmed = lhs_str.trim();
+                let lhs_trimmed = trim_char_slice(lhs);
                 let is_lhs_valid = !lhs_trimmed.is_empty() 
-                    && lhs_trimmed.chars().all(|c| c.is_alphanumeric() || c == '_');
+                    && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
                 
                 if is_lhs_valid {
                     is_math_line = true;
@@ -724,15 +766,15 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         }
 
         // E. Lists / Bullet points (style bullet or number in bold orange)
-        let trimmed_len = line_str.trim_start().len();
-        let leading_spaces = line_str.len() - trimmed_len;
-        let rest = &line_str[leading_spaces..];
+        let trimmed_start = trim_start_slice(line);
+        let leading_spaces = line.len() - trimmed_start.len();
+        let rest = trimmed_start;
         let mut list_marker_range = None;
-        if rest.starts_with("* ") || rest.starts_with("- ") || rest.starts_with("+ ") {
+        if rest.starts_with(&['*', ' ']) || rest.starts_with(&['-', ' ']) || rest.starts_with(&['+', ' ']) {
             list_marker_range = Some(leading_spaces..leading_spaces + 1);
         } else {
-            let digit_count = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-            if digit_count > 0 && rest.chars().nth(digit_count) == Some('.') && rest.chars().nth(digit_count + 1) == Some(' ') {
+            let digit_count = rest.iter().take_while(|&&c| c.is_ascii_digit()).count();
+            if digit_count > 0 && rest.get(digit_count) == Some(&'.') && rest.get(digit_count + 1) == Some(&' ') {
                 list_marker_range = Some(leading_spaces..leading_spaces + digit_count + 1);
             }
         }
@@ -910,41 +952,39 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         }
 
         // I. Selected Variable Highlight
-        if let Some(sv) = selected_var
-            && !sv.is_empty() {
-                let sv_chars: Vec<char> = sv.chars().collect();
-                let sv_len = sv_chars.len();
-                let is_ident_char = |c: char| -> bool {
-                    c.is_alphanumeric() || c == '_' || c == '/'
-                };
-                if n >= sv_len {
-                    for start_idx in 0..=(n - sv_len) {
-                        if line[start_idx..(start_idx + sv_len)] == sv_chars {
-                            // Check word boundaries
-                            let before_ok = if start_idx > 0 {
-                                !is_ident_char(line[start_idx - 1])
-                            } else {
-                                true
-                            };
-                            let after_ok = if start_idx + sv_len < n {
-                                !is_ident_char(line[start_idx + sv_len])
-                            } else {
-                                true
-                            };
-                            if before_ok && after_ok {
-                                for col in start_idx..(start_idx + sv_len) {
-                                    line_styles[col] = Some(
-                                        Style::default()
-                                            .bg(Color::Rgb(167, 82, 142))
-                                            .fg(Color::Rgb(224, 230, 242))
-                                            .bold(),
-                                    );
-                                }
+        if let Some(ref sv_chars) = sv_chars {
+            let sv_len = sv_chars.len();
+            let is_ident_char = |c: char| -> bool {
+                c.is_alphanumeric() || c == '_' || c == '/'
+            };
+            if n >= sv_len {
+                for start_idx in 0..=(n - sv_len) {
+                    if &line[start_idx..(start_idx + sv_len)] == sv_chars {
+                        // Check word boundaries
+                        let before_ok = if start_idx > 0 {
+                            !is_ident_char(line[start_idx - 1])
+                        } else {
+                            true
+                        };
+                        let after_ok = if start_idx + sv_len < n {
+                            !is_ident_char(line[start_idx + sv_len])
+                        } else {
+                            true
+                        };
+                        if before_ok && after_ok {
+                            for col in start_idx..(start_idx + sv_len) {
+                                line_styles[col] = Some(
+                                    Style::default()
+                                        .bg(Color::Rgb(167, 82, 142))
+                                        .fg(Color::Rgb(224, 230, 242))
+                                        .bold(),
+                                );
                             }
                         }
                     }
                 }
             }
+        }
 
         // Convert the style array to edtui::Highlight ranges
         let mut start_col = None;
@@ -982,7 +1022,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
 
     // Updates highlights based on syntax highlighting and selected variable
     fn update_highlights(&mut self) {
-        let vecs = self.editor_state.lines.clone().into_vecs();
+        let vecs: Vec<&[char]> = self.editor_state.lines.iter_row().map(|r| r.as_slice()).collect();
         let selected_var = if self.focused_panel == FocusedPanel::Variables && !self.variables_cache.is_empty() {
             if self.selected_var_idx >= self.variables_cache.len() {
                 self.selected_var_idx = self.variables_cache.len().saturating_sub(1);
@@ -1029,12 +1069,10 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         let row_idx = self.editor_state.cursor.row;
         let col_idx = self.editor_state.cursor.col;
 
-        let vecs = self.editor_state.lines.clone().into_vecs();
-        let row_chars = match vecs.get(row_idx) {
-            Some(row) => row,
+        let line_str: String = match self.editor_state.lines.get(RowIndex::new(row_idx)) {
+            Some(row) => row.iter().collect(),
             None => return false,
         };
-        let line_str: String = row_chars.iter().collect();
 
         if let Some(link_name) = get_link_under_cursor(&line_str, col_idx) {
             let target_path = self.wiki_mgr.link_to_path(&link_name);
@@ -1042,6 +1080,57 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
             self.history_stack.push(self.active_path.clone());
             let _ = self.load_note(target_path);
             return true;
+        }
+        false
+    }
+
+    // Toggles todo checklist item [ ] <=> [x] at the current cursor row,
+    // or converts a plain list item (starting with -, *, +) into a todo item.
+    fn toggle_todo_at_cursor(&mut self) -> bool {
+        let row = self.editor_state.cursor.row;
+        if let Some(line) = self.editor_state.lines.get_mut(RowIndex::new(row)) {
+            // 1. Search for existing checkbox [ ] or [x] or [X]
+            let mut found = false;
+            let mut i = 0;
+            while i + 2 < line.len() {
+                if line[i] == '[' && line[i + 2] == ']' {
+                    let mark = line[i + 1];
+                    if mark == ' ' {
+                        line[i + 1] = 'x';
+                        found = true;
+                        break;
+                    } else if mark == 'x' || mark == 'X' {
+                        line[i + 1] = ' ';
+                        found = true;
+                        break;
+                    }
+                }
+                i += 1;
+            }
+
+            if found {
+                self.re_evaluate_calculations();
+                let _ = self.save_current_note();
+                self.update_highlights();
+                return true;
+            }
+
+            // 2. If not found, check if it starts with a bullet/numbered list prefix and insert `[ ] `
+            let line_str: String = line.iter().collect();
+            let trimmed = line_str.trim_start();
+            let leading_spaces = line_str.len() - trimmed.len();
+            
+            if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+                let insert_pos = leading_spaces + 2;
+                let checklist = ['[', ' ', ']', ' '];
+                for (offset, &c) in checklist.iter().enumerate() {
+                    line.insert(insert_pos + offset, c);
+                }
+                self.re_evaluate_calculations();
+                let _ = self.save_current_note();
+                self.update_highlights();
+                return true;
+            }
         }
         false
     }
@@ -1097,7 +1186,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 self.editor_state.cursor.col = start_idx.col + 2;
 
                 self.re_evaluate_calculations();
-                self.update_wiki_map();
+                self.update_outgoing_links();
             }
         }
     }
@@ -1122,7 +1211,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
             self.editor_state.cursor.col = cursor_idx.col + text.chars().count();
 
             self.re_evaluate_calculations();
-            self.update_wiki_map();
+            self.update_outgoing_links();
         }
     }
 
@@ -1290,9 +1379,8 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
 
 // Maps Index2 row/col to 1D character offset in String
 fn index2_to_char_offset(lines: &Lines, idx: edtui::Index2) -> usize {
-    let vecs = lines.clone().into_vecs();
     let mut offset = 0;
-    for (r, row) in vecs.iter().enumerate() {
+    for (r, row) in lines.iter_row().enumerate() {
         if r < idx.row {
             offset += row.len() + 1; // +1 for newline character
         } else if r == idx.row {
@@ -1590,6 +1678,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             if let Some(path) = app.delete_target_path.take() {
                                 let _ = fs::remove_file(&path);
+                                app.wiki_mgr.remove_registry_entry(&path);
                                 if path == app.active_path {
                                     let home_path = app.wiki_mgr.init_wiki().unwrap_or_else(|_| app.wiki_mgr.link_to_path("home"));
                                     let _ = app.load_note(home_path);
@@ -1639,15 +1728,9 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     if let KeyCode::Char(c) = key.code {
                         let row = app.editor_state.cursor.row;
                         let col = app.editor_state.cursor.col;
-                        let mut vecs = app.editor_state.lines.clone().into_vecs();
-                        if let Some(line) = vecs.get_mut(row)
+                        if let Some(line) = app.editor_state.lines.get_mut(RowIndex::new(row))
                             && col < line.len() {
                                 line[col] = c;
-                                let new_text: String = vecs.iter()
-                                    .map(|l| l.iter().collect::<String>())
-                                    .collect::<Vec<String>>()
-                                    .join("\n");
-                                app.editor_state.lines = Lines::from(new_text.as_str());
                                 app.re_evaluate_calculations();
                                 let _ = app.save_current_note();
                             }
@@ -1786,6 +1869,12 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                                 continue;
                             }
 
+                        // Intercept 't' in Normal Mode to toggle todo item at current row
+                        if key.code == KeyCode::Char('t') && prev_mode == EditorMode::Normal
+                            && app.toggle_todo_at_cursor() {
+                                continue;
+                            }
+
                         // Intercept Backspace or Ctrl-o in Normal Mode to go back
                         if (key.code == KeyCode::Backspace || (key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL)))
                             && prev_mode == EditorMode::Normal
@@ -1831,7 +1920,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         // Trigger math calculation update on exiting Insert Mode
                         if prev_mode == EditorMode::Insert && app.editor_state.mode == EditorMode::Normal {
                             app.re_evaluate_calculations();
-                            app.update_wiki_map();
+                            app.update_outgoing_links();
                         }
                     }
                     FocusedPanel::WikiMap => {
@@ -3412,17 +3501,46 @@ mod main_tests {
         
         let row = app.editor_state.cursor.row;
         let col = app.editor_state.cursor.col;
-        let mut vecs = app.editor_state.lines.clone().into_vecs();
-        vecs[row][col] = 'x';
-        let new_text: String = vecs.iter()
-            .map(|l| l.iter().collect::<String>())
-            .collect::<Vec<String>>()
-            .join("\n");
-        app.editor_state.lines = Lines::from(new_text.as_str());
+        if let Some(line) = app.editor_state.lines.get_mut(RowIndex::new(row)) {
+            line[col] = 'x';
+        }
         app.replace_next_char = false;
 
         let text = app.get_editor_text();
         assert_eq!(text, "hello xorld");
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_todo_toggling() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_todo");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.editor_state = EditorState::new(edtui::Lines::from("- [ ] todo item\n* list item\n- [x] done item"));
+        app.editor_state.mode = EditorMode::Normal;
+
+        // 1. Toggle unchecked to checked
+        app.editor_state.cursor = edtui::Index2::new(0, 0);
+        let res1 = app.toggle_todo_at_cursor();
+        assert!(res1);
+        assert_eq!(app.get_editor_text(), "- [x] todo item\n* list item\n- [x] done item");
+
+        // 2. Convert plain list item to todo checkbox
+        app.editor_state.cursor = edtui::Index2::new(1, 0);
+        let res2 = app.toggle_todo_at_cursor();
+        assert!(res2);
+        assert_eq!(app.get_editor_text(), "- [x] todo item\n* [ ] list item\n- [x] done item");
+
+        // 3. Toggle checked to unchecked
+        app.editor_state.cursor = edtui::Index2::new(2, 0);
+        let res3 = app.toggle_todo_at_cursor();
+        assert!(res3);
+        assert_eq!(app.get_editor_text(), "- [x] todo item\n* [ ] list item\n- [ ] done item");
 
         let _ = std::fs::remove_dir_all(&wiki_root);
     }
@@ -3641,7 +3759,7 @@ mod main_tests {
         // Other key (Esc) should close modal
         let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE));
         assert!(handled);
-        assert_eq!(app.show_help, false);
+        assert!(!app.show_help);
 
         // Clean up
         let _ = std::fs::remove_dir_all(&wiki_root);

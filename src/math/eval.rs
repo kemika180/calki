@@ -278,7 +278,7 @@ fn get_op_precedence(op: &Op) -> u8 {
     }
 }
 
-fn expr_to_string(expr: &Expr) -> String {
+pub(crate) fn expr_to_string(expr: &Expr) -> String {
     match expr {
         Expr::Number(val) => {
             if val.fract() == 0.0 {
