@@ -628,6 +628,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
         let n = line.len();
         let mut line_styles: Vec<Option<Style>> = vec![None; n];
         let mut is_special_line = false;
+        let mut arrow_idx: Option<usize> = None;
 
         // 1. Markdown Headers (lines starting with '#' followed by space or more '#')
         if line.first() == Some(&'#') {
@@ -699,7 +700,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             };
 
             // A. Base Block Math & Assignments (containing '=>' or '=') outside backticks
-            let mut arrow_idx = None;
+            arrow_idx = None;
             let mut search_idx = 0;
             while let Some(pos) = find_in_chars_from(line, "=>", search_idx) {
                 if !is_in_backticks(pos) {
@@ -710,33 +711,67 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             }
 
             let mut eq_idx = None;
-            if arrow_idx.is_none() {
-                let mut search_idx = 0;
-                while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
-                    if !is_in_backticks(pos) {
+            let mut search_idx = 0;
+            while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
+                if !is_in_backticks(pos) {
+                    if arrow_idx != Some(pos) {
                         eq_idx = Some(pos);
                         break;
                     }
-                    search_idx = pos + 1;
                 }
+                search_idx = pos + 1;
             }
 
-            if let Some(idx) = arrow_idx {
-                is_math_line = true;
-                // Expression before '=>' (Cyan/light blue)
-                for col in 0..idx {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+            let mut processed = false;
+            if let Some(arrow_pos) = arrow_idx {
+                if let Some(eq_pos) = eq_idx {
+                    if eq_pos < arrow_pos {
+                        let lhs = &line[..eq_pos];
+                        let lhs_trimmed = trim_char_slice(lhs);
+                        let is_lhs_valid = !lhs_trimmed.is_empty() 
+                            && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                        if is_lhs_valid {
+                            is_math_line = true;
+                            // LHS (Cyan)
+                            for col in 0..eq_pos {
+                                line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+                            }
+                            // '=' (Bold Orange)
+                            line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                            // RHS expression up to '=>' (Teal Green)
+                            for col in (eq_pos + 1)..arrow_pos {
+                                line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
+                            }
+                            // '=>' (Bold Orange)
+                            for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
+                                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                            }
+                            // The result after '=>' (Teal Green + Italic)
+                            for col in (arrow_pos + 2)..n {
+                                line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                            }
+                            processed = true;
+                        }
+                    }
                 }
-                // Operator '=>' in Bold Orange
-                for col in idx..std::cmp::min(idx + 2, n) {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+
+                if !processed {
+                    is_math_line = true;
+                    // Expression before '=>' (Cyan/light blue)
+                    for col in 0..arrow_pos {
+                        line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+                    }
+                    // Operator '=>' in Bold Orange
+                    for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
+                        line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                    }
+                    // The result after '=>' (Teal Green + Italic)
+                    for col in (arrow_pos + 2)..n {
+                        line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                    }
                 }
-                // The result after '=>' (Teal Green)
-                for col in (idx + 2)..n {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-                }
-            } else if let Some(idx) = eq_idx {
-                let lhs = &line[..idx];
+            } else if let Some(eq_pos) = eq_idx {
+                let lhs = &line[..eq_pos];
                 let lhs_trimmed = trim_char_slice(lhs);
                 let is_lhs_valid = !lhs_trimmed.is_empty() 
                     && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
@@ -744,15 +779,15 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                 if is_lhs_valid {
                     is_math_line = true;
                     // LHS (Cyan)
-                    for col in 0..idx {
+                    for col in 0..eq_pos {
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
                     }
                     // '=' (Bold Orange)
-                    if idx < n {
-                        line_styles[idx] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                    if eq_pos < n {
+                        line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
                     }
                     // RHS (Teal Green)
-                    for col in (idx + 1)..n {
+                    for col in (eq_pos + 1)..n {
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
                     }
                 }
@@ -1126,6 +1161,17 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Force anything after '=>' to be italic
+        if let Some(arrow_pos) = arrow_idx {
+            for col in (arrow_pos + 2)..n {
+                if let Some(s) = line_styles[col] {
+                    line_styles[col] = Some(s.italic());
+                } else {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
                 }
             }
         }
@@ -4009,8 +4055,33 @@ mod main_tests {
         assert!(unit_highlights.iter().any(|h| h.start.row == 11 && h.start.col == 13 && h.end.col == 15));
         assert!(unit_highlights.iter().any(|h| h.start.row == 11 && h.start.col == 23 && h.end.col == 25));
 
-        // line 12: "monthly_cost = annual_cost / 12 month/year => $244.3901/month" -> "month" at [56, 60] should be a unit
-        assert!(unit_highlights.iter().any(|h| h.start.row == 12 && h.start.col == 56 && h.end.col == 60));
+        // line 12: "monthly_cost = annual_cost / 12 month/year => $244.3901/month"
+        let pink = Color::Rgb(244, 143, 177);
+
+        // 1. LHS: "monthly_cost" starts at col 0, is Cyan, not italic
+        let row12_lhs = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 0).unwrap();
+        assert_eq!(row12_lhs.style.fg, Some(cyan));
+        assert!(!row12_lhs.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
+
+        // 2. RHS expression: " annual_cost / 1" starts at col 14, is Teal, not italic
+        let row12_rhs = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 14).unwrap();
+        assert_eq!(row12_rhs.style.fg, Some(teal));
+        assert!(!row12_rhs.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
+
+        // 3. Result: "$" starts at col 46, is Pink, and IS italic
+        let row12_res_dollar = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 46).unwrap();
+        assert_eq!(row12_res_dollar.style.fg, Some(pink));
+        assert!(row12_res_dollar.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
+
+        // 4. Result: "244.3901/" starts at col 47, is Teal, and IS italic
+        let row12_res_num = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 47).unwrap();
+        assert_eq!(row12_res_num.style.fg, Some(teal));
+        assert!(row12_res_num.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
+
+        // 5. Result: "month" starts at col 56, is Pink, and IS italic
+        let row12_res_month = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 56).unwrap();
+        assert_eq!(row12_res_month.style.fg, Some(pink));
+        assert!(row12_res_month.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
     }
 
     #[test]
