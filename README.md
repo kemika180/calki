@@ -20,15 +20,18 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
   ![Trip Planning & Speed Conversion](trip-planning.png)
 
 * **Wiki Link Navigation**: Create double-bracket links like `[[Project Goals]]` to connect notes. Press `Enter` on a link in Normal mode to jump to it, and `Backspace` or `Ctrl-o` to navigate back.
+* **Todo List Checkboxes**: Press `t` in Normal mode while hovering over any list line to toggle the checkbox state `[ ]` <-> `[x]`, or convert a plain list bullet into a checkbox item automatically.
+* **Custom Functions**: Define custom functions directly in your notes (e.g. `f(x) = x^2 + 2*x`) and use them elsewhere in the same file. They are also displayed under the Variables panel.
 * **Triple-Panel Layout**:
   - **Left Panel (Wiki Map)**: View references and incoming backlinks for the current note.
   - **Center Panel (Editor)**: Full-featured editor powered by `edtui` with Vim motion bindings.
   - **Right Panel (Variables Inspector)**: View active variable scopes and mathematical evaluations.
-* **Persistent Session & Customization**: Automatically saves your panel layout, cursor position, and preferences (such as `scrolloff` vertical viewport margins) in `~/.config/calki/config.json`.
+* **Persistent Session & Customization**: Automatically saves your panel layout, cursor position, and preferences in `~/.config/calki/config.json`.
+* **Automatic Version Checking**: Checks for new updates on launch from GitHub in a non-blocking background thread and provides an option to skip/ignore warnings for the current update.
 
 ---
 
-## 🛠️ Installation
+## 🛠️ Installation & Updating
 
 ### Prerequisites
 
@@ -68,6 +71,27 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ./target/release/calki
    ```
 
+### 🔄 How to Update
+
+When `calki` alerts you on launch that a new version is available, you can pull the latest changes and rebuild it with:
+
+1. Navigate to your cloned `calki` directory:
+   ```bash
+   cd /path/to/calki
+   ```
+
+2. Pull the latest commits from the main branch:
+   ```bash
+   git pull origin main
+   ```
+
+3. Rebuild the release binary and reinstall:
+   ```bash
+   cargo build --release
+   # or reinstall globally via:
+   cargo install --path .
+   ```
+
 ---
 
 ## ⌨️ Keybindings & Navigation
@@ -79,14 +103,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 | --- | --- |
 | `F2` | Toggle Left Panel (Wiki Map) |
 | `F3` | Toggle Right Panel (Variables Inspector) |
-| `Ctrl-h` | Move focus to the panel on the left |
-| `Ctrl-l` | Move focus to the panel on the right |
+| `Ctrl-h` / `Shift-H` | Move focus to the panel on the left |
+| `Ctrl-l` / `Shift-L` | Move focus to the panel on the right |
 
-### Help & Reference Modals (Normal Mode)
+### Help & Reference Modals
 | Key | Action |
 | --- | --- |
-| `~` (tilde) | Toggle General Help Modal |
-| `F1` | Toggle Mathematical Function Guide Modal |
+| `F1` | Toggle the unified Help & Math Function Guide |
 
 ### Wiki Navigation (Normal Mode)
 | Key | Action |
@@ -94,10 +117,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 | `Enter` | Follow `[[Wiki Link]]` under the cursor / Create note |
 | `Backspace` or `Ctrl-o` | Go back to the previous note in history |
 
-### Editor Actions (Visual Mode)
-| Key | Action |
+### Editor Actions
+| Key (Mode) | Action |
 | --- | --- |
-| `Enter` | Wrap the highlighted selection in a `[[Wiki Link]]` |
+| `t` (Normal) | Toggle todo item checkbox `[ ]` <=> `[x]` / Convert plain list bullet to todo checkbox |
+| `Enter` (Visual) | Wrap the highlighted selection in a `[[Wiki Link]]` |
 
 ---
 
@@ -105,11 +129,19 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 `calki` stores configuration files in your OS-appropriate configuration directory (typically `~/.config/calki/` on Linux/macOS).
 
-The `config.json` file supports customization of parameters like `scrolloff` (the number of lines to keep visible above and below the cursor when scrolling):
+The `config.json` file supports customization of the following options:
+
+* `scrolloff` (integer, default: `5`): The number of lines to keep visible above and below the cursor when scrolling.
+* `mouse_focus_on_hover` (boolean, default: `true`): If `true`, panel focus changes automatically when hovering the mouse pointer. If `false`, mouse click is required to focus a panel.
+* `expand_variables_on_select` (boolean, default: `false`): If `true`, the variables panel will dynamically expand to show full variable names/values when it is selected/focused.
+
+Example configuration file (`~/.config/calki/config.json`):
 
 ```json
 {
-  "scrolloff": 5
+  "scrolloff": 5,
+  "mouse_focus_on_hover": true,
+  "expand_variables_on_select": false
 }
 ```
 
