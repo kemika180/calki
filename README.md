@@ -14,7 +14,7 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
 
   ![Grocery List Budgeting](grocery-list.png)
 
-* **Inline Math Evaluation**: Run calculations right inside your sentences using backticks: `` `10m * 5m => 50m^2` ``.
+* **Inline Math Evaluation**: Run calculations right inside your sentences using backticks: `` `10m * 5m =>` ``.
 * **Dimensional & Currency Analysis**: Supports physical units (length, speed, data size, temperature, time) and live-updated currency conversion (fetched via a background thread to prevent startup latency).
 
   ![Trip Planning & Speed Conversion](trip-planning.png)
@@ -57,11 +57,14 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
 4. Run `calki`:
-   ```bash
-   # If installed via cargo path:
-   calki
 
-   # Or run the release binary directly:
+   If installed via cargo path:
+   ```bash
+   calki
+   ```
+  
+   Or run the release binary directly:
+   ```bash
    ./target/release/calki
    ```
 
