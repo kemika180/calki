@@ -2520,6 +2520,9 @@ fn ui(f: &mut Frame, app: &mut App) {
             .wrap(true);
         f.render_widget(editor_widget, inner_editor_area);
         if is_focused
+            && !app.show_help
+            && !app.show_update_modal
+            && !app.show_delete_confirm
             && let Some(pos) = app.editor_state.cursor_screen_position() {
                 f.set_cursor_position(pos);
             }
