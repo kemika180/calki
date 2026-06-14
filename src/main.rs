@@ -129,19 +129,33 @@ struct SessionState {
 
 impl SessionState {
     fn load() -> Option<Self> {
-        let mut path = crate::currency::get_config_path()?;
-        path.push("session.json");
-        let file = fs::File::open(path).ok()?;
-        serde_json::from_reader(file).ok()
+        #[cfg(test)]
+        {
+            return None;
+        }
+        #[cfg(not(test))]
+        {
+            let mut path = crate::currency::get_config_path()?;
+            path.push("session.json");
+            let file = fs::File::open(path).ok()?;
+            serde_json::from_reader(file).ok()
+        }
     }
 
     fn save(&self) -> Option<()> {
-        let mut path = crate::currency::get_config_path()?;
-        fs::create_dir_all(&path).ok()?;
-        path.push("session.json");
-        let file = fs::File::create(path).ok()?;
-        serde_json::to_writer_pretty(file, self).ok()?;
-        Some(())
+        #[cfg(test)]
+        {
+            return Some(());
+        }
+        #[cfg(not(test))]
+        {
+            let mut path = crate::currency::get_config_path()?;
+            fs::create_dir_all(&path).ok()?;
+            path.push("session.json");
+            let file = fs::File::create(path).ok()?;
+            serde_json::to_writer_pretty(file, self).ok()?;
+            Some(())
+        }
     }
 }
 
