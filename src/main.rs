@@ -1321,6 +1321,7 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
 }
 
 fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String> {
+    let mut last_key_was_z = false;
     loop {
         app.update_highlights();
         terminal.draw(|f| ui(f, app)).map_err(|e| e.to_string())?;
@@ -1344,6 +1345,11 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(key) => {
+                // Global exits: Ctrl-q works anywhere, regardless of mode/panel
+                if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    break;
+                }
+
                 // If delete confirmation is open
                 if app.show_delete_confirm {
                     match key.code {
@@ -1374,6 +1380,23 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                 // If help or function guide modal is open, process scrolling or close modal
                 if handle_modal_key(app, key) {
                     continue;
+                }
+
+                // ZZ exit sequence for Vim users (Normal mode in Editor)
+                let is_z = app.focused_panel == FocusedPanel::Editor 
+                    && app.editor_state.mode == EditorMode::Normal
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && (key.code == KeyCode::Char('Z') || (key.code == KeyCode::Char('z') && key.modifiers.contains(KeyModifiers::SHIFT)));
+
+                if is_z {
+                    if last_key_was_z {
+                        break;
+                    }
+                    last_key_was_z = true;
+                    continue;
+                } else {
+                    last_key_was_z = false;
                 }
 
                 // Intercept character for Vim 'r' replacement
@@ -1444,12 +1467,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     continue;
                 }
 
-                // Global exits
-                if app.focused_panel == FocusedPanel::Editor 
-                    && app.editor_state.mode == EditorMode::Normal
-                    && (key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL)) {
-                        break;
-                }
+
 
                 // Focus switching via Shift-H / Shift-L / Ctrl-h / Ctrl-l
                 let is_switch_left = (key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL))
@@ -1986,6 +2004,14 @@ fn ui(f: &mut Frame, app: &mut App) {
             Line::from(vec![
                 Span::styled(" Esc         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
                 Span::styled("Exit Help / Escape modes / Return focus to Editor", Style::default().fg(Color::Rgb(169, 177, 214))),
+            ]),
+            Line::from(vec![
+                Span::styled(" Ctrl-q      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                Span::styled("Exit the program (from any mode/panel)", Style::default().fg(Color::Rgb(169, 177, 214))),
+            ]),
+            Line::from(vec![
+                Span::styled(" ZZ          ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                Span::styled("Save and Exit (Normal mode in Editor)", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(vec![
                 Span::styled(" Shift-H / L ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),

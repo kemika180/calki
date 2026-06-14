@@ -55,7 +55,14 @@ We've pre-generated a few demo notes to showcase different capabilities. Press *
 * **Financial Forecasting**: [[Savings Plan]]
 * **Unit Conversions & Speed**: [[Trip Planning]]
 
-## 4. Sidebar Panels
+## 4. Editing Modes & Exiting
+calki uses Vim-style modal editing. You can navigate the editor using standard Vim motions (`h`/`j`/`k`/`l`).
+* **Switch to Insert Mode**: Press **`i`** to type text and equations.
+* **Switch to Visual Mode**: Press **`v`** to select/highlight text.
+* **Return to Normal Mode**: Press **`Esc`** at any time.
+* **Exit the Program**: In Normal Mode, press **`Ctrl-q`** or **`ZZ`** to save your work and exit.
+
+## 5. Sidebar Panels
 * Press **F2** to toggle the left **Wiki Map** (shows backlinks and references).
 * Press **F3** to toggle the right **Variables Inspector** (shows active scope values).
 * Press **Ctrl-h** / **Ctrl-l** to switch focus between active panels.
