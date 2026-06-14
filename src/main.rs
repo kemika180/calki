@@ -1911,7 +1911,9 @@ fn ui(f: &mut Frame, app: &mut App) {
 
         app.editor_state.set_viewport_offset(x_offset, y_offset);
 
-        let editor_widget = EditorView::new(&mut app.editor_state).theme(editor_theme);
+        let editor_widget = EditorView::new(&mut app.editor_state)
+            .theme(editor_theme)
+            .wrap(true);
         f.render_widget(editor_widget, inner_editor_area);
         if is_focused {
             if let Some(pos) = app.editor_state.cursor_screen_position() {
