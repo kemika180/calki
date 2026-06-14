@@ -218,7 +218,7 @@ struct App {
     show_delete_confirm: bool, // Whether to display the delete confirmation modal
     delete_target_name: String, // Name of page to delete
     delete_target_path: Option<PathBuf>, // Path of page to delete
-    
+
     // Exchange rates
     exchange_rates: HashMap<String, f64>,
 
@@ -234,7 +234,7 @@ impl App {
     fn new(wiki_root: PathBuf) -> Result<Self, String> {
         let wiki_mgr = WikiManager::new(wiki_root);
         let home_path = wiki_mgr.init_wiki()?;
-        
+
         let session = SessionState::load();
         let active_path = if let Some(ref s) = session {
             let path = PathBuf::from(&s.active_path);
@@ -253,14 +253,14 @@ impl App {
         let rates_cache = load_currency_rates();
 
         let mut editor_event_handler = EditorEventHandler::default();
-        
+
         // Register custom Vim "c" (change) motions:
         // 1. cw (Change Word)
         editor_event_handler.key_handler.insert(
             KeyEventRegister::n(vec![KeyInput::new('c'), KeyInput::new('w')]),
             edtui::actions::DeleteWordForward(1).chain(edtui::actions::SwitchMode(EditorMode::Insert)),
         );
-        
+
         // 2. cc (Change Line)
         editor_event_handler.key_handler.insert(
             KeyEventRegister::n(vec![KeyInput::new('c'), KeyInput::new('c')]),
@@ -364,7 +364,7 @@ impl App {
             // Keep cursor position
             let cursor = self.editor_state.cursor;
             self.editor_state.lines = Lines::from(updated_text.as_str());
-            
+
             // Clamp cursor to new buffer dimensions
             let max_row = self.editor_state.lines.len().saturating_sub(1);
             let mut target_row = cursor.row;
@@ -386,7 +386,7 @@ impl App {
     fn update_wiki_map(&mut self) {
         self.outgoing = self.wiki_mgr.scan_outgoing_links(&self.active_path);
         self.backlinks = self.wiki_mgr.scan_backlinks(&self.active_path);
-        
+
         let total_links = self.backlinks.len() + self.outgoing.len();
         if self.selected_link_idx >= total_links {
             self.selected_link_idx = total_links.saturating_sub(1);
@@ -588,7 +588,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
             }
         }
 
-        // D. Scan for units and highlight them in Tokyo Night Yellow (#e0af68)
+        // D. Scan for units and highlight them
         let tokens = tokenize_line_for_highlighting(line);
         let mut wiki_ranges = Vec::new();
         let mut w_idx = 0;
@@ -982,7 +982,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         if let Some(ref selection) = self.editor_state.selection {
             let start = selection.start;
             let end = selection.end;
-            
+
             // Sort start/end coordinates to get correct text boundaries
             let (start_idx, end_idx) = if start.row < end.row || (start.row == end.row && start.col <= end.col) {
                 (start, end)
@@ -991,7 +991,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
             };
 
             let lines_str = self.get_editor_text();
-            
+
             // Map 2D coordinate to 1D char index
             let start_offset = index2_to_char_offset(&self.editor_state.lines, start_idx);
             let end_offset = index2_to_char_offset(&self.editor_state.lines, end_idx) + 1;
@@ -999,7 +999,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
             let chars: Vec<char> = lines_str.chars().collect();
             if start_offset <= end_offset && end_offset <= chars.len() {
                 let selection_text: String = chars[start_offset..end_offset].iter().collect();
-                
+
                 // Wrap in double brackets
                 let new_lines_str = format!(
                     "{}[[{}]]{}",
@@ -1011,7 +1011,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 self.editor_state.lines = Lines::from(new_lines_str.as_str());
                 self.editor_state.mode = EditorMode::Normal;
                 self.editor_state.selection = None;
-                
+
                 // Position cursor inside the new link
                 self.editor_state.cursor.row = start_idx.row;
                 self.editor_state.cursor.col = start_idx.col + 2;
@@ -1026,7 +1026,7 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
         let cursor_idx = self.editor_state.cursor;
         let lines_str = self.get_editor_text();
         let offset = index2_to_char_offset(&self.editor_state.lines, cursor_idx);
-        
+
         let chars: Vec<char> = lines_str.chars().collect();
         if offset <= chars.len() {
             let new_lines_str = format!(
@@ -1036,11 +1036,11 @@ fn compute_syntax_highlights(lines_vecs: &Vec<Vec<char>>, selected_var: Option<&
                 chars[offset..].iter().collect::<String>()
             );
             self.editor_state.lines = Lines::from(new_lines_str.as_str());
-            
+
             // Move cursor forward
             self.editor_state.cursor.row = cursor_idx.row;
             self.editor_state.cursor.col = cursor_idx.col + text.chars().count();
-            
+
             self.re_evaluate_calculations();
             self.update_wiki_map();
         }
@@ -1138,7 +1138,7 @@ fn find_word_occurrences(lines_vecs: &[Vec<char>], word: &str) -> Vec<edtui::Hig
                 } else {
                     true
                 };
-                
+
                 if before_ok && after_ok {
                     highlights.push(edtui::Highlight {
                         start: edtui::Index2 {
@@ -1220,7 +1220,7 @@ fn main() -> Result<(), io::Error> {
 
 fn write_cursor_shape_sequence<W: std::io::Write>(writer: &mut W, shape_num: u8) -> std::io::Result<()> {
     let raw_seq = format!("\x1b[{} q", shape_num);
-    
+
     let inside_tmux = std::env::var("TMUX").is_ok();
     let term = std::env::var("TERM").unwrap_or_default();
     let inside_screen = term.contains("screen");
@@ -1466,8 +1466,6 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     app.update_highlights();
                     continue;
                 }
-
-
 
                 // Focus switching via Shift-H / Shift-L / Ctrl-h / Ctrl-l
                 let is_switch_left = (key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL))
@@ -1944,26 +1942,26 @@ fn ui(f: &mut Frame, app: &mut App) {
             } else {
                 Style::default().fg(Color::Rgb(115, 218, 202))       // Teal #73daca
             };
-            
+
             let prefix = if is_selected { "▶ " } else { "  " };
             let prefix_style = if is_selected {
                 Style::default().fg(Color::Rgb(125, 207, 255)).bold()
             } else {
                 Style::default()
             };
-            
+
             let name_style = if is_selected {
                 Style::default().fg(Color::Rgb(125, 207, 255)).bold()
             } else {
                 Style::default().fg(text_fg_color).bold()
             };
-            
+
             let item_line = Line::from(vec![
                 Span::styled(prefix, prefix_style),
                 Span::styled(format!("{}: ", name), name_style),
                 Span::styled(val, val_style),
             ]);
-            
+
             let mut item = ListItem::new(item_line);
             if is_selected {
                 item = item.style(Style::default().bg(Color::Rgb(59, 66, 97)));
@@ -1989,15 +1987,14 @@ fn ui(f: &mut Frame, app: &mut App) {
             .title(Span::styled(" Keyboard Shortcuts & Help ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
 
         let help_text = vec![
-            Line::from(vec![
-                Span::styled("calki Shortcuts Cheat Sheet", Style::default().bold().fg(Color::Rgb(125, 207, 255))),
-            ]),
-            Line::from(""),
-            
             Line::from(vec![Span::styled("── Global & Navigation ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
             Line::from(vec![
                 Span::styled(" F1          ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
                 Span::styled("Toggle Function Guide", Style::default().fg(Color::Rgb(169, 177, 214))),
+            ]),
+            Line::from(vec![
+                Span::styled(" F2 / F3     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                Span::styled("Toggle Wiki Map / Variables Panel", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(vec![
                 Span::styled(" ~           ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -2005,7 +2002,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             ]),
             Line::from(vec![
                 Span::styled(" Esc         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Exit Help / Escape modes / Return focus to Editor", Style::default().fg(Color::Rgb(169, 177, 214))),
+                Span::styled("Escape modes / Return focus to Editor", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(vec![
                 Span::styled(" Ctrl-q      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -2018,10 +2015,6 @@ fn ui(f: &mut Frame, app: &mut App) {
             Line::from(vec![
                 Span::styled(" Shift-H / L ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
                 Span::styled("Move Focus Left / Right between active panels", Style::default().fg(Color::Rgb(169, 177, 214))),
-            ]),
-            Line::from(vec![
-                Span::styled(" F2 / F3     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                Span::styled("Toggle Left Wiki Map / Right Variables Panel", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(""),
 
@@ -2090,11 +2083,6 @@ fn ui(f: &mut Frame, app: &mut App) {
             .title(Span::styled(" calki Function Guide ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
 
         let guide_text = vec![
-            Line::from(vec![
-                Span::styled("calki Built-in Functions Reference", Style::default().bold().fg(Color::Rgb(125, 207, 255))),
-            ]),
-            Line::from(""),
-
             Line::from(vec![Span::styled("── Basic Math & Rounding ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
             Line::from(vec![
                 Span::styled(" abs(x)             ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
@@ -2119,6 +2107,10 @@ fn ui(f: &mut Frame, app: &mut App) {
             Line::from(vec![
                 Span::styled(" max(x, y)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                 Span::styled("Maximum of two compatible values", Style::default().fg(Color::Rgb(169, 177, 214))),
+            ]),
+            Line::from(vec![
+                Span::styled(" mod(x, y)          ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                Span::styled("Modulo / remainder function (or infix x % y)", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(""),
 
@@ -2165,6 +2157,10 @@ fn ui(f: &mut Frame, app: &mut App) {
             Line::from(vec![
                 Span::styled(" variance / var     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                 Span::styled("Sample variance of arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
+            ]),
+            Line::from(vec![
+                Span::styled(" count(x, ...)      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                Span::styled("Count the number of scalar items across lists/scalars", Style::default().fg(Color::Rgb(169, 177, 214))),
             ]),
             Line::from(""),
 

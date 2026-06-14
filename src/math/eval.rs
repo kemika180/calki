@@ -950,6 +950,33 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         unit: arg_vals[0].unit.clone(),
                     })
                 }
+                "mod" => {
+                    check_built_in_args(name, &arg_vals, 2)?;
+                    let q1 = &arg_vals[0];
+                    let q2 = &arg_vals[1];
+                    match (&q1.unit, &q2.unit) {
+                        (Some(u1), Some(u2)) => {
+                            if !are_compatible(u1, u2) {
+                                return Err(format!("Incompatible units in mod(): '{}' and '{}'", u1, u2));
+                            }
+                            let converted = convert_quantity(q2.value, u2, u1, &ctx.exchange_rates)?;
+                            let rem = q1.value % converted;
+                            Ok(Quantity { is_bool: false, list: None,
+                                value: rem,
+                                unit: Some(u1.clone()),
+                            })
+                        }
+                        (None, None) => {
+                            Ok(Quantity { is_bool: false, list: None,
+                                value: q1.value % q2.value,
+                                unit: None,
+                            })
+                        }
+                        _ => {
+                            return Err("Cannot compare a quantity with a dimensionless value in mod()".to_string());
+                        }
+                    }
+                }
                 "min" => {
                     if arg_vals.is_empty() {
                         return Err("Function 'min' expects at least 1 argument".to_string());
@@ -1244,6 +1271,32 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         unit: left_qty.unit, // Simplified: assume unit stays unchanged (e.g. m^2 area needs derived unit support, but for now we forward unit)
                     })
                 }
+                Op::Mod => {
+                    let u1 = &left_qty.unit;
+                    let u2 = &right_qty.unit;
+                    match (u1, u2) {
+                        (Some(unit1), Some(unit2)) => {
+                            if !are_compatible(unit1, unit2) {
+                                return Err(format!("Incompatible units in modulo operator: '{}' and '{}'", unit1, unit2));
+                            }
+                            let right_converted = convert_quantity(right_qty.value, unit2, unit1, &ctx.exchange_rates)?;
+                            let rem = left_qty.value % right_converted;
+                            Ok(Quantity { is_bool: false, list: None,
+                                value: rem,
+                                unit: Some(unit1.clone()),
+                            })
+                        }
+                        (None, None) => {
+                            Ok(Quantity { is_bool: false, list: None,
+                                value: left_qty.value % right_qty.value,
+                                unit: None,
+                            })
+                        }
+                        _ => {
+                            return Err("Cannot compare a quantity with a dimensionless value in modulo operator".to_string());
+                        }
+                    }
+                }
                 Op::Less => {
                     let res = eval_lt_logic(&left_qty, &right_qty, &ctx.exchange_rates)?;
                     Ok(Quantity::boolean(res))
@@ -1415,6 +1468,14 @@ mod tests {
         assert_eq!(mn.value, 10.0);
         let mx = eval_expr(&parse_line("max(10, 20) =>").unwrap_expr(), &mut ctx).unwrap();
         assert_eq!(mx.value, 20.0);
+
+        // mod function and % infix operator
+        let md1 = eval_expr(&parse_line("mod(10, 3) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(md1.value, 1.0);
+        let md2 = eval_expr(&parse_line("10 % 3 =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(md2.value, 1.0);
+        let md3 = eval_expr(&parse_line("10% =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(md3.value, 0.1);
 
         // pmt
         let p = eval_expr(&parse_line("pmt(0.05 / 12, 60, -20000) =>").unwrap_expr(), &mut ctx).unwrap();

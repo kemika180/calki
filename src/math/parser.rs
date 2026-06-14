@@ -52,6 +52,7 @@ pub enum Op {
     Mul,
     Div,
     Pow,
+    Mod,
     Less,
     LessEq,
     Greater,
@@ -132,6 +133,21 @@ impl Parser {
         }
     }
 
+    fn is_infix_modulo(&self) -> bool {
+        if let Some(next_tok) = self.tokens.get(self.pos + 1) {
+            match next_tok {
+                Token::Number(_) |
+                Token::Identifier(_) |
+                Token::LPar |
+                Token::LBrack |
+                Token::Not => true,
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     // Core Pratt Parser loop
     fn parse_expression(&mut self, min_bp: u8) -> Result<Expr, String> {
         let token = self.next_token().ok_or("Unexpected end of expression")?;
@@ -140,15 +156,19 @@ impl Parser {
         while !self.is_at_end() {
             let next_tok = self.peek().cloned().unwrap();
             
-            // Handle percentage as a suffix operator (highest precedence)
+            // Handle percentage as a suffix operator (highest precedence) unless it acts as infix modulo
             if next_tok == Token::Percentage {
-                let (left_bp, _) = suffix_binding_power(&next_tok);
-                if left_bp < min_bp {
-                    break;
+                if self.is_infix_modulo() {
+                    // fall through to infix binary operator parsing
+                } else {
+                    let (left_bp, _) = suffix_binding_power(&next_tok);
+                    if left_bp < min_bp {
+                        break;
+                    }
+                    self.next_token(); // consume %
+                    left = Expr::Percentage(Box::new(left));
+                    continue;
                 }
-                self.next_token(); // consume %
-                left = Expr::Percentage(Box::new(left));
-                continue;
             }
 
             // Handle standard infix/binary operators
@@ -289,6 +309,10 @@ impl Parser {
                 let right = self.parse_expression(right_bp)?;
                 Ok(Expr::BinaryOp(Op::Div, Box::new(left), Box::new(right)))
             }
+            Token::Percentage => {
+                let right = self.parse_expression(right_bp)?;
+                Ok(Expr::BinaryOp(Op::Mod, Box::new(left), Box::new(right)))
+            }
             Token::Caret => {
                 let right = self.parse_expression(right_bp)?;
                 Ok(Expr::BinaryOp(Op::Pow, Box::new(left), Box::new(right)))
@@ -394,7 +418,7 @@ fn infix_binding_power(op: &Token) -> Option<(u8, u8)> {
         Token::In => Some((5, 6)),
         Token::Less | Token::LessEq | Token::Greater | Token::GreaterEq | Token::DoubleEq | Token::NotEq => Some((7, 8)),
         Token::Plus | Token::Minus => Some((10, 11)),
-        Token::Star | Token::Slash => Some((20, 21)),
+        Token::Star | Token::Slash | Token::Percentage => Some((20, 21)),
         Token::Caret => Some((31, 30)), // Right-associative exponentiation
         _ => None,
     }
