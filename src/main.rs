@@ -439,6 +439,17 @@ impl App {
         let mut editor_state = EditorState::new(Lines::from(file_content.as_str()));
         editor_state.set_clipboard(SystemClipboard::new());
 
+        // Restore cursor from local wiki manager cursors registry as default
+        if let Some((row, col)) = wiki_mgr.get_cursor_position(&active_path) {
+            let row_count = editor_state.lines.len();
+            if row_count > 0 {
+                let target_row = row.min(row_count - 1);
+                let col_count = editor_state.lines.get(RowIndex::new(target_row)).map(|r| r.len()).unwrap_or(0);
+                let target_col = col.min(col_count);
+                editor_state.cursor = edtui::Index2::new(target_row, target_col);
+            }
+        }
+
         let left_panel_open = session.as_ref().map(|s| s.left_panel_open).unwrap_or(true);
         let right_panel_open = session.as_ref().map(|s| s.right_panel_open).unwrap_or(true);
         let mut focused_panel = session.as_ref().map(|s| match s.focused_panel.as_str() {
@@ -1171,6 +1182,9 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
     // Saves current editor state to the active note file
     fn save_current_note(&self) -> Result<(), String> {
         let content = self.get_editor_text();
+        let row = self.editor_state.cursor.row;
+        let col = self.editor_state.cursor.col;
+        self.wiki_mgr.save_cursor_position(&self.active_path, row, col);
         fs::write(&self.active_path, content)
             .map_err(|e| format!("Failed to write note: {}", e))
     }
@@ -1191,6 +1205,18 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
 
         let mut editor_state = EditorState::new(Lines::from(content.as_str()));
         editor_state.set_clipboard(SystemClipboard::new());
+
+        // Restore cursor from local wiki manager cursors registry
+        if let Some((row, col)) = self.wiki_mgr.get_cursor_position(&self.active_path) {
+            let row_count = editor_state.lines.len();
+            if row_count > 0 {
+                let target_row = row.min(row_count - 1);
+                let col_count = editor_state.lines.get(RowIndex::new(target_row)).map(|r| r.len()).unwrap_or(0);
+                let target_col = col.min(col_count);
+                editor_state.cursor = edtui::Index2::new(target_row, target_col);
+            }
+        }
+
         self.editor_state = editor_state;
         self.re_evaluate_calculations();
         self.update_wiki_map();
@@ -3806,6 +3832,36 @@ mod main_tests {
             app.editor_event_handler.on_key_event(j_key, &mut app.editor_state);
         }
         assert_eq!(app.editor_state.cursor.row, 5);
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_note_cursor_preservation() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_preservation");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        let path1 = wiki_root.join("note1.md");
+        let path2 = wiki_root.join("note2.md");
+
+        // Load note 1, move cursor and save
+        let _ = app.load_note(path1.clone());
+        app.editor_state.cursor = edtui::Index2::new(2, 4); // row 2, col 4 (valid length text)
+        let _ = app.save_current_note();
+
+        // Load note 2, cursor starts at 0, 0
+        let _ = app.load_note(path2.clone());
+        assert_eq!(app.editor_state.cursor.row, 0);
+        assert_eq!(app.editor_state.cursor.col, 0);
+
+        // Switch back to note 1, cursor should be restored to 2, 4!
+        let _ = app.load_note(path1.clone());
+        assert_eq!(app.editor_state.cursor.row, 2);
+        assert_eq!(app.editor_state.cursor.col, 4);
 
         let _ = std::fs::remove_dir_all(&wiki_root);
     }

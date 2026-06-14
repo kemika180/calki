@@ -6,6 +6,7 @@ use std::cell::RefCell;
 pub struct WikiManager {
     root_dir: PathBuf,
     registry: RefCell<HashMap<String, Vec<String>>>,
+    cursors: RefCell<HashMap<String, (usize, usize)>>,
 }
 
 impl WikiManager {
@@ -39,9 +40,38 @@ impl WikiManager {
             }
         }
 
+        let cursors_path = root_dir.join(".calki-cursors.json");
+        let mut cursors_map = HashMap::new();
+        if cursors_path.exists() {
+            if let Ok(content) = fs::read_to_string(&cursors_path) {
+                if let Ok(map) = serde_json::from_str(&content) {
+                    cursors_map = map;
+                }
+            }
+        }
+
         Self {
             root_dir,
             registry: RefCell::new(registry_map),
+            cursors: RefCell::new(cursors_map),
+        }
+    }
+
+    pub fn get_cursor_position(&self, file_path: &Path) -> Option<(usize, usize)> {
+        if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
+            self.cursors.borrow().get(file_name).copied()
+        } else {
+            None
+        }
+    }
+
+    pub fn save_cursor_position(&self, file_path: &Path, row: usize, col: usize) {
+        if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
+            self.cursors.borrow_mut().insert(file_name.to_string(), (row, col));
+            let cursors_path = self.root_dir.join(".calki-cursors.json");
+            if let Ok(content) = serde_json::to_string_pretty(&*self.cursors.borrow()) {
+                let _ = fs::write(&cursors_path, content);
+            }
         }
     }
 
@@ -412,6 +442,31 @@ mod tests {
 
         let backlinks_updated = mgr.scan_backlinks(&note2);
         assert!(backlinks_updated.is_empty());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_wiki_cursors_registry() {
+        let temp_dir = std::env::current_dir().unwrap().join("test_wiki_temp_cursors");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mgr = WikiManager::new(&temp_dir);
+        let note_path = temp_dir.join("test-note.md");
+
+        // Verify it defaults to None
+        assert_eq!(mgr.get_cursor_position(&note_path), None);
+
+        // Save position
+        mgr.save_cursor_position(&note_path, 4, 12);
+        assert_eq!(mgr.get_cursor_position(&note_path), Some((4, 12)));
+
+        // Load new manager to verify persistence
+        let mgr2 = WikiManager::new(&temp_dir);
+        assert_eq!(mgr2.get_cursor_position(&note_path), Some((4, 12)));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
