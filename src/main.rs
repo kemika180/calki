@@ -2608,6 +2608,20 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Line::from(vec![
                     Span::styled(" * Custom functions (e.g. f(x) = body) are also displayed in this sidebar.", Style::default().fg(Color::Rgb(169, 177, 214)).italic()),
                 ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Configuration File (~/.config/calki/config.json) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" scrolloff                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Number of lines to keep visible above/below cursor (default: 5)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" mouse_focus_on_hover      ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Switch panel focus by hovering mouse (default: true)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" expand_variables_on_select", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Auto-expand variables sidebar when focused (default: false)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
             ],
             1 => vec![
                 Line::from(vec![Span::styled("── Basic Arithmetic & Functions ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
