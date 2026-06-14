@@ -62,13 +62,10 @@ pub fn load_currency_rates() -> RatesCache {
         return default_cache;
     }
 
-    match fs::read_to_string(&file_path) {
-        Ok(content) => match serde_json::from_str::<RatesCache>(&content) {
-            Ok(cache) => cache,
-            Err(_) => default_cache,
-        },
-        Err(_) => default_cache,
-    }
+    fs::read_to_string(&file_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<RatesCache>(&content).ok())
+        .unwrap_or(default_cache)
 }
 
 // Spawns a background thread to update exchange rates if they are older than 24 hours.
@@ -79,23 +76,15 @@ pub fn trigger_background_update() {
         None => return,
     };
 
-    let needs_update = if !file_path.exists() {
-        true
-    } else {
-        match fs::metadata(&file_path) {
-            Ok(metadata) => match metadata.modified() {
-                Ok(modified) => {
-                    let now = SystemTime::now();
-                    match now.duration_since(modified) {
-                        Ok(elapsed) => elapsed.as_secs() > 86400, // 24 hours
-                        Err(_) => true,
-                    }
-                }
-                Err(_) => true,
-            },
-            Err(_) => true,
-        }
-    };
+    let needs_update = fs::metadata(&file_path)
+        .and_then(|m| m.modified())
+        .map(|modified| {
+            SystemTime::now()
+                .duration_since(modified)
+                .map(|elapsed| elapsed.as_secs() > 86400) // 24 hours
+                .unwrap_or(true)
+        })
+        .unwrap_or(true);
 
     if needs_update {
         std::thread::spawn(move || {
