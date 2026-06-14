@@ -2375,14 +2375,17 @@ pub fn format_quantity(qty: &Quantity) -> String {
         Some(u) => {
             if u == "hex" || u == "bin" {
                 rounded
-            } else if let Some(suffix) = u.strip_prefix('$') {
-                format!("${}{}", rounded, suffix)
             } else {
-                let starts_with_word = u.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false);
-                if starts_with_word && u != "i" {
-                    format!("{} {}", rounded, u) // postfix format with space for words
+                let adjusted_u = crate::math::units::adjust_unit_plurality(u, qty.value);
+                if let Some(suffix) = adjusted_u.strip_prefix('$') {
+                    format!("${}{}", rounded, suffix)
                 } else {
-                    format!("{}{}", rounded, u) // postfix format without space for symbols
+                    let starts_with_word = adjusted_u.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false);
+                    if starts_with_word && adjusted_u != "i" {
+                        format!("{} {}", rounded, adjusted_u) // postfix format with space for words
+                    } else {
+                        format!("{}{}", rounded, adjusted_u) // postfix format without space for symbols
+                    }
                 }
             }
         }
@@ -2976,5 +2979,26 @@ res_j =>
         let expr_hbar = parse_line("hbar =>").unwrap_expr();
         let res_hbar = eval_expr(&expr_hbar, &mut ctx).unwrap();
         assert_eq!(res_hbar.value, 1.054571817e-34);
+    }
+
+    #[test]
+    fn test_format_quantity_plurality() {
+        let q1 = Quantity::scalar(1.0, Some("days".to_string()));
+        assert_eq!(format_quantity(&q1), "1 day");
+
+        let q2 = Quantity::scalar(5.0, Some("days".to_string()));
+        assert_eq!(format_quantity(&q2), "5 days");
+
+        let q3 = Quantity::scalar(12.0, Some("month/year".to_string()));
+        assert_eq!(format_quantity(&q3), "12 months/year");
+
+        let q4 = Quantity::scalar(1.0, Some("month/year".to_string()));
+        assert_eq!(format_quantity(&q4), "1 month/year");
+
+        let q5 = Quantity::scalar(1.0, Some("miles/hour".to_string()));
+        assert_eq!(format_quantity(&q5), "1 mile/hour");
+
+        let q6 = Quantity::scalar(55.0, Some("miles/hour".to_string()));
+        assert_eq!(format_quantity(&q6), "55 miles/hour");
     }
 }

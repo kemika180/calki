@@ -591,6 +591,118 @@ pub fn combine_units(u1: Option<&str>, u2: Option<&str>, is_division: bool) -> O
     unit
 }
 
+fn get_singular_plural(unit: &str) -> Option<(&'static str, &'static str)> {
+    let pairs = [
+        ("second", "seconds"),
+        ("sec", "secs"),
+        ("minute", "minutes"),
+        ("min", "mins"),
+        ("hour", "hours"),
+        ("hr", "hrs"),
+        ("day", "days"),
+        ("week", "weeks"),
+        ("month", "months"),
+        ("year", "years"),
+        ("yr", "yrs"),
+        ("meter", "meters"),
+        ("centimeter", "centimeters"),
+        ("millimeter", "millimeters"),
+        ("kilometer", "kilometers"),
+        ("inch", "inches"),
+        ("foot", "feet"),
+        ("yard", "yards"),
+        ("mile", "miles"),
+        ("liter", "liters"),
+        ("gallon", "gallons"),
+        ("pound", "pounds"),
+        ("lb", "lbs"),
+        ("ounce", "ounces"),
+        ("cup", "cups"),
+        ("pint", "pints"),
+        ("quart", "quarts"),
+        ("ton", "tons"),
+        ("gram", "grams"),
+        ("kilogram", "kilograms"),
+        ("watt", "watts"),
+        ("watt-hour", "watt-hours"),
+    ];
+    for &(s, p) in &pairs {
+        if unit == s || unit == p {
+            return Some((s, p));
+        }
+    }
+    None
+}
+
+fn adjust_token_plurality(token: &str, is_denominator: bool, value: f64) -> String {
+    // Separate exponent suffix (e.g. "^2" or "2" at the end of "miles^2" or "miles2")
+    let base_len = token.trim_end_matches(|c: char| c.is_ascii_digit() || c == '^').len();
+    let (base, suffix) = token.split_at(base_len);
+
+    let is_singular = is_denominator || (value.abs() - 1.0).abs() < 1e-9;
+
+    // 1. Try direct match
+    if let Some((s, p)) = get_singular_plural(base) {
+        let adjusted_base = if is_singular { s } else { p };
+        return format!("{}{}", adjusted_base, suffix);
+    }
+
+    // 2. Try matching long prefixes
+    for &(prefix, _) in LONG_PREFIXES {
+        if base.starts_with(prefix) && base.len() > prefix.len() {
+            let suffix_part = &base[prefix.len()..];
+            if let Some((s, p)) = get_singular_plural(suffix_part) {
+                let adjusted_suffix = if is_singular { s } else { p };
+                return format!("{}{}{}", prefix, adjusted_suffix, suffix);
+            }
+        }
+    }
+
+    // 3. Try matching short prefixes
+    for &(prefix, _) in SHORT_PREFIXES {
+        if base.starts_with(prefix) && base.len() > prefix.len() {
+            let suffix_part = &base[prefix.len()..];
+            if let Some((s, p)) = get_singular_plural(suffix_part) {
+                let adjusted_suffix = if is_singular { s } else { p };
+                return format!("{}{}{}", prefix, adjusted_suffix, suffix);
+            }
+        }
+    }
+
+    token.to_string()
+}
+
+pub fn adjust_unit_plurality(unit: &str, value: f64) -> String {
+    let parts: Vec<&str> = unit.split('/').collect();
+    if parts.is_empty() {
+        return String::new();
+    }
+
+    // Process numerator (first part)
+    let numerator_tokens: Vec<String> = parts[0]
+        .split('*')
+        .map(|token| adjust_token_plurality(token, false, value))
+        .collect();
+    let numerator = numerator_tokens.join("*");
+
+    if parts.len() > 1 {
+        // Process denominators (all parts after numerator)
+        let denominator_parts: Vec<String> = parts[1..]
+            .iter()
+            .map(|den_part| {
+                let den_tokens: Vec<String> = den_part
+                    .split('*')
+                    .map(|token| adjust_token_plurality(token, true, value))
+                    .collect();
+                den_tokens.join("*")
+            })
+            .collect();
+        format!("{}/{}", numerator, denominator_parts.join("/"))
+    } else {
+        numerator
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,5 +862,20 @@ mod tests {
 
         let val3 = convert_quantity(1.0, "Wh", "J", &rates).unwrap();
         assert_eq!(val3, 3600.0);
+    }
+
+    #[test]
+    fn test_unit_plurality() {
+        assert_eq!(adjust_unit_plurality("days", 1.0), "day");
+        assert_eq!(adjust_unit_plurality("days", 5.0), "days");
+        assert_eq!(adjust_unit_plurality("day", 5.0), "days");
+        assert_eq!(adjust_unit_plurality("day", 1.0), "day");
+        assert_eq!(adjust_unit_plurality("miles/hour", 1.0), "mile/hour");
+        assert_eq!(adjust_unit_plurality("miles/hour", 5.0), "miles/hour");
+        assert_eq!(adjust_unit_plurality("miles/hours", 5.0), "miles/hour"); // denominator is always singular
+        assert_eq!(adjust_unit_plurality("month/years", 12.0), "months/year");
+        assert_eq!(adjust_unit_plurality("1/years", 2.0), "1/year");
+        assert_eq!(adjust_unit_plurality("kilometers", 1.0), "kilometer");
+        assert_eq!(adjust_unit_plurality("kilometer", 5.0), "kilometers");
     }
 }
