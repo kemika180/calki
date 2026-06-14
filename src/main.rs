@@ -159,15 +159,29 @@ impl SessionState {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct AppConfig {
     scrolloff: usize,
+    #[serde(default = "default_true")]
+    mouse_focus_on_hover: bool,
+    #[serde(default = "default_false")]
+    expand_variables_on_select: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             scrolloff: 5,
+            mouse_focus_on_hover: true,
+            expand_variables_on_select: false,
         }
     }
 }
@@ -2018,6 +2032,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     } else {
                         let col = mouse.column;
                         let row = mouse.row;
+                        let is_click = mouse.kind == event::MouseEventKind::Down(event::MouseButton::Left);
 
                         // 1. Left Panel (Wiki Map)
                         if app.left_panel_open 
@@ -2026,8 +2041,10 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             && row >= app.left_area.y 
                             && row < app.left_area.y + app.left_area.height 
                         {
-                            app.focused_panel = FocusedPanel::WikiMap;
-                            if mouse.kind == event::MouseEventKind::Down(event::MouseButton::Left) {
+                            if app.config.mouse_focus_on_hover || is_click {
+                                app.focused_panel = FocusedPanel::WikiMap;
+                            }
+                            if is_click {
                                 let click_row = row as i32 - app.left_area.y as i32 - 1;
                                 if click_row >= 0 {
                                     let row_map = app.get_left_panel_row_map();
@@ -2053,8 +2070,10 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             && row >= app.right_area.y 
                             && row < app.right_area.y + app.right_area.height 
                         {
-                            app.focused_panel = FocusedPanel::Variables;
-                            if mouse.kind == event::MouseEventKind::Down(event::MouseButton::Left) {
+                            if app.config.mouse_focus_on_hover || is_click {
+                                app.focused_panel = FocusedPanel::Variables;
+                            }
+                            if is_click {
                                 let click_row = row as i32 - app.right_area.y as i32 - 1;
                                 if click_row >= 0 && (click_row as usize) < app.variables_cache.len() {
                                     app.selected_var_idx = click_row as usize;
@@ -2067,8 +2086,12 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             && row >= app.editor_area.y 
                             && row < app.editor_area.y + app.editor_area.height 
                         {
-                            app.focused_panel = FocusedPanel::Editor;
-                            app.editor_event_handler.on_mouse_event(mouse, &mut app.editor_state);
+                            if app.config.mouse_focus_on_hover || is_click {
+                                app.focused_panel = FocusedPanel::Editor;
+                            }
+                            if app.focused_panel == FocusedPanel::Editor {
+                                app.editor_event_handler.on_mouse_event(mouse, &mut app.editor_state);
+                            }
                         }
                     }
                     app.update_highlights();
@@ -2120,7 +2143,16 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     // 2. Compute dynamic horizontal panel layouts
     let left_constraint = if app.left_panel_open { Constraint::Length(22) } else { Constraint::Length(0) };
-    let right_constraint = if app.right_panel_open { Constraint::Length(25) } else { Constraint::Length(0) };
+    let right_width = if app.right_panel_open {
+        if app.config.expand_variables_on_select && app.focused_panel == FocusedPanel::Variables {
+            45
+        } else {
+            25
+        }
+    } else {
+        0
+    };
+    let right_constraint = Constraint::Length(right_width);
     let middle_constraint = Constraint::Min(20);
 
     let workspace_layout = Layout::default()
@@ -3418,6 +3450,66 @@ mod main_tests {
     }
 
     #[test]
+    fn test_expand_variables_on_select() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_expand");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.left_panel_open = true;
+        app.right_panel_open = true;
+        
+        // Default configuration
+        assert!(!app.config.expand_variables_on_select);
+        
+        // When option is false, right width is always 25
+        app.focused_panel = FocusedPanel::Variables;
+        let right_width_unexpanded = if app.right_panel_open {
+            if app.config.expand_variables_on_select && app.focused_panel == FocusedPanel::Variables {
+                45
+            } else {
+                25
+            }
+        } else {
+            0
+        };
+        assert_eq!(right_width_unexpanded, 25);
+        
+        // Enable option
+        app.config.expand_variables_on_select = true;
+        
+        // When focused on Variables panel, right width should expand to 45
+        let right_width_expanded = if app.right_panel_open {
+            if app.config.expand_variables_on_select && app.focused_panel == FocusedPanel::Variables {
+                45
+            } else {
+                25
+            }
+        } else {
+            0
+        };
+        assert_eq!(right_width_expanded, 45);
+        
+        // When focused elsewhere, right width should remain 25
+        app.focused_panel = FocusedPanel::Editor;
+        let right_width_editor_focused = if app.right_panel_open {
+            if app.config.expand_variables_on_select && app.focused_panel == FocusedPanel::Variables {
+                45
+            } else {
+                25
+            }
+        } else {
+            0
+        };
+        assert_eq!(right_width_editor_focused, 25);
+        
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+
+    #[test]
     fn test_compute_syntax_highlights_units() {
         let lines = vec![
             "commute = 88 miles".chars().collect::<Vec<char>>(),
@@ -3795,9 +3887,15 @@ mod main_tests {
         // Verify default config is loaded when no file exists.
         let default_config = AppConfig::load();
         assert_eq!(default_config.scrolloff, 5); // Default value
+        assert!(default_config.mouse_focus_on_hover);
+        assert!(!default_config.expand_variables_on_select);
 
         // Modify and save config.
-        let custom_config = AppConfig { scrolloff: 8 };
+        let custom_config = AppConfig {
+            scrolloff: 8,
+            mouse_focus_on_hover: false,
+            expand_variables_on_select: true,
+        };
         custom_config.save().expect("Failed to save config");
 
         // Verify that the file was created in the correct location.
@@ -3807,6 +3905,8 @@ mod main_tests {
         // Load config and verify custom values are loaded.
         let loaded_config = AppConfig::load();
         assert_eq!(loaded_config.scrolloff, 8);
+        assert!(!loaded_config.mouse_focus_on_hover);
+        assert!(loaded_config.expand_variables_on_select);
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
