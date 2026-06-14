@@ -96,7 +96,7 @@ When `calki` alerts you on launch that a new version is available, you can pull 
 
 ## ⌨️ Keybindings & Navigation
 
-`calki` uses Vim-like modal editing. You can navigate the editor using standard Vim motions (`h`, `j`, `k`, `l`, `w`, `b`, etc.).
+`calki` uses Vim-like modal editing. You can navigate the editor using standard Vim motions (`h`, `j`, `k`, `l`, `w`, `b`, etc.). Repeat multipliers are supported for repeatable motions (e.g., `5j` moves 5 lines down, `12w` jumps forward 12 words, and `3x` deletes 3 characters).
 
 ### Panel Controls
 | Key | Action |
@@ -134,6 +134,7 @@ The `config.json` file supports customization of the following options:
 * `scrolloff` (integer, default: `5`): The number of lines to keep visible above and below the cursor when scrolling.
 * `mouse_focus_on_hover` (boolean, default: `true`): If `true`, panel focus changes automatically when hovering the mouse pointer. If `false`, mouse click is required to focus a panel.
 * `expand_variables_on_select` (boolean, default: `false`): If `true`, the variables panel will dynamically expand to show full variable names/values when it is selected/focused.
+* `line_numbers` (string, default: `"None"`): Line numbering mode inside the editor. Supported options are `"None"`, `"Absolute"`, and `"Relative"`.
 
 Example configuration file (`~/.config/calki/config.json`):
 
@@ -141,7 +142,8 @@ Example configuration file (`~/.config/calki/config.json`):
 {
   "scrolloff": 5,
   "mouse_focus_on_hover": true,
-  "expand_variables_on_select": false
+  "expand_variables_on_select": false,
+  "line_numbers": "None"
 }
 ```
 

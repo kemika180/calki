@@ -167,6 +167,10 @@ fn default_false() -> bool {
     false
 }
 
+fn default_line_numbers() -> String {
+    "None".to_string()
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct AppConfig {
     scrolloff: usize,
@@ -176,6 +180,8 @@ struct AppConfig {
     expand_variables_on_select: bool,
     #[serde(default)]
     ignored_update_hash: Option<String>,
+    #[serde(default = "default_line_numbers")]
+    line_numbers: String,
 }
 
 impl Default for AppConfig {
@@ -185,6 +191,7 @@ impl Default for AppConfig {
             mouse_focus_on_hover: true,
             expand_variables_on_select: false,
             ignored_update_hash: None,
+            line_numbers: "None".to_string(),
         }
     }
 }
@@ -268,6 +275,7 @@ struct App {
     editor_area: Rect,
     right_area: Rect,
     replace_next_char: bool,
+    vim_multiplier: Option<usize>,
     config: AppConfig,
 
     // Global Wiki Search
@@ -312,6 +320,20 @@ fn trim_start_slice(mut slice: &[char]) -> &[char] {
         }
     }
     slice
+}
+
+fn is_repeatable_motion(key: crossterm::event::KeyEvent) -> bool {
+    if key.modifiers.is_empty() {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('h') | KeyCode::Char('l')
+            | KeyCode::Char('w') | KeyCode::Char('b') | KeyCode::Char('e') | KeyCode::Char('x')
+            | KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
+            | KeyCode::PageUp | KeyCode::PageDown => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
 }
 
 fn check_for_updates() -> Option<std::sync::mpsc::Receiver<String>> {
@@ -461,6 +483,7 @@ impl App {
             editor_area: Rect::default(),
             right_area: Rect::default(),
             replace_next_char: false,
+            vim_multiplier: None,
             config,
             search_query: String::new(),
             search_active: false,
@@ -1955,6 +1978,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         && (app.focused_panel != FocusedPanel::Editor || app.editor_state.mode == EditorMode::Normal || app.editor_state.mode == EditorMode::Visual));
 
                 if is_switch_left {
+                    app.vim_multiplier = None;
                     match app.focused_panel {
                         FocusedPanel::Editor => {
                             if app.left_panel_open {
@@ -1970,6 +1994,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     continue;
                 }
                 if is_switch_right {
+                    app.vim_multiplier = None;
                     match app.focused_panel {
                         FocusedPanel::Editor => {
                             if app.right_panel_open {
@@ -1991,8 +2016,33 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     FocusedPanel::Editor => {
                         let prev_mode = app.editor_state.mode;
 
+                        // Check for multiplier digits if in Normal or Visual mode
+                        if (prev_mode == EditorMode::Normal || prev_mode == EditorMode::Visual)
+                            && !app.replace_next_char
+                            && let KeyCode::Char(c) = key.code 
+                            && c.is_ascii_digit()
+                            && (c != '0' || app.vim_multiplier.is_some())
+                            && key.modifiers.is_empty()
+                        {
+                            let digit = c.to_digit(10).unwrap() as usize;
+                            let current = app.vim_multiplier.unwrap_or(0);
+                            app.vim_multiplier = Some(current * 10 + digit);
+                            continue;
+                        }
+
+                        let mut count = 1;
+                        if let Some(c) = app.vim_multiplier {
+                            if (prev_mode == EditorMode::Normal || prev_mode == EditorMode::Visual)
+                                && is_repeatable_motion(key)
+                            {
+                                count = c;
+                            }
+                            app.vim_multiplier = None; // Reset multiplier
+                        }
+
                         // Intercept Enter key inside Visual Mode
                         if key.code == KeyCode::Enter && prev_mode == EditorMode::Visual {
+                            app.vim_multiplier = None;
                             app.wrap_selection_in_link();
                             continue;
                         }
@@ -2000,12 +2050,14 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         // Intercept Enter key in Normal Mode
                         if key.code == KeyCode::Enter && prev_mode == EditorMode::Normal
                             && app.follow_link_under_cursor() {
+                                app.vim_multiplier = None;
                                 continue;
                             }
 
                         // Intercept 't' in Normal Mode to toggle todo item at current row
                         if key.code == KeyCode::Char('t') && prev_mode == EditorMode::Normal
                             && app.toggle_todo_at_cursor() {
+                                app.vim_multiplier = None;
                                 continue;
                             }
 
@@ -2013,6 +2065,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         if (key.code == KeyCode::Backspace || (key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL)))
                             && prev_mode == EditorMode::Normal
                             && app.go_back() {
+                                app.vim_multiplier = None;
                                 continue;
                             }
 
@@ -2020,6 +2073,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL)
                             && prev_mode == EditorMode::Normal 
                         {
+                            app.vim_multiplier = None;
                             let current_title = app.wiki_mgr.path_to_title(&app.active_path);
                             app.delete_target_name = current_title;
                             app.delete_target_path = Some(app.active_path.clone());
@@ -2044,12 +2098,15 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             | KeyCode::PageUp
                             | KeyCode::PageDown => {}
                             _ => {
+                                app.vim_multiplier = None;
                                 continue;
                             }
                         }
 
                         // Send event to Editor state
-                        app.editor_event_handler.on_key_event(key, &mut app.editor_state);
+                        for _ in 0..count {
+                            app.editor_event_handler.on_key_event(key, &mut app.editor_state);
+                        }
 
                         // Trigger math calculation update on exiting Insert Mode
                         if prev_mode == EditorMode::Insert && app.editor_state.mode == EditorMode::Normal {
@@ -2133,6 +2190,7 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                 app.update_highlights();
             }
             Event::Mouse(mouse) => {
+                    app.vim_multiplier = None; // Reset multiplier on mouse action
                     if app.show_help {
                         app.show_help = false;
                     } else {
@@ -2424,8 +2482,15 @@ fn ui(f: &mut Frame, app: &mut App) {
 
         app.editor_state.set_viewport_offset(x_offset, y_offset);
 
+        let line_num_config = match app.config.line_numbers.as_str() {
+            "Absolute" => edtui::LineNumbers::Absolute,
+            "Relative" => edtui::LineNumbers::Relative,
+            _ => edtui::LineNumbers::None,
+        };
+
         let editor_widget = EditorView::new(&mut app.editor_state)
             .theme(editor_theme)
+            .line_numbers(line_num_config)
             .wrap(true);
         f.render_widget(editor_widget, inner_editor_area);
         if is_focused
@@ -2621,6 +2686,10 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Line::from(vec![
                     Span::styled(" expand_variables_on_select", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                     Span::styled("Auto-expand variables sidebar when focused (default: false)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" line_numbers              ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Line numbers display mode: 'None', 'Absolute', 'Relative' (default: 'None')", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
             ],
             1 => vec![
@@ -3667,6 +3736,81 @@ mod main_tests {
     }
 
     #[test]
+    fn test_n_motions_multiplier() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_multiplier");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.editor_state = EditorState::new(edtui::Lines::from("line 1\nline 2\nline 3\nline 4\nline 5\nline 6"));
+        app.editor_state.cursor = edtui::Index2::new(0, 0);
+        app.editor_state.mode = EditorMode::Normal;
+        app.focused_panel = FocusedPanel::Editor;
+
+        // Check helper directly
+        let j_key = crossterm::event::KeyEvent::new(KeyCode::Char('j'), crossterm::event::KeyModifiers::NONE);
+        let k_key = crossterm::event::KeyEvent::new(KeyCode::Char('k'), crossterm::event::KeyModifiers::NONE);
+        let a_key = crossterm::event::KeyEvent::new(KeyCode::Char('a'), crossterm::event::KeyModifiers::NONE);
+        assert!(is_repeatable_motion(j_key));
+        assert!(is_repeatable_motion(k_key));
+        assert!(!is_repeatable_motion(a_key));
+
+        // Test digits accumulation in normal mode
+        let key_5 = crossterm::event::KeyEvent::new(KeyCode::Char('5'), crossterm::event::KeyModifiers::NONE);
+        let key_2 = crossterm::event::KeyEvent::new(KeyCode::Char('2'), crossterm::event::KeyModifiers::NONE);
+        
+        // Simulate event loop logic:
+        let prev_mode = app.editor_state.mode;
+        // Key press '5'
+        if (prev_mode == EditorMode::Normal || prev_mode == EditorMode::Visual) && !app.replace_next_char
+            && let KeyCode::Char(c) = key_5.code 
+            && c.is_ascii_digit()
+            && (c != '0' || app.vim_multiplier.is_some())
+            && key_5.modifiers.is_empty()
+        {
+            let digit = c.to_digit(10).unwrap() as usize;
+            let current = app.vim_multiplier.unwrap_or(0);
+            app.vim_multiplier = Some(current * 10 + digit);
+        }
+        assert_eq!(app.vim_multiplier, Some(5));
+
+        // Key press '2'
+        if (prev_mode == EditorMode::Normal || prev_mode == EditorMode::Visual) && !app.replace_next_char
+            && let KeyCode::Char(c) = key_2.code 
+            && c.is_ascii_digit()
+            && (c != '0' || app.vim_multiplier.is_some())
+            && key_2.modifiers.is_empty()
+        {
+            let digit = c.to_digit(10).unwrap() as usize;
+            let current = app.vim_multiplier.unwrap_or(0);
+            app.vim_multiplier = Some(current * 10 + digit);
+        }
+        assert_eq!(app.vim_multiplier, Some(52));
+
+        // Simulate repeatable motion execution for 'j' (move down 52 times, but saturates at lines count - 1 = 5)
+        let mut count = 1;
+        if let Some(c) = app.vim_multiplier {
+            if (prev_mode == EditorMode::Normal || prev_mode == EditorMode::Visual)
+                && is_repeatable_motion(j_key)
+            {
+                count = c;
+            }
+            app.vim_multiplier = None;
+        }
+        assert_eq!(count, 52);
+        assert_eq!(app.vim_multiplier, None);
+
+        for _ in 0..count {
+            app.editor_event_handler.on_key_event(j_key, &mut app.editor_state);
+        }
+        assert_eq!(app.editor_state.cursor.row, 5);
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
     fn test_update_available_flow() {
         let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_update_flow");
         if wiki_root.exists() {
@@ -4097,6 +4241,7 @@ mod main_tests {
         assert!(default_config.mouse_focus_on_hover);
         assert!(!default_config.expand_variables_on_select);
         assert_eq!(default_config.ignored_update_hash, None);
+        assert_eq!(default_config.line_numbers, "None");
 
         // Test serialization and deserialization
         let custom_config = AppConfig {
@@ -4104,6 +4249,7 @@ mod main_tests {
             mouse_focus_on_hover: false,
             expand_variables_on_select: true,
             ignored_update_hash: Some("test_hash_val".to_string()),
+            line_numbers: "Absolute".to_string(),
         };
         let serialized = serde_json::to_string_pretty(&custom_config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&serialized).unwrap();
@@ -4111,6 +4257,7 @@ mod main_tests {
         assert!(!deserialized.mouse_focus_on_hover);
         assert!(deserialized.expand_variables_on_select);
         assert_eq!(deserialized.ignored_update_hash, Some("test_hash_val".to_string()));
+        assert_eq!(deserialized.line_numbers, "Absolute");
 
         // Test fallback defaults during deserialization (e.g. if fields are missing in JSON)
         let partial_json = r#"{"scrolloff": 12}"#;
@@ -4118,6 +4265,7 @@ mod main_tests {
         assert_eq!(deserialized_partial.scrolloff, 12);
         assert!(deserialized_partial.mouse_focus_on_hover); // Default true fallback
         assert!(!deserialized_partial.expand_variables_on_select); // Default false fallback
+        assert_eq!(deserialized_partial.line_numbers, "None"); // Default None fallback
     }
 
     #[test]
