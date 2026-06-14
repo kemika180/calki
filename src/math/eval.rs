@@ -721,6 +721,13 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         Err("Function 'len' expects a list/vector argument".to_string())
                     }
                 }
+                "count" => {
+                    let mut flat_args = Vec::new();
+                    for arg in &arg_vals {
+                        flatten_quantity(arg, &mut flat_args);
+                    }
+                    Ok(Quantity::scalar(flat_args.len() as f64, None))
+                }
                 "vdot" => {
                     check_built_in_args(name, &arg_vals, 2)?;
                     let q1 = &arg_vals[0];
@@ -1584,6 +1591,12 @@ mod tests {
 
         let max_mixed = eval_expr(&parse_line("max([10, 20], 5, [15, 30]) =>").unwrap_expr(), &mut ctx).unwrap();
         assert_eq!(max_mixed.value, 30.0);
+
+        let count_list = eval_expr(&parse_line("count([1, 2, 3, 4, 5]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(count_list.value, 5.0);
+
+        let count_mixed = eval_expr(&parse_line("count([1, 2], 3, [4, 5]) =>").unwrap_expr(), &mut ctx).unwrap();
+        assert_eq!(count_mixed.value, 5.0);
 
         // 3. Vector/matrix utilities
         let length = eval_expr(&parse_line("len([10, 20, 30, 40]) =>").unwrap_expr(), &mut ctx).unwrap();
