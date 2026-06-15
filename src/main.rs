@@ -159,29 +159,15 @@ impl SessionState {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_false() -> bool {
-    false
-}
-
-fn default_line_numbers() -> String {
-    "None".to_string()
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 struct AppConfig {
     scrolloff: usize,
-    #[serde(default = "default_true")]
     mouse_focus_on_hover: bool,
-    #[serde(default = "default_false")]
     expand_variables_on_select: bool,
-    #[serde(default)]
     ignored_update_hash: Option<String>,
-    #[serde(default = "default_line_numbers")]
     line_numbers: String,
+    word_wrap: bool,
 }
 
 impl Default for AppConfig {
@@ -192,6 +178,7 @@ impl Default for AppConfig {
             expand_variables_on_select: false,
             ignored_update_hash: None,
             line_numbers: "None".to_string(),
+            word_wrap: true,
         }
     }
 }
@@ -2145,6 +2132,14 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     app.update_highlights();
                     continue;
                 }
+                if key.code == KeyCode::F(4) {
+                    app.config.word_wrap = !app.config.word_wrap;
+                    let _ = app.config.save();
+                    let status = if app.config.word_wrap { "enabled" } else { "disabled" };
+                    app.set_status_message(format!("Word wrapping {}", status));
+                    app.update_highlights();
+                    continue;
+                }
 
                 // Focus switching via Shift-H / Shift-L / Ctrl-h / Ctrl-l
                 let is_switch_left = (key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL))
@@ -2624,9 +2619,17 @@ fn ui(f: &mut Frame, app: &mut App) {
             Span::styled("] ", Style::default().fg(text_fg_color)),
         ]);
 
-        let cursor_info = format!(" Line: {}, Col: {} ", app.editor_state.cursor.row + 1, app.editor_state.cursor.col + 1);
+        let total_lines = app.editor_state.lines.len();
+        let scroll_pct = if total_lines <= 1 {
+            0
+        } else {
+            (app.editor_state.cursor.row * 100) / (total_lines - 1)
+        };
+        let border_char = if is_focused { "═" } else { "─" };
         let title_bottom_right = Line::from(vec![
-            Span::styled(cursor_info, Style::default().fg(text_fg_color)),
+            Span::styled(format!(" Line: {}, Col: {} ", app.editor_state.cursor.row + 1, app.editor_state.cursor.col + 1), Style::default().fg(text_fg_color)),
+            Span::styled(border_char.repeat(3), Style::default().fg(border_color)),
+            Span::styled(format!(" {:>3}% ", scroll_pct), Style::default().fg(text_fg_color)),
         ]).right_aligned();
 
         let block = Block::default()
@@ -2669,7 +2672,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         let editor_widget = EditorView::new(&mut app.editor_state)
             .theme(editor_theme)
             .line_numbers(line_num_config)
-            .wrap(true);
+            .wrap(app.config.word_wrap);
         f.render_widget(editor_widget, inner_editor_area);
         if is_focused
             && !app.show_help
@@ -2792,6 +2795,10 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Line::from(vec![
                     Span::styled(" F2 / F3     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
                     Span::styled("Toggle Wiki Map / Variables Panel", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" F4          ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Toggle Editor Word Wrapping", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
                     Span::styled(" /           ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -4494,6 +4501,7 @@ mod main_tests {
         assert!(!default_config.expand_variables_on_select);
         assert_eq!(default_config.ignored_update_hash, None);
         assert_eq!(default_config.line_numbers, "None");
+        assert!(default_config.word_wrap);
 
         // Test serialization and deserialization
         let custom_config = AppConfig {
@@ -4502,6 +4510,7 @@ mod main_tests {
             expand_variables_on_select: true,
             ignored_update_hash: Some("test_hash_val".to_string()),
             line_numbers: "Absolute".to_string(),
+            word_wrap: false,
         };
         let serialized = serde_json::to_string_pretty(&custom_config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&serialized).unwrap();
@@ -4510,6 +4519,7 @@ mod main_tests {
         assert!(deserialized.expand_variables_on_select);
         assert_eq!(deserialized.ignored_update_hash, Some("test_hash_val".to_string()));
         assert_eq!(deserialized.line_numbers, "Absolute");
+        assert!(!deserialized.word_wrap);
 
         // Test fallback defaults during deserialization (e.g. if fields are missing in JSON)
         let partial_json = r#"{"scrolloff": 12}"#;
@@ -4518,6 +4528,7 @@ mod main_tests {
         assert!(deserialized_partial.mouse_focus_on_hover); // Default true fallback
         assert!(!deserialized_partial.expand_variables_on_select); // Default false fallback
         assert_eq!(deserialized_partial.line_numbers, "None"); // Default None fallback
+        assert!(deserialized_partial.word_wrap); // Default true fallback
     }
 
     #[test]
@@ -4554,6 +4565,52 @@ mod main_tests {
         assert!(md_content.contains("# calki Compiled Wiki"));
 
         // Clean up
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_scroll_level_indicator() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_scroll_level");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+        let mut app = App::new(wiki_root.clone()).unwrap();
+
+        // Case 1: 0 or 1 lines
+        app.editor_state = EditorState::new(edtui::Lines::from(""));
+        let total_lines = app.editor_state.lines.len();
+        let scroll_pct = if total_lines <= 1 {
+            0
+        } else {
+            (app.editor_state.cursor.row * 100) / (total_lines - 1)
+        };
+        assert_eq!(scroll_pct, 0);
+        assert_eq!(format!("{:>3}%", scroll_pct), "  0%");
+
+        // Case 2: Multi-lines
+        app.editor_state = EditorState::new(edtui::Lines::from("line 1\nline 2\nline 3\nline 4\nline 5"));
+        let total_lines = app.editor_state.lines.len();
+        assert_eq!(total_lines, 5);
+
+        // top line
+        app.editor_state.cursor.row = 0;
+        let pct = (app.editor_state.cursor.row * 100) / (total_lines - 1);
+        assert_eq!(pct, 0);
+        assert_eq!(format!("{:>3}%", pct), "  0%");
+
+        // middle line
+        app.editor_state.cursor.row = 2;
+        let pct = (app.editor_state.cursor.row * 100) / (total_lines - 1);
+        assert_eq!(pct, 50);
+        assert_eq!(format!("{:>3}%", pct), " 50%");
+
+        // bottom line
+        app.editor_state.cursor.row = 4;
+        let pct = (app.editor_state.cursor.row * 100) / (total_lines - 1);
+        assert_eq!(pct, 100);
+        assert_eq!(format!("{:>3}%", pct), "100%");
+
         let _ = std::fs::remove_dir_all(&wiki_root);
     }
 }
