@@ -730,7 +730,31 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                         let lhs_trimmed = trim_char_slice(lhs);
                         let is_lhs_valid = !lhs_trimmed.is_empty() 
                             && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
-                        if is_lhs_valid {
+                        let is_assignment = is_lhs_valid && {
+                            let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
+                            let not_comparison = eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
+                            not_equality && not_comparison
+                        };
+                        let is_fn_def = !is_assignment && {
+                            if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
+                                if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
+                                    let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
+                                    let args_slice = &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
+                                    let fn_valid = !fn_name.is_empty() && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                                    let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
+                                        let arg_trimmed = trim_char_slice(arg);
+                                        arg_trimmed.is_empty() || arg_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_')
+                                    });
+                                    fn_valid && args_valid
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        };
+
+                        if is_assignment || is_fn_def {
                             is_math_line = true;
                             // LHS (Cyan)
                             for col in 0..eq_pos {
@@ -775,8 +799,31 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                 let lhs_trimmed = trim_char_slice(lhs);
                 let is_lhs_valid = !lhs_trimmed.is_empty() 
                     && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                let is_assignment = is_lhs_valid && {
+                    let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
+                    let not_comparison = eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
+                    not_equality && not_comparison
+                };
+                let is_fn_def = !is_assignment && {
+                    if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
+                        if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
+                            let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
+                            let args_slice = &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
+                            let fn_valid = !fn_name.is_empty() && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                            let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
+                                let arg_trimmed = trim_char_slice(arg);
+                                arg_trimmed.is_empty() || arg_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_')
+                            });
+                            fn_valid && args_valid
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
                 
-                if is_lhs_valid {
+                if is_assignment || is_fn_def {
                     is_math_line = true;
                     // LHS (Cyan)
                     for col in 0..eq_pos {
@@ -937,6 +984,65 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                                 if col < n {
                                     line_styles[col] = Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
                                 }
+                            }
+                        }
+                    }
+                }
+            } else if let HighlightToken::In { start, end } = &tokens[i] {
+                let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                    *start >= *r.start() && *end <= *r.end()
+                });
+                if in_math_context {
+                    for col in *start..=*end {
+                        if col < n {
+                            let italic = line_styles[col].map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC)).unwrap_or(false);
+                            let mut style = Style::default().fg(Color::Rgb(255, 158, 100)).bold();
+                            if italic {
+                                style = style.italic();
+                            }
+                            line_styles[col] = Some(style);
+                        }
+                    }
+                }
+            } else if let HighlightToken::Symbol { start, end, ch } = &tokens[i] {
+                // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >
+                let mut is_operator = matches!(ch, '+' | '-' | '*' | '/' | '^' | '&' | '|' | '!' | '=' | '<' | '>');
+                if *ch == '%' {
+                    // Only highlight '%' as an operator if it's infix (modulo)
+                    let mut is_infix = false;
+                    if i + 1 < tokens.len() {
+                        match &tokens[i + 1] {
+                            HighlightToken::Number { .. } |
+                            HighlightToken::Identifier { .. } |
+                            HighlightToken::Symbol { ch: '(', .. } |
+                            HighlightToken::Symbol { ch: '[', .. } => {
+                                is_infix = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if is_infix {
+                        is_operator = true;
+                    }
+                }
+
+                if is_operator {
+                    if *ch == '=' && eq_idx == Some(*start) {
+                        // Skip main assignment operator (already styled as Bold Orange)
+                        continue;
+                    }
+                    let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                        *start >= *r.start() && *end <= *r.end()
+                    });
+                    if in_math_context {
+                        for col in *start..=*end {
+                            if col < n {
+                                let italic = line_styles[col].map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC)).unwrap_or(false);
+                                let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                                if italic {
+                                    style = style.italic();
+                                }
+                                line_styles[col] = Some(style);
                             }
                         }
                     }
@@ -3992,6 +4098,7 @@ mod main_tests {
             "Let's go for 10 miles.".chars().collect::<Vec<char>>(),
             "We run at `10m/s => 10 m/s`.".chars().collect::<Vec<char>>(),
             "monthly_cost = annual_cost / 12 month/year => $244.3901/month".chars().collect::<Vec<char>>(),
+            "599584916 m/s in c => 2 c".chars().collect::<Vec<char>>(),
         ];
 
         let highlights = App::compute_syntax_highlights(&lines, None);
@@ -4082,6 +4189,17 @@ mod main_tests {
         let row12_res_month = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 56).unwrap();
         assert_eq!(row12_res_month.style.fg, Some(pink));
         assert!(row12_res_month.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
+
+        // 6. RHS division operator '/' at col 27 is Orange, not italic
+        let row12_div = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 27).unwrap();
+        assert_eq!(row12_div.style.fg, Some(orange));
+        assert!(!row12_div.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
+
+        // 7. line 13: "599584916 m/s in c => 2 c" -> "in" starts at col 14, is Bold Orange, not italic
+        let row13_in = highlights.iter().find(|h| h.start.row == 13 && h.start.col == 14).unwrap();
+        assert_eq!(row13_in.style.fg, Some(orange));
+        assert!(row13_in.style.add_modifier.contains(ratatui::style::Modifier::BOLD));
+        assert!(!row13_in.style.add_modifier.contains(ratatui::style::Modifier::ITALIC));
     }
 
     #[test]
