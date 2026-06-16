@@ -22,10 +22,12 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
-use edtui::{EditorEventHandler, EditorMode, EditorState, EditorView, Lines, RowIndex};
-use edtui::actions::Chainable;
-use edtui::events::{KeyEventRegister, KeyInput};
-use edtui::clipboard::ClipboardTrait;
+pub mod edtui;
+
+use crate::edtui::{EditorEventHandler, EditorMode, EditorState, EditorView, Lines, RowIndex};
+use crate::edtui::actions::Chainable;
+use crate::edtui::events::{KeyEventRegister, KeyInput};
+use crate::edtui::clipboard::ClipboardTrait;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 

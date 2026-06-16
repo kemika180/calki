@@ -2,16 +2,19 @@
 name = "calki"
 version = "0.1.0"
 edition = "2024"
+description = "A vim-inspired wiki note editor and calculator sheet"
+license = "GPL-3.0-only"
+repository = "https://github.com/kemika180/calki"
 
 [dependencies]
 ratatui = "0.30.1"
 crossterm = "0.29.0"
-edtui = "0.11.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ureq = { version = "2.9.0", features = ["json"] }
 arboard = "3.4.0"
 unicode-width = "0.2"
-
-[patch.crates-io]
-edtui = { path = "./edtui" }
+enum_dispatch = "0.3"
+jagged = { version = "0.1", package = "edtui-jagged" }
+ratatui-core = { version = "0.1", package = "ratatui-core" }
+ratatui-widgets = { version = "0.3.0", default-features = false }
