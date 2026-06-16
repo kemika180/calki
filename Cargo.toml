@@ -1,6 +1,6 @@
 [package]
 name = "calki"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A vim-inspired wiki note editor and calculator sheet"
 license = "GPL-3.0-only"
@@ -18,3 +18,9 @@ enum_dispatch = "0.3"
 jagged = { version = "0.1", package = "edtui-jagged" }
 ratatui-core = { version = "0.1", package = "ratatui-core" }
 ratatui-widgets = { version = "0.3.0", default-features = false }
+
+[features]
+default = []
+syntax-highlighting = []
+system-editor = []
+mouse-support = []
