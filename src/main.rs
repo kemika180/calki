@@ -423,6 +423,16 @@ impl App {
             edtui::actions::delete::DeleteToEndOfLine.chain(edtui::actions::SwitchMode(EditorMode::Insert)),
         );
 
+        // 4. ^ (Move to First Non-Blank Character)
+        editor_event_handler.key_handler.insert(
+            KeyEventRegister::n(vec![KeyInput::new('^')]),
+            edtui::actions::motion::MoveToFirst(),
+        );
+        editor_event_handler.key_handler.insert(
+            KeyEventRegister::v(vec![KeyInput::new('^')]),
+            edtui::actions::motion::MoveToFirst(),
+        );
+
         let mut editor_state = EditorState::new(Lines::from(file_content.as_str()));
         editor_state.set_clipboard(SystemClipboard::new());
 
