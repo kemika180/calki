@@ -33,15 +33,29 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
 
 ## 🛠️ Installation & Updating
 
-### Prerequisites
-
-To compile and run `calki`, you will need the Rust toolchain installed on your machine. If you do not have it, install it via [rustup](https://rustup.rs/):
+To install `calki`, you will need the Rust toolchain installed on your machine. If you do not have it, install it via [rustup](https://rustup.rs/):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Build from Source
+### 📦 Install via Cargo (Recommended)
+
+Install the latest version of `calki` directly from [crates.io](https://crates.io/):
+
+```bash
+cargo install calki
+```
+
+This compiles and installs the binary to your Cargo binary path (typically `~/.cargo/bin/`), allowing you to run it anywhere by simply typing:
+
+```bash
+calki
+```
+
+### 🛠️ Build from Source
+
+If you prefer to compile directly from the git repository:
 
 1. Clone the repository:
    ```bash
@@ -54,43 +68,31 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    cargo build --release
    ```
 
-3. (Optional) Install the binary to your Cargo binary path:
+3. (Optional) Install the binary globally:
    ```bash
    cargo install --path .
    ```
 
-4. Run `calki`:
-
-   If installed via cargo path:
-   ```bash
-   calki
-   ```
-  
-   Or run the release binary directly:
+4. Run the compiled binary directly:
    ```bash
    ./target/release/calki
    ```
 
 ### 🔄 How to Update
 
-When `calki` alerts you on launch that a new version is available, you can pull the latest changes and rebuild it with:
+* **If installed via Cargo**:
+  Re-run the install command to fetch the latest version:
+  ```bash
+  cargo install calki
+  ```
 
-1. Navigate to your cloned `calki` directory:
-   ```bash
-   cd /path/to/calki
-   ```
-
-2. Pull the latest commits from the main branch:
-   ```bash
-   git pull origin main
-   ```
-
-3. Rebuild the release binary and reinstall:
-   ```bash
-   cargo build --release
-   # or reinstall globally via:
-   cargo install --path .
-   ```
+* **If installed from Source**:
+  Pull the latest commits and rebuild:
+  ```bash
+  cd /path/to/calki
+  git pull origin main
+  cargo install --path .
+  ```
 
 ---
 
