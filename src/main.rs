@@ -1953,6 +1953,9 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(key) => {
+                if key.kind == crossterm::event::KeyEventKind::Release {
+                    continue;
+                }
                 // Global exits: Ctrl-q works anywhere, regardless of mode/panel
                 if key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break;
@@ -2460,6 +2463,70 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+fn estimate_line_height(line: &[char], max_width: usize, tab_width: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    if line.is_empty() {
+        return 1;
+    }
+    if max_width == 0 {
+        return 1;
+    }
+
+    let mut num_lines = 0;
+    let mut current_width = 0;
+    let mut last_space_idx_in_chunk: Option<usize> = None;
+    let mut chunk_len = 0;
+
+    let mut i = 0;
+    while i < line.len() {
+        let ch = line[i];
+        let ch_w = if ch == '\t' {
+            tab_width
+        } else {
+            ch.width().unwrap_or(0)
+        };
+
+        if current_width + ch_w > max_width {
+            if let Some(space_idx) = last_space_idx_in_chunk {
+                num_lines += 1;
+                // Backtrack to after space
+                let characters_in_next_line = chunk_len - 1 - space_idx;
+                current_width = 0;
+                last_space_idx_in_chunk = None;
+                chunk_len = 0;
+                // recalculate width of characters after space
+                let backtrack_start = i - characters_in_next_line;
+                for idx in backtrack_start..=i {
+                    let c = line[idx];
+                    let c_w = if c == '\t' { tab_width } else { c.width().unwrap_or(0) };
+                    current_width += c_w;
+                    if c == ' ' {
+                        last_space_idx_in_chunk = Some(chunk_len);
+                    }
+                    chunk_len += 1;
+                }
+            } else {
+                // Force wrap
+                num_lines += 1;
+                current_width = ch_w;
+                last_space_idx_in_chunk = if ch == ' ' { Some(0) } else { None };
+                chunk_len = 1;
+            }
+        } else {
+            current_width += ch_w;
+            if ch == ' ' {
+                last_space_idx_in_chunk = Some(chunk_len);
+            }
+            chunk_len += 1;
+        }
+        i += 1;
+    }
+    if current_width > 0 {
+        num_lines += 1;
+    }
+    num_lines.max(1)
+}
+
 fn ui(f: &mut Frame, app: &mut App) {
     let show_bottom_bar = app.search_active || if let Some((_, inst)) = &app.status_message {
         inst.elapsed() < std::time::Duration::from_secs(5)
@@ -2655,10 +2722,76 @@ fn ui(f: &mut Frame, app: &mut App) {
         let (x_offset, mut y_offset) = app.editor_state.viewport_offset();
         let cursor_row = app.editor_state.cursor.row;
 
-        if cursor_row < y_offset + scrolloff {
-            y_offset = cursor_row.saturating_sub(scrolloff);
-        } else if cursor_row >= y_offset + viewport_height.saturating_sub(scrolloff) {
-            y_offset = (cursor_row + scrolloff + 1).saturating_sub(viewport_height);
+        if app.config.word_wrap {
+            // Calculate line wrapping width
+            let line_num_config = match app.config.line_numbers.as_str() {
+                "Absolute" => edtui::LineNumbers::Absolute,
+                "Relative" => edtui::LineNumbers::Relative,
+                _ => edtui::LineNumbers::None,
+            };
+            let line_number_width = if line_num_config != edtui::LineNumbers::None {
+                (app.editor_state.lines.len().max(1).to_string().len() + 1) as usize
+            } else {
+                0
+            };
+            let text_width = inner_editor_area.width as usize;
+            let wrap_width = text_width.saturating_sub(line_number_width);
+
+            // Helper to get line height
+            let get_line_height = |row: usize| -> usize {
+                if let Some(line) = app.editor_state.lines.get(RowIndex::new(row)) {
+                    estimate_line_height(line.as_slice(), wrap_width, 4)
+                } else {
+                    1
+                }
+            };
+
+            // Calculate physical_top(y_offset, cursor_row)
+            let get_physical_top = |start_y: usize, end_row: usize| -> usize {
+                let mut sum = 0;
+                for row in start_y..end_row {
+                    sum += get_line_height(row);
+                }
+                sum
+            };
+
+            // Constraint check: too far up?
+            if cursor_row < y_offset {
+                y_offset = cursor_row;
+            }
+
+            while y_offset > 0 && get_physical_top(y_offset, cursor_row) < scrolloff {
+                y_offset -= 1;
+            }
+
+            // Ensure scrolloff below cursor:
+            let cursor_height = get_line_height(cursor_row);
+            let target_limit = viewport_height.saturating_sub(scrolloff);
+
+            while y_offset < cursor_row {
+                let phys_top = get_physical_top(y_offset, cursor_row);
+                if phys_top + cursor_height > target_limit {
+                    y_offset += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Make sure the cursor row itself is visible in the viewport even if scrolloff is too large
+            while y_offset < cursor_row {
+                let phys_top = get_physical_top(y_offset, cursor_row);
+                if phys_top + cursor_height > viewport_height {
+                    y_offset += 1;
+                } else {
+                    break;
+                }
+            }
+        } else {
+            if cursor_row < y_offset + scrolloff {
+                y_offset = cursor_row.saturating_sub(scrolloff);
+            } else if cursor_row >= y_offset + viewport_height.saturating_sub(scrolloff) {
+                y_offset = (cursor_row + scrolloff + 1).saturating_sub(viewport_height);
+            }
         }
 
         app.editor_state.set_viewport_offset(x_offset, y_offset);
@@ -4612,6 +4745,21 @@ mod main_tests {
         assert_eq!(format!("{:>3}%", pct), "100%");
 
         let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_estimate_line_height() {
+        let chars_empty: Vec<char> = vec![];
+        assert_eq!(estimate_line_height(&chars_empty, 10, 4), 1);
+
+        let chars_short: Vec<char> = "hello".chars().collect();
+        assert_eq!(estimate_line_height(&chars_short, 10, 4), 1);
+
+        let chars_exact: Vec<char> = "hello world".chars().collect();
+        assert_eq!(estimate_line_height(&chars_exact, 5, 4), 3);
+
+        let chars_long: Vec<char> = "hello world from rust".chars().collect();
+        assert_eq!(estimate_line_height(&chars_long, 7, 4), 4);
     }
 }
 
