@@ -275,5 +275,18 @@ B to A =>
         let (custom_scale_output, _) = evaluate_sheet(custom_scale_sheet, &rates);
         assert!(custom_scale_output.contains("B = 1 MA to m => 10000000 m"), "Actual output:\n{}", custom_scale_output);
         assert!(custom_scale_output.contains("B to A => 1000000 A"), "Actual output:\n{}", custom_scale_output);
+
+        // Test frequency and pressure scaling/conversions
+        let freq_press_sheet = r#"
+f1 = 4500000000 Hz =>
+f2 = 120000 Hz =>
+p1 = 30 psi to kPa =>
+p2 = 1.5 bar =>
+"#;
+        let (fp_output, _) = evaluate_sheet(freq_press_sheet, &rates);
+        assert!(fp_output.contains("f1 = 4500000000 Hz => 4.5 GHz"), "Actual output:\n{}", fp_output);
+        assert!(fp_output.contains("f2 = 120000 Hz => 120 kHz"), "Actual output:\n{}", fp_output);
+        assert!(fp_output.contains("p1 = 30 psi to kPa => 206.8427 kPa"), "Actual output:\n{}", fp_output);
+        assert!(fp_output.contains("p2 = 1.5 bar => 1.5 bar"), "Actual output:\n{}", fp_output);
     }
 }

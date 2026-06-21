@@ -50,6 +50,9 @@ pub enum Dimension {
     Currency,
     Energy,
     Power,
+    Force,
+    Frequency,
+    Pressure,
 }
 
 #[derive(Clone)]
@@ -149,6 +152,18 @@ pub fn get_exact_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
         "kW" | "kilowatt" => Some((Dimension::Power, Conversion::Linear(1000.0))),
         "MW" | "megawatt" => Some((Dimension::Power, Conversion::Linear(1000000.0))),
 
+        // Force (Base: N)
+        "N" | "newton" | "newtons" => Some((Dimension::Force, Conversion::Linear(1.0))),
+
+        // Frequency (Base: Hz)
+        "Hz" | "hertz" => Some((Dimension::Frequency, Conversion::Linear(1.0))),
+
+        // Pressure (Base: Pa)
+        "Pa" | "pascal" | "pascals" => Some((Dimension::Pressure, Conversion::Linear(1.0))),
+        "psi" => Some((Dimension::Pressure, Conversion::Linear(6894.757293104))),
+        "bar" | "bars" => Some((Dimension::Pressure, Conversion::Linear(100000.0))),
+        "atm" | "atmosphere" | "atmospheres" => Some((Dimension::Pressure, Conversion::Linear(101325.0))),
+
         // Currency (Base: USD)
         "USD" | "$" | "EUR" | "GBP" | "CAD" | "AUD" | "JPY" | "CNY" => Some((Dimension::Currency, Conversion::Linear(1.0))),
 
@@ -183,11 +198,11 @@ const LONG_PREFIXES: &[(&str, f64)] = &[
 ];
 
 fn is_short_base(base: &str) -> bool {
-    matches!(base, "m" | "g" | "s" | "sec" | "l" | "L" | "W" | "Wh" | "wh" | "J" | "eV" | "cal")
+    matches!(base, "m" | "g" | "s" | "sec" | "l" | "L" | "W" | "Wh" | "wh" | "J" | "eV" | "cal" | "N" | "Hz" | "Pa")
 }
 
 fn is_long_base(base: &str) -> bool {
-    matches!(base, "meter" | "meters" | "gram" | "grams" | "second" | "seconds" | "liter" | "liters" | "watt" | "watts" | "watt-hour" | "watt-hours" | "joule" | "joules" | "electronvolt" | "electronvolts" | "calorie" | "calories")
+    matches!(base, "meter" | "meters" | "gram" | "grams" | "second" | "seconds" | "liter" | "liters" | "watt" | "watts" | "watt-hour" | "watt-hours" | "joule" | "joules" | "electronvolt" | "electronvolts" | "calorie" | "calories" | "newton" | "newtons" | "hertz" | "pascal" | "pascals" | "bar" | "bars" | "atmosphere" | "atmospheres")
 }
 
 pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
@@ -267,6 +282,19 @@ pub fn get_dimension_profile(map: &HashMap<String, i32>) -> Result<HashMap<Dimen
                     *profile.entry(Dimension::Mass).or_insert(0) += exp;
                     *profile.entry(Dimension::Length).or_insert(0) += 2 * exp;
                     *profile.entry(Dimension::Time).or_insert(0) -= 3 * exp;
+                }
+                Dimension::Force => {
+                    *profile.entry(Dimension::Mass).or_insert(0) += exp;
+                    *profile.entry(Dimension::Length).or_insert(0) += exp;
+                    *profile.entry(Dimension::Time).or_insert(0) -= 2 * exp;
+                }
+                Dimension::Frequency => {
+                    *profile.entry(Dimension::Time).or_insert(0) -= exp;
+                }
+                Dimension::Pressure => {
+                    *profile.entry(Dimension::Mass).or_insert(0) += exp;
+                    *profile.entry(Dimension::Length).or_insert(0) -= exp;
+                    *profile.entry(Dimension::Time).or_insert(0) -= 2 * exp;
                 }
                 _ => {
                     *profile.entry(dim).or_insert(0) += exp;
@@ -632,6 +660,11 @@ fn get_singular_plural(unit: &str) -> Option<(&'static str, &'static str)> {
         ("joule", "joules"),
         ("electronvolt", "electronvolts"),
         ("calorie", "calories"),
+        ("newton", "newtons"),
+        ("hertz", "hertz"),
+        ("pascal", "pascals"),
+        ("bar", "bars"),
+        ("atmosphere", "atmospheres"),
     ];
     for &(s, p) in &pairs {
         if unit == s || unit == p {
@@ -780,7 +813,11 @@ pub fn auto_scale_quantity(mut qty: crate::math::parser::Quantity, _rates: &Hash
         return qty;
     }
 
-    let base_val = qty.value * u_factor;
+    let Some((_, Conversion::Linear(base_unit_factor))) = get_unit_info(base_unit) else {
+        return qty;
+    };
+
+    let base_unit_val = qty.value * (u_factor / base_unit_factor);
     
     // Find the best prefix
     let prefixes = if is_long { AUTO_LONG_PREFIXES } else { AUTO_SHORT_PREFIXES };
@@ -803,7 +840,7 @@ pub fn auto_scale_quantity(mut qty: crate::math::parser::Quantity, _rates: &Hash
             continue;
         }
 
-        let scaled_abs = (base_val / multiplier).abs();
+        let scaled_abs = (base_unit_val / multiplier).abs();
         if scaled_abs >= 1.0 && scaled_abs < 1000.0 {
             best_prefix = prefix;
             best_multiplier = multiplier;
@@ -835,18 +872,18 @@ pub fn auto_scale_quantity(mut qty: crate::math::parser::Quantity, _rates: &Hash
             }
         }
 
-        if base_val.abs() > 0.0 {
-            if base_val.abs() < min_mult {
+        if base_unit_val.abs() > 0.0 {
+            if base_unit_val.abs() < min_mult {
                 best_prefix = min_prefix;
                 best_multiplier = min_mult;
-            } else if base_val.abs() >= max_mult {
+            } else if base_unit_val.abs() >= max_mult {
                 best_prefix = max_prefix;
                 best_multiplier = max_mult;
             }
         }
     }
 
-    qty.value = base_val / best_multiplier;
+    qty.value = base_unit_val / best_multiplier;
     qty.unit = Some(format!("{}{}", best_prefix, base_unit));
     qty
 }
@@ -1088,5 +1125,33 @@ mod tests {
         } else {
             panic!("Expected linear conversion");
         }
+
+        // 4. Verify Force unit conversions and J = N*m
+        let force_val = convert_quantity(10.0, "N*m", "J", &rates).unwrap();
+        assert_eq!(force_val, 10.0);
+
+        let mn_val = convert_quantity(1.0, "mN", "N", &rates).unwrap();
+        assert_eq!(mn_val, 0.001);
+
+        // 5. Verify Frequency unit conversions and scaling
+        let ghz_val = convert_quantity(1.0, "GHz", "Hz", &rates).unwrap();
+        assert_eq!(ghz_val, 1e9);
+
+        let q_hz = crate::math::parser::Quantity::scalar(4500000000.0, Some("Hz".to_string()));
+        let q_hz_scaled = auto_scale_quantity(q_hz, &rates);
+        assert_eq!(q_hz_scaled.value, 4.5);
+        assert_eq!(q_hz_scaled.unit, Some("GHz".to_string()));
+
+        // 6. Verify Pressure unit conversions and scaling
+        let psi_to_pa = convert_quantity(1.0, "psi", "Pa", &rates).unwrap();
+        assert_eq!(psi_to_pa, 6894.757293104);
+
+        let bar_to_atm = convert_quantity(1.0, "bar", "atm", &rates).unwrap();
+        assert!((bar_to_atm - (100000.0 / 101325.0)).abs() < 1e-9);
+
+        let q_pa = crate::math::parser::Quantity::scalar(150000.0, Some("Pa".to_string()));
+        let q_pa_scaled = auto_scale_quantity(q_pa, &rates);
+        assert_eq!(q_pa_scaled.value, 150.0);
+        assert_eq!(q_pa_scaled.unit, Some("kPa".to_string()));
     }
 }
