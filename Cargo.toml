@@ -20,7 +20,9 @@ ratatui-core = { version = "0.1", package = "ratatui-core" }
 ratatui-widgets = { version = "0.3.0", default-features = false }
 
 [features]
-default = []
+default = ["arboard"]
 syntax-highlighting = []
 system-editor = []
 mouse-support = []
+arbitrary = []
+arboard = []
