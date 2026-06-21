@@ -136,6 +136,10 @@ pub fn get_exact_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
         "F" | "fahrenheit" => Some((Dimension::Temperature, Conversion::Temperature(TempUnit::F))),
 
         // Energy (Base: J)
+        "J" | "joule" | "joules" => Some((Dimension::Energy, Conversion::Linear(1.0))),
+        "eV" | "electronvolt" | "electronvolts" => Some((Dimension::Energy, Conversion::Linear(1.602176634e-19))),
+        "cal" | "calorie" | "calories" => Some((Dimension::Energy, Conversion::Linear(4.184))),
+        "kcal" | "kilocalorie" | "kilocalories" => Some((Dimension::Energy, Conversion::Linear(4184.0))),
         "Wh" | "watt-hour" | "watt-hours" => Some((Dimension::Energy, Conversion::Linear(3600.0))),
         "kWh" | "kilowatt-hour" => Some((Dimension::Energy, Conversion::Linear(3600000.0))),
         "MWh" | "megawatt-hour" => Some((Dimension::Energy, Conversion::Linear(3600000000.0))),
@@ -179,11 +183,11 @@ const LONG_PREFIXES: &[(&str, f64)] = &[
 ];
 
 fn is_short_base(base: &str) -> bool {
-    matches!(base, "m" | "g" | "s" | "sec" | "l" | "L" | "W" | "Wh" | "wh")
+    matches!(base, "m" | "g" | "s" | "sec" | "l" | "L" | "W" | "Wh" | "wh" | "J" | "eV" | "cal")
 }
 
 fn is_long_base(base: &str) -> bool {
-    matches!(base, "meter" | "meters" | "gram" | "grams" | "second" | "seconds" | "liter" | "liters" | "watt" | "watts" | "watt-hour" | "watt-hours")
+    matches!(base, "meter" | "meters" | "gram" | "grams" | "second" | "seconds" | "liter" | "liters" | "watt" | "watts" | "watt-hour" | "watt-hours" | "joule" | "joules" | "electronvolt" | "electronvolts" | "calorie" | "calories")
 }
 
 pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
@@ -209,8 +213,8 @@ pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
     for &(prefix, multiplier) in LONG_PREFIXES {
         if name.starts_with(prefix) && name.len() > prefix.len() {
             let suffix = &name[prefix.len()..];
-            if is_long_base(suffix)
-                && let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
+            if (is_long_base(suffix) || is_custom_unit(suffix))
+                && let Some((dim, Conversion::Linear(base_factor))) = get_unit_info(suffix) {
                     return Some((dim, Conversion::Linear(base_factor * multiplier)));
                 }
         }
@@ -220,8 +224,8 @@ pub fn get_unit_info(name: &str) -> Option<(Dimension, Conversion)> {
     for &(prefix, multiplier) in SHORT_PREFIXES {
         if name.starts_with(prefix) && name.len() > prefix.len() {
             let suffix = &name[prefix.len()..];
-            if is_short_base(suffix)
-                && let Some((dim, Conversion::Linear(base_factor))) = get_exact_unit_info(suffix) {
+            if (is_short_base(suffix) || is_custom_unit(suffix))
+                && let Some((dim, Conversion::Linear(base_factor))) = get_unit_info(suffix) {
                     return Some((dim, Conversion::Linear(base_factor * multiplier)));
                 }
         }
@@ -625,6 +629,9 @@ fn get_singular_plural(unit: &str) -> Option<(&'static str, &'static str)> {
         ("kilogram", "kilograms"),
         ("watt", "watts"),
         ("watt-hour", "watt-hours"),
+        ("joule", "joules"),
+        ("electronvolt", "electronvolts"),
+        ("calorie", "calories"),
     ];
     for &(s, p) in &pairs {
         if unit == s || unit == p {
@@ -701,6 +708,147 @@ pub fn adjust_unit_plurality(unit: &str, value: f64) -> String {
     } else {
         numerator
     }
+}
+
+const AUTO_SHORT_PREFIXES: &[(&str, f64)] = &[
+    ("T", 1e12),
+    ("G", 1e9),
+    ("M", 1e6),
+    ("k", 1e3),
+    ("", 1.0),
+    ("d", 1e-1),
+    ("c", 1e-2),
+    ("m", 1e-3),
+    ("u", 1e-6),
+    ("n", 1e-9),
+    ("p", 1e-12),
+];
+
+const AUTO_LONG_PREFIXES: &[(&str, f64)] = &[
+    ("tera", 1e12),
+    ("giga", 1e9),
+    ("mega", 1e6),
+    ("kilo", 1e3),
+    ("", 1.0),
+    ("deci", 1e-1),
+    ("centi", 1e-2),
+    ("micro", 1e-6),
+    ("nano", 1e-9),
+    ("pico", 1e-12),
+];
+
+pub fn get_base_unit(name: &str) -> (&str, bool) {
+    // Try matching long prefixes first
+    for &(prefix, _) in LONG_PREFIXES {
+        if name.starts_with(prefix) && name.len() > prefix.len() {
+            let suffix = &name[prefix.len()..];
+            if is_long_base(suffix) && get_exact_unit_info(suffix).is_some() {
+                return (suffix, true);
+            }
+        }
+    }
+    // Try matching short prefixes
+    for &(prefix, _) in SHORT_PREFIXES {
+        if name.starts_with(prefix) && name.len() > prefix.len() {
+            let suffix = &name[prefix.len()..];
+            if is_short_base(suffix) && get_exact_unit_info(suffix).is_some() {
+                return (suffix, false);
+            }
+        }
+    }
+    // No prefix, check if it's long or short base
+    let is_long = is_long_base(name);
+    (name, is_long)
+}
+
+pub fn auto_scale_quantity(mut qty: crate::math::parser::Quantity, _rates: &HashMap<String, f64>) -> crate::math::parser::Quantity {
+    let Some(ref u) = qty.unit else {
+        return qty;
+    };
+    // If it's a compound unit (contains *, /, ^), don't auto-scale it
+    if u.contains('*') || u.contains('/') || u.contains('^') {
+        return qty;
+    }
+    // Get unit info to ensure it is a linear conversion
+    let Some((dim, Conversion::Linear(u_factor))) = get_unit_info(u) else {
+        return qty;
+    };
+    
+    // We don't want to auto-scale certain dimensions or units if they are not metric-based
+    let (base_unit, is_long) = get_base_unit(u);
+    if !is_short_base(base_unit) && !is_long_base(base_unit) {
+        return qty;
+    }
+
+    let base_val = qty.value * u_factor;
+    
+    // Find the best prefix
+    let prefixes = if is_long { AUTO_LONG_PREFIXES } else { AUTO_SHORT_PREFIXES };
+    let is_length_or_volume = matches!(
+        base_unit,
+        "m" | "meter" | "meters" | "l" | "L" | "liter" | "liters"
+    );
+
+    let mut best_prefix = "";
+    let mut best_multiplier = 1.0;
+    let mut found = false;
+
+    for &(prefix, multiplier) in prefixes {
+        // Skip deci/centi if not length or volume
+        if (prefix == "d" || prefix == "c" || prefix == "deci" || prefix == "centi") && !is_length_or_volume {
+            continue;
+        }
+        // For Time dimension, skip prefixes with multiplier > 1.0 (like k, M, G, T)
+        if dim == Dimension::Time && multiplier > 1.0 {
+            continue;
+        }
+
+        let scaled_abs = (base_val / multiplier).abs();
+        if scaled_abs >= 1.0 && scaled_abs < 1000.0 {
+            best_prefix = prefix;
+            best_multiplier = multiplier;
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        let mut min_prefix = "";
+        let mut min_mult = f64::MAX;
+        let mut max_prefix = "";
+        let mut max_mult = f64::MIN;
+
+        for &(prefix, multiplier) in prefixes {
+            if (prefix == "d" || prefix == "c" || prefix == "deci" || prefix == "centi") && !is_length_or_volume {
+                continue;
+            }
+            if dim == Dimension::Time && multiplier > 1.0 {
+                continue;
+            }
+            if multiplier < min_mult {
+                min_mult = multiplier;
+                min_prefix = prefix;
+            }
+            if multiplier > max_mult {
+                max_mult = multiplier;
+                max_prefix = prefix;
+            }
+        }
+
+        if base_val.abs() > 0.0 {
+            if base_val.abs() < min_mult {
+                best_prefix = min_prefix;
+                best_multiplier = min_mult;
+            } else if base_val.abs() >= max_mult {
+                best_prefix = max_prefix;
+                best_multiplier = max_mult;
+            }
+        }
+    }
+
+    qty.value = base_val / best_multiplier;
+    qty.unit = Some(format!("{}{}", best_prefix, base_unit));
+    qty
 }
 
 #[cfg(test)]
@@ -877,5 +1025,68 @@ mod tests {
         assert_eq!(adjust_unit_plurality("1/years", 2.0), "1/year");
         assert_eq!(adjust_unit_plurality("kilometers", 1.0), "kilometer");
         assert_eq!(adjust_unit_plurality("kilometer", 5.0), "kilometers");
+    }
+
+    #[test]
+    fn test_energy_units_and_scaling() {
+        let rates = HashMap::new();
+
+        // 1. Verify exact unit info and basic conversions
+        let val_ev = convert_quantity(1.0, "eV", "J", &rates).unwrap();
+        assert!((val_ev - 1.602176634e-19).abs() < 1e-30);
+
+        let val_cal = convert_quantity(1.0, "cal", "J", &rates).unwrap();
+        assert_eq!(val_cal, 4.184);
+
+        let val_kcal = convert_quantity(1.0, "kcal", "cal", &rates).unwrap();
+        assert_eq!(val_kcal, 1000.0);
+
+        // 2. Verify prefix parsing for new units (e.g. mJ, uJ, nJ, pJ, kJ, MJ, GJ, TJ)
+        let mj_val = convert_quantity(1.0, "mJ", "J", &rates).unwrap();
+        assert_eq!(mj_val, 0.001);
+
+        let uj_val = convert_quantity(1.0, "uJ", "J", &rates).unwrap();
+        assert_eq!(uj_val, 1e-6);
+
+        // 3. Verify auto-scaling of values
+        let q1 = crate::math::parser::Quantity::scalar(0.000001, Some("J".to_string()));
+        let q1_scaled = auto_scale_quantity(q1, &rates);
+        assert_eq!(q1_scaled.value, 1.0);
+        assert_eq!(q1_scaled.unit, Some("uJ".to_string()));
+
+        let q2 = crate::math::parser::Quantity::scalar(1500.0, Some("J".to_string()));
+        let q2_scaled = auto_scale_quantity(q2, &rates);
+        assert_eq!(q2_scaled.value, 1.5);
+        assert_eq!(q2_scaled.unit, Some("kJ".to_string()));
+
+        // check time units (ks shouldn't be matched for scaling up)
+        let q_time = crate::math::parser::Quantity::scalar(3600.0, Some("s".to_string()));
+        let q_time_scaled = auto_scale_quantity(q_time, &rates);
+        assert_eq!(q_time_scaled.value, 3600.0);
+        assert_eq!(q_time_scaled.unit, Some("s".to_string()));
+
+        // check time scaling down (milli seconds)
+        let q_time_down = crate::math::parser::Quantity::scalar(0.005, Some("s".to_string()));
+        let q_time_down_scaled = auto_scale_quantity(q_time_down, &rates);
+        assert_eq!(q_time_down_scaled.value, 5.0);
+        assert_eq!(q_time_down_scaled.unit, Some("ms".to_string()));
+
+        // check custom unit prefix matching (e.g. mA, kA for custom unit A = 10 m)
+        register_custom_unit("A", 10.0, "m").unwrap();
+        let ma_info = get_unit_info("mA").unwrap();
+        assert_eq!(ma_info.0, Dimension::Length);
+        if let Conversion::Linear(factor) = ma_info.1 {
+            assert!((factor - 0.01).abs() < 1e-9);
+        } else {
+            panic!("Expected linear conversion");
+        }
+
+        let ka_info = get_unit_info("kA").unwrap();
+        assert_eq!(ka_info.0, Dimension::Length);
+        if let Conversion::Linear(factor) = ka_info.1 {
+            assert_eq!(factor, 10000.0);
+        } else {
+            panic!("Expected linear conversion");
+        }
     }
 }

@@ -31,7 +31,8 @@ pub fn evaluate_sheet(
                 updated_lines.push(evaluated);
             }
             Line::Assignment { name, expr, raw_prefix, current_result } => {
-                match eval::eval_expr(&expr, &mut ctx) {
+                let is_explicit = eval::is_explicit_conversion(&expr, &ctx);
+                match eval::eval_and_scale(&expr, &mut ctx) {
                     Ok(qty) => {
                         let formatted = eval::format_quantity(&qty);
                         if let Some(pos) = vars_inspector.iter().position(|(n, _)| n == &name) {
@@ -40,6 +41,11 @@ pub fn evaluate_sheet(
                             vars_inspector.push((name.clone(), formatted.clone()));
                         }
                         ctx.variables.insert(name.clone(), qty.clone());
+                        if is_explicit {
+                            ctx.explicit_variables.insert(name.clone());
+                        } else {
+                            ctx.explicit_variables.remove(&name);
+                        }
                         if let Some(ref unit_str) = qty.unit {
                             let _ = units::register_custom_unit(&name, qty.value, unit_str);
                         }
@@ -75,7 +81,7 @@ pub fn evaluate_sheet(
                 updated_lines.push(line_text.to_string());
             }
             Line::Evaluation { expr, raw_prefix, .. } => {
-                match eval::eval_expr(&expr, &mut ctx) {
+                match eval::eval_and_scale(&expr, &mut ctx) {
                     Ok(qty) => {
                         let formatted = eval::format_quantity(&qty);
                         updated_lines.push(format!("{} {}", raw_prefix, formatted));
@@ -121,7 +127,7 @@ fn evaluate_inline_math(text: &str, ctx: &mut eval::Context) -> String {
                     if let Ok(tokens) = lexer.lex() {
                         let parser = parser::Parser::new(tokens);
                         if let Ok(expr) = parser.parse() {
-                            match eval::eval_expr(&expr, ctx) {
+                            match eval::eval_and_scale(&expr, ctx) {
                                 Ok(qty) => {
                                     let formatted = eval::format_quantity(&qty);
                                     result.push_str(&format!("`{} => {}`", expr_part, formatted));
@@ -240,5 +246,34 @@ x = 15
         assert_eq!(vars.len(), 2);
         assert_eq!(vars[0], ("x".to_string(), "15".to_string()));
         assert_eq!(vars[1], ("y".to_string(), "10".to_string()));
+
+        // Test energy units and auto-scaling
+        let energy_sheet = r#"
+e1 = 0.000001 J =>
+e2 = 0.000001 J to J =>
+e3 = 1500 J =>
+e4 = 1500 J to J =>
+e1 =>
+e2 =>
+e3 =>
+e4 =>
+"#;
+        let (energy_output, _) = evaluate_sheet(energy_sheet, &rates);
+        assert!(energy_output.contains("e1 = 0.000001 J => 1 uJ"), "Actual output:\n{}", energy_output);
+        assert!(energy_output.contains("e2 = 0.000001 J to J => 0.000001 J"), "Actual output:\n{}", energy_output);
+        assert!(energy_output.contains("e3 = 1500 J => 1.5 kJ"), "Actual output:\n{}", energy_output);
+        assert!(energy_output.contains("e4 = 1500 J to J => 1500 J"), "Actual output:\n{}", energy_output);
+        assert!(energy_output.contains("e1 => 1 uJ"), "Actual output:\n{}", energy_output);
+        assert!(energy_output.contains("e2 => 0.000001 J"), "Actual output:\n{}", energy_output);
+
+        // Test custom unit scaling/prefixing
+        let custom_scale_sheet = r#"
+A = 10 m
+B = 1 MA to m =>
+B to A =>
+"#;
+        let (custom_scale_output, _) = evaluate_sheet(custom_scale_sheet, &rates);
+        assert!(custom_scale_output.contains("B = 1 MA to m => 10000000 m"), "Actual output:\n{}", custom_scale_output);
+        assert!(custom_scale_output.contains("B to A => 1000000 A"), "Actual output:\n{}", custom_scale_output);
     }
 }

@@ -840,6 +840,7 @@ pub struct Context {
     pub variables: HashMap<String, Quantity>,
     pub functions: HashMap<String, (Vec<String>, Expr)>,
     pub exchange_rates: HashMap<String, f64>,
+    pub explicit_variables: std::collections::HashSet<String>,
 }
 
 impl Default for Context {
@@ -893,7 +894,25 @@ impl Default for Context {
             variables,
             functions: HashMap::new(),
             exchange_rates: HashMap::new(),
+            explicit_variables: std::collections::HashSet::new(),
         }
+    }
+}
+
+pub fn is_explicit_conversion(expr: &Expr, ctx: &Context) -> bool {
+    match expr {
+        Expr::Convert(..) => true,
+        Expr::Variable(name) => ctx.explicit_variables.contains(name),
+        _ => false,
+    }
+}
+
+pub fn eval_and_scale(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
+    let qty = eval_expr(expr, ctx)?;
+    if is_explicit_conversion(expr, ctx) {
+        Ok(qty)
+    } else {
+        Ok(crate::math::units::auto_scale_quantity(qty, &ctx.exchange_rates))
     }
 }
 
@@ -2304,6 +2323,27 @@ fn check_built_in_args(name: &str, args: &[Quantity], expected: usize) -> Result
     Ok(())
 }
 
+fn format_float(val: f64) -> String {
+    if val.fract() == 0.0 {
+        format!("{}", val as i64)
+    } else {
+        let abs_val = val.abs();
+        let formatted = if abs_val < 1e-4 && abs_val > 0.0 {
+            if abs_val < 1e-9 {
+                format!("{:e}", val)
+            } else {
+                format!("{:.10}", val)
+            }
+        } else {
+            format!("{:.4}", val)
+        };
+        formatted
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
 // Formats a Quantity nicely for buffer output
 pub fn format_quantity(qty: &Quantity) -> String {
     if let Some(ref u) = qty.unit {
@@ -2315,25 +2355,17 @@ pub fn format_quantity(qty: &Quantity) -> String {
         }
         if u == "complex"
             && let Some(ref list) = qty.list
-                && list.len() >= 2 {
-                    let re = list[0].value;
-                    let im = list[1].value;
-                    let re_str = if re.fract() == 0.0 {
-                        format!("{}", re as i64)
-                    } else {
-                        format!("{:.4}", re).trim_end_matches('0').trim_end_matches('.').to_string()
-                    };
-                    let im_str = if im.abs().fract() == 0.0 {
-                        format!("{}", im.abs() as i64)
-                    } else {
-                        format!("{:.4}", im.abs()).trim_end_matches('0').trim_end_matches('.').to_string()
-                    };
-                    if im < 0.0 {
-                        return format!("{} - {}i", re_str, im_str);
-                    } else {
-                        return format!("{} + {}i", re_str, im_str);
-                    }
+            && list.len() >= 2 {
+                let re = list[0].value;
+                let im = list[1].value;
+                let re_str = format_float(re);
+                let im_str = format_float(im.abs());
+                if im < 0.0 {
+                    return format!("{} - {}i", re_str, im_str);
+                } else {
+                    return format!("{} + {}i", re_str, im_str);
                 }
+            }
     }
 
     if qty.is_bool {
@@ -2351,24 +2383,10 @@ pub fn format_quantity(qty: &Quantity) -> String {
         } else if u == "bin" {
             format!("0b{:b}", qty.value as i64)
         } else {
-            if qty.value.fract() == 0.0 {
-                format!("{}", qty.value as i64)
-            } else {
-                format!("{:.4}", qty.value)
-                    .trim_end_matches('0')
-                    .trim_end_matches('.')
-                    .to_string()
-            }
+            format_float(qty.value)
         }
     } else {
-        if qty.value.fract() == 0.0 {
-            format!("{}", qty.value as i64)
-        } else {
-            format!("{:.4}", qty.value)
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-                .to_string()
-        }
+        format_float(qty.value)
     };
 
     match &qty.unit {
