@@ -2443,6 +2443,9 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                             }
                             if app.focused_panel == FocusedPanel::Editor {
                                 app.editor_event_handler.on_mouse_event(mouse, &mut app.editor_state);
+                                if is_click && app.editor_state.mode == EditorMode::Normal {
+                                    app.follow_link_under_cursor();
+                                }
                             }
                         }
                     }
@@ -4005,6 +4008,66 @@ mod main_tests {
             app.focused_panel = FocusedPanel::Variables;
         }
         assert_eq!(app.focused_panel, FocusedPanel::Variables);
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_mouse_click_follow_link() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_click_link");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        // Create the target note file
+        let target_path = wiki_root.join("target-note.md");
+        std::fs::write(&target_path, "# Target Note Content").unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        
+        // Define areas
+        app.left_area = ratatui::layout::Rect::new(0, 0, 20, 30);
+        app.editor_area = ratatui::layout::Rect::new(20, 0, 50, 30);
+        app.right_area = ratatui::layout::Rect::new(70, 0, 20, 30);
+
+        // Put editor in Normal Mode and write text with a wiki link
+        app.editor_state = EditorState::new(edtui::Lines::from("Go to [[Target Note]] now."));
+        app.editor_state.mode = EditorMode::Normal;
+        app.editor_state.view.screen_area = ratatui::layout::Rect::new(20, 0, 50, 30);
+        app.editor_state.view.wrap = false;
+
+        // Verify that click at (30, 0) routes to Editor, updates cursor, and triggers following the link.
+        let mouse_event = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 30, // x = 20 (editor x) + 10 = 30 (inside [[Target Note]])
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+
+        let col = mouse_event.column;
+        let row = mouse_event.row;
+        let is_click = mouse_event.kind == crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left);
+
+        if col >= app.editor_area.x 
+            && col < app.editor_area.x + app.editor_area.width 
+            && row >= app.editor_area.y 
+            && row < app.editor_area.y + app.editor_area.height 
+        {
+            if app.config.mouse_focus_on_hover || is_click {
+                app.focused_panel = FocusedPanel::Editor;
+            }
+            if app.focused_panel == FocusedPanel::Editor {
+                app.editor_event_handler.on_mouse_event(mouse_event, &mut app.editor_state);
+                if is_click && app.editor_state.mode == EditorMode::Normal {
+                    app.follow_link_under_cursor();
+                }
+            }
+        }
+
+        // Verify that the active path has switched to the target path
+        assert_eq!(app.active_path, target_path);
+        assert_eq!(app.get_editor_text(), "# Target Note Content");
 
         let _ = std::fs::remove_dir_all(&wiki_root);
     }
