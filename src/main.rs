@@ -1384,12 +1384,54 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             None => return false,
         };
 
-        if let Some(link_name) = get_link_under_cursor(&line_str, col_idx) {
-            let target_path = self.wiki_mgr.link_to_path(&link_name);
-            let _ = self.save_current_note();
-            self.history_stack.push(self.active_path.clone());
-            let _ = self.load_note(target_path);
-            return true;
+        if let Some(link) = get_any_link_under_cursor(&line_str, col_idx) {
+            match link {
+                LinkType::Wiki(link_name) => {
+                    let target_path = self.wiki_mgr.link_to_path(&link_name);
+                    let _ = self.save_current_note();
+                    self.history_stack.push(self.active_path.clone());
+                    let _ = self.load_note(target_path);
+                    return true;
+                }
+                LinkType::Markdown(target) | LinkType::RawUrl(target) => {
+                    if target.starts_with("http://") || target.starts_with("https://") {
+                        let _ = open_system_link(&target);
+                        self.set_status_message(format!("Opening link: {}", target));
+                        return true;
+                    }
+                    
+                    let active_dir = self.active_path.parent().unwrap_or_else(|| self.wiki_mgr.root_dir());
+                    let clean_target = if target.starts_with("file://") {
+                        target.trim_start_matches("file://").to_string()
+                    } else {
+                        target
+                    };
+                    
+                    let path = PathBuf::from(&clean_target);
+                    let resolved_path = if path.is_absolute() {
+                        path
+                    } else {
+                        active_dir.join(path)
+                    };
+
+                    if resolved_path.extension().map_or(false, |ext| ext == "md") {
+                        let _ = self.save_current_note();
+                        self.history_stack.push(self.active_path.clone());
+                        let _ = self.load_note(resolved_path);
+                        return true;
+                    } else if resolved_path.exists() {
+                        let _ = open_system_link(&resolved_path.to_string_lossy());
+                        self.set_status_message(format!("Opening file: {}", resolved_path.display()));
+                        return true;
+                    } else {
+                        let target_path = self.wiki_mgr.link_to_path(&clean_target);
+                        let _ = self.save_current_note();
+                        self.history_stack.push(self.active_path.clone());
+                        let _ = self.load_note(target_path);
+                        return true;
+                    }
+                }
+            }
         }
         false
     }
@@ -1699,6 +1741,140 @@ fn index2_to_char_offset(lines: &Lines, idx: edtui::Index2) -> usize {
         }
     }
     offset
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum LinkType {
+    Wiki(String),
+    Markdown(String),
+    RawUrl(String),
+}
+
+fn open_system_link(target: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(&["/C", "start", "", target])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(target)
+            .spawn()?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()?;
+    }
+    Ok(())
+}
+
+fn get_any_link_under_cursor(line: &str, col: usize) -> Option<LinkType> {
+    let chars: Vec<char> = line.chars().collect();
+    
+    // 1. Check Wiki Link [[Wiki Link]]
+    let mut pos = 0;
+    while pos < chars.len() {
+        if pos + 1 < chars.len() && chars[pos] == '[' && chars[pos + 1] == '[' {
+            let start_pos = pos;
+            let mut end_pos = None;
+            let mut idx = pos + 2;
+            while idx + 1 < chars.len() {
+                if chars[idx] == ']' && chars[idx + 1] == ']' {
+                    end_pos = Some(idx + 1);
+                    break;
+                }
+                idx += 1;
+            }
+            if let Some(absolute_end) = end_pos {
+                if col >= start_pos && col <= absolute_end {
+                    let content: String = chars[start_pos + 2..absolute_end - 1].iter().collect();
+                    return Some(LinkType::Wiki(content.trim().to_string()));
+                }
+                pos = absolute_end + 1;
+            } else {
+                break;
+            }
+        } else {
+            pos += 1;
+        }
+    }
+
+    // 2. Check Markdown Link [Text](URL)
+    pos = 0;
+    while pos < chars.len() {
+        if chars[pos] == '[' {
+            let start_bracket = pos;
+            let mut end_bracket = None;
+            let mut idx = pos + 1;
+            // Find closing bracket
+            while idx < chars.len() {
+                if chars[idx] == ']' {
+                    end_bracket = Some(idx);
+                    break;
+                }
+                idx += 1;
+            }
+            if let Some(close_b) = end_bracket {
+                // Check if followed immediately by '('
+                if close_b + 1 < chars.len() && chars[close_b + 1] == '(' {
+                    let start_paren = close_b + 1;
+                    let mut end_paren = None;
+                    let mut idx2 = start_paren + 1;
+                    while idx2 < chars.len() {
+                        if chars[idx2] == ')' {
+                            end_paren = Some(idx2);
+                            break;
+                        }
+                        idx2 += 1;
+                    }
+                    if let Some(close_p) = end_paren {
+                        if col >= start_bracket && col <= close_p {
+                            let url: String = chars[start_paren + 1..close_p].iter().collect();
+                            return Some(LinkType::Markdown(url.trim().to_string()));
+                        }
+                        pos = close_p + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        pos += 1;
+    }
+
+    // 3. Check Raw HTTP/HTTPS URL
+    pos = 0;
+    while pos < chars.len() {
+        if pos + 7 < chars.len() && (chars[pos..pos+7] == ['h','t','t','p',':','/','/'] || 
+           (pos + 8 < chars.len() && chars[pos..pos+8] == ['h','t','t','p','s',':','/','/'])) 
+        {
+            let start_url = pos;
+            let mut end_url = pos;
+            while end_url < chars.len() {
+                let c = chars[end_url];
+                if c.is_whitespace() || c == ']' || c == ')' || c == '>' || c == '<' {
+                    break;
+                }
+                end_url += 1;
+            }
+            if col >= start_url && col < end_url {
+                let url: String = chars[start_url..end_url].iter().collect();
+                let mut url_str = url;
+                while url_str.ends_with('.') || url_str.ends_with(',') || url_str.ends_with(';') || url_str.ends_with('?') || url_str.ends_with('!') {
+                    url_str.pop();
+                }
+                return Some(LinkType::RawUrl(url_str));
+            }
+            pos = end_url;
+        } else {
+            pos += 1;
+        }
+    }
+
+    None
 }
 
 // Scans line content at column to find link text
@@ -4070,6 +4246,23 @@ mod main_tests {
         assert_eq!(app.get_editor_text(), "# Target Note Content");
 
         let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_follow_link_types() {
+        let line = "Go to [Google](https://google.com) or visit https://rust-lang.org now.";
+        
+        // Col 10 is inside [Google]
+        assert!(matches!(get_any_link_under_cursor(line, 10), Some(LinkType::Markdown(url)) if url == "https://google.com"));
+        
+        // Col 25 is inside https://google.com URL part
+        assert!(matches!(get_any_link_under_cursor(line, 25), Some(LinkType::Markdown(url)) if url == "https://google.com"));
+
+        // Col 45 is inside https://rust-lang.org
+        assert!(matches!(get_any_link_under_cursor(line, 45), Some(LinkType::RawUrl(url)) if url == "https://rust-lang.org"));
+        
+        // Col 0 is outside any link
+        assert_eq!(get_any_link_under_cursor(line, 0), None);
     }
 
     #[test]
