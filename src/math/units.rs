@@ -350,6 +350,9 @@ pub fn convert_quantity(
     to_unit: &str,
     rates: &HashMap<String, f64>,
 ) -> Result<f64, String> {
+    if from_unit == to_unit {
+        return Ok(val);
+    }
     // Check if both are simple units and both are temperature units
     if let (Some((Dimension::Temperature, Conversion::Temperature(from_t))),
             Some((Dimension::Temperature, Conversion::Temperature(to_t)))) =
@@ -431,6 +434,9 @@ fn parse_unit_term(term: &str) -> (String, i32) {
 
 // Helper: check if two units have the same dimension
 pub fn are_compatible(unit1: &str, unit2: &str) -> bool {
+    if unit1 == unit2 {
+        return true;
+    }
     let map1 = parse_unit(unit1);
     let map2 = parse_unit(unit2);
     if let (Ok(p1), Ok(p2)) = (get_dimension_profile(&map1), get_dimension_profile(&map2)) {

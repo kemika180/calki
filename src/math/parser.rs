@@ -44,6 +44,19 @@ pub enum Expr {
     List(Vec<Expr>),
     Not(Box<Expr>),
     BitNot(Box<Expr>),
+    Block(Vec<Expr>),
+    LocalAssign(String, Box<Expr>),
+    IfElse {
+        cond: Box<Expr>,
+        then_expr: Box<Expr>,
+        else_expr: Box<Expr>,
+    },
+    Switch {
+        val: Box<Expr>,
+        cases: Vec<(Expr, Expr)>,
+        default_case: Option<Box<Expr>>,
+    },
+    StringLiteral(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,7 +228,17 @@ impl Parser {
                 }
             }
             Token::Identifier(name) => {
-                if self.peek() == Some(&Token::LPar) {
+                if name == "if" && self.peek() != Some(&Token::LPar) {
+                    let cond = self.parse_expression(0)?;
+                    let then_expr = self.parse_expression(0)?;
+                    self.expect(Token::Else, "Expected 'else' after 'if' branch")?;
+                    let else_expr = self.parse_expression(0)?;
+                    Ok(Expr::IfElse {
+                        cond: Box::new(cond),
+                        then_expr: Box::new(then_expr),
+                        else_expr: Box::new(else_expr),
+                    })
+                } else if self.peek() == Some(&Token::LPar) {
                     self.next_token(); // consume '('
                     let mut args = Vec::new();
                     if self.peek() != Some(&Token::RPar) {
@@ -238,6 +261,83 @@ impl Parser {
                 let expr = self.parse_expression(0)?;
                 self.expect(Token::RPar, "Expected matching ')'")?;
                 Ok(expr)
+            }
+            Token::LBrace => {
+                let mut exprs = Vec::new();
+                while self.peek() != Some(&Token::RBrace) && !self.is_at_end() {
+                    while self.peek() == Some(&Token::Semicolon) {
+                        self.next_token();
+                    }
+                    if self.peek() == Some(&Token::RBrace) {
+                        break;
+                    }
+                    
+                    let mut is_assign = false;
+                    if let Some(Token::Identifier(_)) = self.peek() {
+                        if let Some(Token::Equal) = self.tokens.get(self.pos + 1) {
+                            is_assign = true;
+                        }
+                    }
+                    
+                    if is_assign {
+                        let name_tok = self.next_token().unwrap();
+                        let name = match name_tok {
+                            Token::Identifier(n) => n,
+                            _ => unreachable!(),
+                        };
+                        self.next_token(); // consume '='
+                        let val_expr = self.parse_expression(0)?;
+                        exprs.push(Expr::LocalAssign(name, Box::new(val_expr)));
+                    } else {
+                        exprs.push(self.parse_expression(0)?);
+                    }
+                    
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.next_token();
+                    }
+                }
+                self.expect(Token::RBrace, "Expected matching '}' at the end of block")?;
+                Ok(Expr::Block(exprs))
+            }
+            Token::Switch => {
+                let val = self.parse_expression(0)?;
+                self.expect(Token::LBrace, "Expected '{' after switch value")?;
+                let mut cases = Vec::new();
+                let mut default_case = None;
+                
+                while self.peek() != Some(&Token::RBrace) && !self.is_at_end() {
+                    while self.peek() == Some(&Token::Semicolon) {
+                        self.next_token();
+                    }
+                    if self.peek() == Some(&Token::RBrace) {
+                        break;
+                    }
+                    
+                    if self.peek() == Some(&Token::Default) {
+                        self.next_token(); // consume 'default'
+                        self.expect(Token::Arrow, "Expected '=>' after 'default'")?;
+                        let def_expr = self.parse_expression(0)?;
+                        default_case = Some(Box::new(def_expr));
+                    } else {
+                        let pattern = self.parse_expression(0)?;
+                        self.expect(Token::Arrow, "Expected '=>' after case pattern")?;
+                        let res_expr = self.parse_expression(0)?;
+                        cases.push((pattern, res_expr));
+                    }
+                    
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.next_token();
+                    }
+                }
+                self.expect(Token::RBrace, "Expected matching '}' at the end of switch")?;
+                Ok(Expr::Switch {
+                    val: Box::new(val),
+                    cases,
+                    default_case,
+                })
+            }
+            Token::StringLiteral(val) => {
+                Ok(Expr::StringLiteral(val))
             }
             Token::Minus => {
                 // Unary minus: represented as 0 - expr

@@ -1,6 +1,6 @@
 [package]
 name = "calki"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "A vim-inspired wiki note editor and calculator sheet"
 license = "GPL-3.0-only"

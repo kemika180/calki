@@ -21,7 +21,67 @@ pub fn evaluate_sheet(
     let mut updated_lines = Vec::new();
     let mut vars_inspector = Vec::new();
 
+    // Group multi-line brace blocks
+    let mut grouped_lines: Vec<String> = Vec::new();
+    let mut block_lines: Vec<String> = Vec::new();
+    let mut brace_level: i32 = 0;
+
+    fn clean_line(s: &str) -> &str {
+        let mut cleaned = s;
+        if let Some(pos) = s.find("//") {
+            cleaned = &s[..pos];
+        }
+        cleaned.trim()
+    }
+
     for line_text in sheet_text.lines() {
+        let cleaned = clean_line(line_text);
+        if brace_level > 0 {
+            block_lines.push(line_text.to_string());
+            for c in cleaned.chars() {
+                if c == '{' {
+                    brace_level += 1;
+                } else if c == '}' {
+                    brace_level -= 1;
+                }
+            }
+            if brace_level <= 0 {
+                let combined = block_lines.join("\n");
+                grouped_lines.push(combined);
+                block_lines.clear();
+            }
+        } else {
+            let is_block_start = if let Some(eq_pos) = cleaned.find('=') {
+                let is_arrow = eq_pos + 1 < cleaned.len() && cleaned.as_bytes()[eq_pos + 1] == b'>';
+                !is_arrow && cleaned.ends_with('{')
+            } else {
+                false
+            };
+
+            if is_block_start {
+                block_lines.push(line_text.to_string());
+                brace_level = 0;
+                for c in cleaned.chars() {
+                    if c == '{' {
+                        brace_level += 1;
+                    } else if c == '}' {
+                        brace_level -= 1;
+                    }
+                }
+                if brace_level <= 0 {
+                    grouped_lines.push(line_text.to_string());
+                    block_lines.clear();
+                }
+            } else {
+                grouped_lines.push(line_text.to_string());
+            }
+        }
+    }
+    if !block_lines.is_empty() {
+        grouped_lines.push(block_lines.join("\n"));
+    }
+
+    for line_text in &grouped_lines {
         let line = parser::parse_line(line_text);
 
         match line {
@@ -288,5 +348,45 @@ p2 = 1.5 bar =>
         assert!(fp_output.contains("f2 = 120000 Hz => 120 kHz"), "Actual output:\n{}", fp_output);
         assert!(fp_output.contains("p1 = 30 psi to kPa => 206.8427 kPa"), "Actual output:\n{}", fp_output);
         assert!(fp_output.contains("p2 = 1.5 bar => 1.5 bar"), "Actual output:\n{}", fp_output);
+    }
+
+    #[test]
+    fn test_multiline_functions_and_switch() {
+        let rates = HashMap::new();
+
+        // 1. Test multi-line block and local assignment scoping
+        let sheet1 = r#"
+fib(n) = {
+    if n <= 1 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+r1 = fib(5) =>
+r2 = fib(6) =>
+"#;
+        let (output1, _) = evaluate_sheet(sheet1, &rates);
+        assert!(output1.contains("r1 = fib(5) => 5"), "Actual output:\n{}", output1);
+        assert!(output1.contains("r2 = fib(6) => 8"), "Actual output:\n{}", output1);
+
+        // 2. Test switch statement with string/unit-like values and default case
+        let sheet2 = r#"
+rate(currency) = {
+    switch currency {
+        "USD" => 1.0
+        "EUR" => 0.85
+        "GBP" => 0.72
+        default => 0.0
+    }
+}
+v1 = rate("USD") =>
+v2 = rate("EUR") =>
+v3 = rate("JPY") =>
+"#;
+        let (output2, _) = evaluate_sheet(sheet2, &rates);
+        assert!(output2.contains("v1 = rate(\"USD\") => 1"), "Actual: {}", output2);
+        assert!(output2.contains("v2 = rate(\"EUR\") => 0.85"), "Actual: {}", output2);
+        assert!(output2.contains("v3 = rate(\"JPY\") => 0"), "Actual: {}", output2);
     }
 }

@@ -36,6 +36,19 @@ pub enum Token {
     Tilde,      // ~
     LShift,     // <<
     RShift,     // >>
+
+    // Braces / Statement Separators
+    LBrace,     // {
+    RBrace,     // }
+    Semicolon,  // ;
+
+    // Types
+    StringLiteral(String),
+
+    // Keywords
+    Else,
+    Switch,
+    Default,
 }
 
 pub struct Lexer<'a> {
@@ -116,6 +129,35 @@ impl<'a> Lexer<'a> {
                 '%' => {
                     self.chars.next();
                     tokens.push(Token::Percentage);
+                }
+                '{' => {
+                    self.chars.next();
+                    tokens.push(Token::LBrace);
+                }
+                '}' => {
+                    self.chars.next();
+                    tokens.push(Token::RBrace);
+                }
+                ';' => {
+                    self.chars.next();
+                    tokens.push(Token::Semicolon);
+                }
+                '"' => {
+                    self.chars.next();
+                    let mut content = String::new();
+                    let mut closed = false;
+                    while let Some(&(_, ch)) = self.chars.peek() {
+                        self.chars.next();
+                        if ch == '"' {
+                            closed = true;
+                            break;
+                        }
+                        content.push(ch);
+                    }
+                    if !closed {
+                        return Err("Unterminated string literal".to_string());
+                    }
+                    tokens.push(Token::StringLiteral(content));
                 }
                 '=' => {
                     self.chars.next();
@@ -297,6 +339,9 @@ impl<'a> Lexer<'a> {
             "and" => Token::And,
             "or" => Token::Or,
             "not" => Token::Not,
+            "else" => Token::Else,
+            "switch" => Token::Switch,
+            "default" => Token::Default,
             _ => Token::Identifier(ident_str.to_string()),
         }
     }

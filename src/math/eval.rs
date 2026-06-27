@@ -375,6 +375,29 @@ pub(crate) fn expr_to_string(expr: &Expr) -> String {
         }
         Expr::Not(inner) => format!("not {}", expr_to_string(inner)),
         Expr::BitNot(inner) => format!("~{}", expr_to_string(inner)),
+        Expr::Block(exprs) => {
+            let els: Vec<String> = exprs.iter().map(expr_to_string).collect();
+            format!("{{\n  {}\n}}", els.join("\n  "))
+        }
+        Expr::LocalAssign(name, val_expr) => {
+            format!("{} = {}", name, expr_to_string(val_expr))
+        }
+        Expr::IfElse { cond, then_expr, else_expr } => {
+            format!("if {} {} else {}", expr_to_string(cond), expr_to_string(then_expr), expr_to_string(else_expr))
+        }
+        Expr::Switch { val, cases, default_case } => {
+            let mut cases_strs = Vec::new();
+            for (pattern, body) in cases {
+                cases_strs.push(format!("{} => {}", expr_to_string(pattern), expr_to_string(body)));
+            }
+            if let Some(def) = default_case {
+                cases_strs.push(format!("default => {}", expr_to_string(def)));
+            }
+            format!("switch {} {{\n  {}\n}}", expr_to_string(val), cases_strs.join("\n  "))
+        }
+        Expr::StringLiteral(val) => {
+            format!("\"{}\"", val)
+        }
     }
 }
 
@@ -506,7 +529,21 @@ fn expr_contains_var(expr: &Expr, var_name: &str) -> bool {
         Expr::FnCall(_, args) | Expr::List(args) => {
             args.iter().any(|arg| expr_contains_var(arg, var_name))
         }
-        Expr::Number(_) | Expr::Quantity(_, _) => false,
+        Expr::Number(_) | Expr::Quantity(_, _) | Expr::StringLiteral(_) => false,
+        Expr::Block(exprs) => {
+            exprs.iter().any(|e| expr_contains_var(e, var_name))
+        }
+        Expr::LocalAssign(name, val_expr) => {
+            name == var_name || expr_contains_var(val_expr, var_name)
+        }
+        Expr::IfElse { cond, then_expr, else_expr } => {
+            expr_contains_var(cond, var_name) || expr_contains_var(then_expr, var_name) || expr_contains_var(else_expr, var_name)
+        }
+        Expr::Switch { val, cases, default_case } => {
+            expr_contains_var(val, var_name) || 
+            cases.iter().any(|(pat, body)| expr_contains_var(pat, var_name) || expr_contains_var(body, var_name)) ||
+            default_case.as_ref().map_or(false, |def| expr_contains_var(def, var_name))
+        }
     }
 }
 
@@ -941,6 +978,64 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             Ok(Quantity { is_bool: false, list: None,
                 value: qty.value * 0.01,
                 unit: qty.unit,
+            })
+        }
+        Expr::Block(exprs) => {
+            let original_variables = ctx.variables.clone();
+            let mut last_val = Quantity::scalar(0.0, None);
+            for expr in exprs {
+                last_val = eval_expr(expr, ctx)?;
+            }
+            ctx.variables = original_variables;
+            Ok(last_val)
+        }
+        Expr::LocalAssign(name, val_expr) => {
+            let qty = eval_expr(val_expr, ctx)?;
+            ctx.variables.insert(name.clone(), qty.clone());
+            Ok(qty)
+        }
+        Expr::IfElse { cond, then_expr, else_expr } => {
+            let cond_qty = eval_expr(cond, ctx)?;
+            let is_true = if cond_qty.is_bool {
+                cond_qty.value != 0.0
+            } else {
+                return Err("Condition in if-else must be a boolean".to_string());
+            };
+            if is_true {
+                eval_expr(then_expr, ctx)
+            } else {
+                eval_expr(else_expr, ctx)
+            }
+        }
+        Expr::Switch { val, cases, default_case } => {
+            let switch_val = eval_expr(val, ctx)?;
+            let mut matched = false;
+            let mut result = Quantity::scalar(0.0, None);
+            
+            for (pattern_expr, res_expr) in cases {
+                let pattern_val = eval_expr(pattern_expr, ctx)?;
+                if eval_eq_logic(&switch_val, &pattern_val, &ctx.exchange_rates) {
+                    result = eval_expr(res_expr, ctx)?;
+                    matched = true;
+                    break;
+                }
+            }
+            
+            if !matched {
+                if let Some(def_expr) = default_case {
+                    result = eval_expr(def_expr, ctx)?;
+                } else {
+                    return Err("No case matched in switch statement and no default case provided".to_string());
+                }
+            }
+            Ok(result)
+        }
+        Expr::StringLiteral(val) => {
+            Ok(Quantity {
+                value: 0.0,
+                unit: Some(val.clone()),
+                list: None,
+                is_bool: false,
             })
         }
         Expr::Convert(inner_expr, target_unit) => {
@@ -2483,6 +2578,7 @@ trait LineExt {
 #[cfg(test)]
 impl LineExt for crate::math::parser::Line {
     fn unwrap_expr(self) -> Expr {
+        println!("DEBUG unwrap_expr self: {:?}", self);
         match self {
             crate::math::parser::Line::Evaluation { expr, .. } => expr,
             crate::math::parser::Line::Assignment { expr, .. } => expr,

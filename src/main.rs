@@ -1877,38 +1877,6 @@ fn get_any_link_under_cursor(line: &str, col: usize) -> Option<LinkType> {
     None
 }
 
-// Scans line content at column to find link text
-fn get_link_under_cursor(line: &str, col: usize) -> Option<String> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut pos = 0;
-    while pos < chars.len() {
-        if pos + 1 < chars.len() && chars[pos] == '[' && chars[pos + 1] == '[' {
-            let start_pos = pos;
-            let mut end_pos = None;
-            let mut idx = pos + 2;
-            while idx + 1 < chars.len() {
-                if chars[idx] == ']' && chars[idx + 1] == ']' {
-                    end_pos = Some(idx + 1);
-                    break;
-                }
-                idx += 1;
-            }
-            if let Some(absolute_end) = end_pos {
-                if col >= start_pos && col <= absolute_end {
-                    let content: String = chars[start_pos + 2..absolute_end - 1].iter().collect();
-                    return Some(content.trim().to_string());
-                }
-                pos = absolute_end + 1;
-            } else {
-                break;
-            }
-        } else {
-            pos += 1;
-        }
-    }
-    None
-}
-
 // Find all whole-word occurrences of the variable name in the note text
 #[cfg(test)]
 fn find_word_occurrences(lines_vecs: &[Vec<char>], word: &str) -> Vec<edtui::Highlight> {
@@ -2096,9 +2064,30 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
                 app.help_tab_idx = (app.help_tab_idx + 1) % 5;
                 app.help_scroll = 0;
             }
-            _ => {
+            KeyCode::Char('1') => {
+                app.help_tab_idx = 0;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('2') => {
+                app.help_tab_idx = 1;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('3') => {
+                app.help_tab_idx = 2;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('4') => {
+                app.help_tab_idx = 3;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('5') => {
+                app.help_tab_idx = 4;
+                app.help_scroll = 0;
+            }
+            KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q') | KeyCode::Char('Q') => {
                 app.show_help = false;
             }
+            _ => {}
         }
         return true;
     }
@@ -3113,6 +3102,10 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled("Switch between Help Tabs (Left / Right)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
+                    Span::styled(" 1 - 5       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Switch directly to Help Tabs 1 through 5", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
                     Span::styled(" j / k       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
                     Span::styled("Scroll Help Content (Down / Up)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
@@ -3286,6 +3279,20 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Line::from(vec![
                     Span::styled(" solve(eq, x)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                     Span::styled("Solve linear equation eq for x (e.g. solve(2*x + 5 == 15, x) => 5)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Programming & Logic ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" Scoped Blocks     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("{ local_var = expr; expr }", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" if/else Expression", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("if cond { expr } else { expr }", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" switch Statement  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("switch val { pattern => expr; default => expr }", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(""),
                 Line::from(vec![Span::styled("── Radix Notation & Bitwise ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
@@ -4883,6 +4890,30 @@ mod main_tests {
         let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('e'), crossterm::event::KeyModifiers::CONTROL));
         assert!(handled);
         assert_eq!(app.help_scroll, 10);
+
+        // Press '2' should switch to tab 1 and reset scroll to 0
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('2'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 1);
+        assert_eq!(app.help_scroll, 0);
+
+        // Press '5' should switch to tab 4
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('5'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 4);
+
+        // Press '1' should switch to tab 0
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('1'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 0);
+
+        // Press '6' should not close modal and do nothing
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('6'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
 
         // Other key (Esc) should close modal
         let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE));
