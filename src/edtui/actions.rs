@@ -97,6 +97,7 @@ pub enum Action {
     SelectCurrentSearch(SelectCurrentSearch),
     AppendCharToSearch(AppendCharToSearch),
     RemoveCharFromSearch(RemoveCharFromSearch),
+    ToggleCase(ToggleCase),
     #[cfg(feature = "system-editor")]
     OpenSystemEditor(OpenSystemEditor),
 }
@@ -155,6 +156,66 @@ pub struct Redo;
 impl Execute for Redo {
     fn execute(&mut self, state: &mut EditorState) {
         state.redo();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ToggleCase;
+
+impl Execute for ToggleCase {
+    fn execute(&mut self, state: &mut EditorState) {
+        if state.lines.is_empty() {
+            return;
+        }
+        state.capture();
+
+        if state.mode == EditorMode::Visual {
+            if let Some(selection) = &state.selection {
+                let start = selection.start();
+                let end = selection.end();
+
+                for row in start.row..=end.row {
+                    let Some(len_col) = state.lines.len_col(row) else {
+                        continue;
+                    };
+                    let col_start = if row == start.row { start.col } else { 0 };
+                    let col_end = if row == end.row { end.col } else { len_col.saturating_sub(1) };
+
+                    for col in col_start..=col_end {
+                        let index = crate::edtui::Index2::new(row, col);
+                        if let Some(ch) = state.lines.get_mut(index) {
+                            *ch = if ch.is_uppercase() {
+                                ch.to_lowercase().next().unwrap_or(*ch)
+                            } else {
+                                ch.to_uppercase().next().unwrap_or(*ch)
+                            };
+                        }
+                    }
+                }
+
+                // Clear selection and switch back to normal mode
+                state.selection = None;
+                state.mode = EditorMode::Normal;
+                state.clamp_column();
+            }
+        } else {
+            // Normal mode: toggle char under cursor, and move cursor forward by 1 character
+            let row = state.cursor.row;
+            let col = state.cursor.col;
+            if let Some(ch) = state.lines.get_mut(state.cursor) {
+                *ch = if ch.is_uppercase() {
+                    ch.to_lowercase().next().unwrap_or(*ch)
+                } else {
+                    ch.to_uppercase().next().unwrap_or(*ch)
+                };
+
+                // Move cursor right by 1 character, clamped to end of line
+                if let Some(len_col) = state.lines.len_col(row) {
+                    let max_col = len_col.saturating_sub(1);
+                    state.cursor.col = (col + 1).min(max_col);
+                }
+            }
+        }
     }
 }
 
@@ -222,5 +283,34 @@ mod tests {
         // Verify the final state after chaining
         assert_eq!(state.mode, EditorMode::Visual);
         assert!(state.selection.is_some());
+    }
+
+    #[test]
+    fn test_toggle_case() {
+        let mut state = test_state(); // "Hello World!\n\n123."
+        state.cursor = crate::edtui::Index2::new(0, 0); // 'H'
+
+        ToggleCase.execute(&mut state);
+        assert_eq!(state.lines, Lines::from("hello World!\n\n123."));
+        assert_eq!(state.cursor.col, 1); // cursor moved to 'e'
+
+        ToggleCase.execute(&mut state);
+        assert_eq!(state.lines, Lines::from("hEllo World!\n\n123."));
+        assert_eq!(state.cursor.col, 2); // cursor moved to 'l'
+
+        // Test visual mode case toggle
+        state.cursor = crate::edtui::Index2::new(0, 2); // 'l'
+        SwitchMode(EditorMode::Visual).execute(&mut state);
+        // Extend selection to 'o' (col 4)
+        state.cursor.col = 4;
+        state.selection = Some(crate::edtui::state::selection::Selection::new(
+            crate::edtui::Index2::new(0, 2),
+            crate::edtui::Index2::new(0, 4)
+        ));
+
+        ToggleCase.execute(&mut state);
+        // "hEllo World!" -> col 2,3,4 are "llo". Toggled -> "LLO".
+        assert_eq!(state.lines, Lines::from("hELLO World!\n\n123."));
+        assert_eq!(state.mode, EditorMode::Normal);
     }
 }

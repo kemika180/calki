@@ -20,7 +20,7 @@ use crate::edtui::actions::{
     MoveParagraphForward, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine,
     MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord, Paste, Redo, RemoveChar,
     RemoveCharFromSearch, SelectCurrentSearch, SelectInnerBetween, SelectInnerWord, SelectLine,
-    StopSearch, SwitchMode, Undo,
+    StopSearch, SwitchMode, ToggleCase, Undo,
 };
 use crate::edtui::events::KeyInput;
 use crate::edtui::{EditorMode, EditorState};
@@ -311,8 +311,16 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             MoveToFirst().into(),
         ),
         (
+            KeyEventRegister::n(vec![KeyInput::new('^')]),
+            MoveToFirst().into(),
+        ),
+        (
             KeyEventRegister::n(vec![KeyInput::new('$')]),
             MoveToEndOfLine().into(),
+        ),
+        (
+            KeyEventRegister::n(vec![KeyInput::new('~')]),
+            ToggleCase.into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::new('0')]),
@@ -323,8 +331,16 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             MoveToFirst().into(),
         ),
         (
+            KeyEventRegister::v(vec![KeyInput::new('^')]),
+            MoveToFirst().into(),
+        ),
+        (
             KeyEventRegister::v(vec![KeyInput::new('$')]),
             MoveToEndOfLine().into(),
+        ),
+        (
+            KeyEventRegister::v(vec![KeyInput::new('~')]),
+            ToggleCase.into(),
         ),
         (
             KeyEventRegister::n(vec![KeyInput::ctrl('d')]),

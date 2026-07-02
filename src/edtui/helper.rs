@@ -15,7 +15,7 @@ pub(crate) fn insert_char(lines: &mut Lines, index: &mut Index2, ch: char, skip_
             return;
         };
         if index.col > len_col {
-            index.col = len_col.saturating_sub(1);
+            index.col = len_col;
         }
         lines.insert(*index, ch);
         if !skip_move {
@@ -324,6 +324,17 @@ mod tests {
         insert_char(&mut lines, &mut index, '?', false);
         assert_eq!(index, Index2::new(99, 0));
         assert_eq!(lines, Lines::from("Hello World!\n\n123."));
+    }
+
+    #[test]
+    fn test_insert_char_column_out_of_bounds() {
+        let mut lines = test_lines();
+        let mut index = Index2::new(0, 99);
+
+        insert_char(&mut lines, &mut index, '?', false);
+        // "Hello World!" has length 12. Index 99 > 12, should clamp to 12 and append '?' at the end.
+        assert_eq!(index, Index2::new(0, 13));
+        assert_eq!(lines, Lines::from("Hello World!?\n\n123."));
     }
 
     #[test]

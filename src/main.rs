@@ -127,6 +127,8 @@ struct SessionState {
     focused_panel: String, // "WikiMap", "Editor", "Variables"
     left_panel_open: bool,
     right_panel_open: bool,
+    #[serde(default)]
+    history_stack: Vec<String>,
 }
 
 impl SessionState {
@@ -280,6 +282,7 @@ struct App {
     update_receiver: Option<std::sync::mpsc::Receiver<String>>,
     update_available: Option<String>,
     show_update_modal: bool,
+    show_export_menu: bool,
 }
 
 fn trim_char_slice(mut slice: &[char]) -> &[char] {
@@ -325,6 +328,22 @@ fn is_repeatable_motion(key: crossterm::event::KeyEvent) -> bool {
     }
 }
 
+fn is_newer_version(local: &str, remote: &str) -> bool {
+    let local_parts: Vec<u32> = local.split('.').filter_map(|s| s.parse().ok()).collect();
+    let remote_parts: Vec<u32> = remote.split('.').filter_map(|s| s.parse().ok()).collect();
+    
+    if local_parts.len() == 3 && remote_parts.len() == 3 {
+        for i in 0..3 {
+            if remote_parts[i] > local_parts[i] {
+                return true;
+            } else if remote_parts[i] < local_parts[i] {
+                return false;
+            }
+        }
+    }
+    false
+}
+
 fn check_for_updates() -> Option<std::sync::mpsc::Receiver<String>> {
     #[cfg(test)]
     {
@@ -335,30 +354,12 @@ fn check_for_updates() -> Option<std::sync::mpsc::Receiver<String>> {
         let (tx, rx) = std::sync::mpsc::channel();
         
         std::thread::spawn(move || {
-            // 1. Get local commit hash
-            let manifest_dir = env!("CARGO_MANIFEST_DIR");
-            let local_output = std::process::Command::new("git")
-                .args(["-C", manifest_dir, "rev-parse", "HEAD"])
-                .output();
-                
-            let local_hash = match local_output {
-                Ok(output) if output.status.success() => {
-                    String::from_utf8_lossy(&output.stdout).trim().to_string()
-                }
-                _ => return,
-            };
-            
-            if local_hash.is_empty() {
-                return;
-            }
-
-            // 2. Fetch latest commit hash from GitHub API
-            let url = "https://api.github.com/repos/kemika180/calki/commits/main";
+            let url = "https://crates.io/api/v1/crates/calki";
             let agent = ureq::AgentBuilder::new()
                 .timeout(std::time::Duration::from_secs(3))
                 .build();
 
-            let response = match agent.get(url).set("User-Agent", "calki-app").call() {
+            let response = match agent.get(url).set("User-Agent", "calki-app-updater").call() {
                 Ok(res) => res,
                 Err(_) => return,
             };
@@ -368,10 +369,11 @@ fn check_for_updates() -> Option<std::sync::mpsc::Receiver<String>> {
                 Err(_) => return,
             };
 
-            if let Some(remote_hash) = json_val["sha"].as_str() {
-                let remote_hash = remote_hash.trim().to_string();
-                if !remote_hash.is_empty() && local_hash != remote_hash {
-                    let _ = tx.send(remote_hash);
+            if let Some(remote_version) = json_val["crate"]["max_version"].as_str() {
+                let remote_version = remote_version.trim().to_string();
+                let local_version = env!("CARGO_PKG_VERSION");
+                if is_newer_version(local_version, &remote_version) {
+                    let _ = tx.send(remote_version);
                 }
             }
         });
@@ -468,10 +470,16 @@ impl App {
 
         let update_receiver = check_for_updates();
 
+        let history_stack = if let Some(ref s) = session {
+            s.history_stack.iter().map(PathBuf::from).collect()
+        } else {
+            Vec::new()
+        };
+
         let mut app = Self {
             wiki_mgr,
             active_path,
-            history_stack: Vec::new(),
+            history_stack,
             editor_state,
             editor_event_handler,
             left_panel_open,
@@ -503,6 +511,7 @@ impl App {
             update_receiver,
             update_available: None,
             show_update_modal: false,
+            show_export_menu: false,
         };
 
         if let Some(ref s) = session {
@@ -880,44 +889,163 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                 }
             }
 
-        // C. Outgoing Wiki Links: [[Note Name]] (Purple Underlined)
+        // C. Link Highlighting (Wiki Links, Markdown Links, Parentheses Links, Raw URLs)
+        let mut link_ranges = Vec::new();
+        let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
+
+        // C1. Outgoing Wiki Links: [[Note Name]]
         let mut idx = 0;
         while let Some(start_pos) = find_in_chars_from(line, "[[", idx) {
             if let Some(end_pos) = find_in_chars_from(line, "]]", start_pos) {
                 let absolute_end = end_pos + 1;
                 for col in start_pos..=absolute_end {
                     if col < n {
-                        line_styles[col] = Some(Style::default().fg(Color::Rgb(187, 154, 247)).underlined());
+                        line_styles[col] = Some(link_style);
                     }
                 }
+                link_ranges.push(start_pos..=absolute_end);
                 idx = absolute_end + 1;
             } else {
                 break;
             }
         }
 
-        // D. Scan for units and highlight them
-        let tokens = tokenize_line_for_highlighting(line);
-        let mut wiki_ranges = Vec::new();
-        let mut w_idx = 0;
-        while w_idx < line.len() {
-            if w_idx + 1 < line.len() && line[w_idx] == '[' && line[w_idx + 1] == '[' {
-                let start_pos = w_idx;
-                let mut search_idx = w_idx + 2;
-                while search_idx + 1 < line.len() {
-                    if line[search_idx] == ']' && line[search_idx + 1] == ']' {
-                        wiki_ranges.push(start_pos..=search_idx + 1);
-                        w_idx = search_idx + 1;
+        // C2. Markdown Links: [Text](URL)
+        let mut m_pos = 0;
+        while m_pos < line.len() {
+            if line[m_pos] == '[' {
+                let start_bracket = m_pos;
+                let mut end_bracket = None;
+                let mut idx = m_pos + 1;
+                while idx < line.len() {
+                    if line[idx] == ']' {
+                        end_bracket = Some(idx);
                         break;
                     }
-                    search_idx += 1;
+                    idx += 1;
+                }
+                if let Some(close_b) = end_bracket {
+                    // Check if followed immediately by '('
+                    if close_b + 1 < line.len() && line[close_b + 1] == '(' {
+                        let start_paren = close_b + 1;
+                        let mut end_paren = None;
+                        let mut idx2 = start_paren + 1;
+                        while idx2 < line.len() {
+                            if line[idx2] == ')' {
+                                end_paren = Some(idx2);
+                                break;
+                            }
+                            idx2 += 1;
+                        }
+                        if let Some(close_p) = end_paren {
+                            for col in start_bracket..=close_p {
+                                if col < n {
+                                    line_styles[col] = Some(link_style);
+                                }
+                            }
+                            link_ranges.push(start_bracket..=close_p);
+                            m_pos = close_p + 1;
+                            continue;
+                        }
+                    }
                 }
             }
-            w_idx += 1;
+            m_pos += 1;
         }
+
+        // C3. Parentheses Links: [(Link)]
+        let mut p_pos = 0;
+        while p_pos < line.len() {
+            if p_pos + 1 < line.len() && line[p_pos] == '[' && line[p_pos + 1] == '(' {
+                let start_pos = p_pos;
+                let mut end_pos = None;
+                let mut idx = p_pos + 2;
+                while idx + 1 < line.len() {
+                    if line[idx] == ')' && line[idx + 1] == ']' {
+                        end_pos = Some(idx + 1);
+                        break;
+                    }
+                    idx += 1;
+                }
+                if let Some(absolute_end) = end_pos {
+                    for col in start_pos..=absolute_end {
+                        if col < n {
+                            line_styles[col] = Some(link_style);
+                        }
+                    }
+                    link_ranges.push(start_pos..=absolute_end);
+                    p_pos = absolute_end + 1;
+                    continue;
+                }
+            }
+            p_pos += 1;
+        }
+
+        // C4. Raw HTTP/HTTPS URLs
+        let mut u_pos = 0;
+        while u_pos < line.len() {
+            if u_pos + 7 < line.len() && (line[u_pos..u_pos+7] == ['h','t','t','p',':','/','/'] || 
+               (u_pos + 8 < line.len() && line[u_pos..u_pos+8] == ['h','t','t','p','s',':','/','/'])) 
+            {
+                let start_url = u_pos;
+                let mut end_url = u_pos;
+                while end_url < line.len() {
+                    let c = line[end_url];
+                    if c.is_whitespace() || c == ']' || c == ')' || c == '>' || c == '<' {
+                        break;
+                    }
+                    end_url += 1;
+                }
+                let mut actual_end = end_url;
+                while actual_end > start_url && matches!(line[actual_end - 1], '.' | ',' | ';' | '?' | '!') {
+                    actual_end -= 1;
+                }
+                for col in start_url..actual_end {
+                    if col < n {
+                        line_styles[col] = Some(link_style);
+                    }
+                }
+                if actual_end > start_url {
+                    link_ranges.push(start_url..=actual_end - 1);
+                }
+                u_pos = end_url;
+            } else {
+                u_pos += 1;
+            }
+        }
+
+        // D. Scan for units and highlight them
+        let tokens = tokenize_line_for_highlighting(line);
 
         for i in 0..tokens.len() {
             if let HighlightToken::Identifier { start, end, name } = &tokens[i] {
+                // Check if this is a function call (followed by '(')
+                let mut is_function = false;
+                if i + 1 < tokens.len() {
+                    if let HighlightToken::Symbol { ch: '(', .. } = tokens[i + 1] {
+                        is_function = true;
+                    }
+                }
+
+                if is_function {
+                    let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                        *start >= *r.start() && *end <= *r.end()
+                    });
+                    if in_math_context {
+                        let overlaps_link = link_ranges.iter().any(|r| {
+                            (*start >= *r.start() && *start <= *r.end()) || (*end >= *r.start() && *end <= *r.end())
+                        });
+                        if !overlaps_link {
+                            for col in *start..=*end {
+                                if col < n {
+                                    line_styles[col] = Some(Style::default().fg(Color::Rgb(122, 162, 247)).bold()); // Blue #7aa2f7
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 let mut is_unit = false;
                 if is_registered_unit(name) {
                     is_unit = true;
@@ -944,15 +1072,36 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                         start >= r.start() && end <= r.end()
                     });
                     if in_math_context {
-                        // Check if it overlaps with any wiki link target range
-                        let overlaps_wiki = wiki_ranges.iter().any(|r| {
+                        // Check if it overlaps with any link range
+                        let overlaps_link = link_ranges.iter().any(|r| {
                             (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
                         });
-                        if !overlaps_wiki {
+                        if !overlaps_link {
                             for col in *start..=*end {
                                 if col < n {
                                     line_styles[col] = Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
                                 }
+                            }
+                        }
+                    }
+                }
+            } else if let HighlightToken::Number { start, end, val: _ } = &tokens[i] {
+                let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                    *start >= *r.start() && *end <= *r.end()
+                });
+                if in_math_context {
+                    let overlaps_link = link_ranges.iter().any(|r| {
+                        (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
+                    });
+                    if !overlaps_link {
+                        for col in *start..=*end {
+                            if col < n {
+                                let italic = line_styles[col].map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC)).unwrap_or(false);
+                                let mut style = Style::default().fg(Color::Rgb(115, 218, 202)); // Teal #73daca
+                                if italic {
+                                    style = style.italic();
+                                }
+                                line_styles[col] = Some(style);
                             }
                         }
                     }
@@ -975,10 +1124,10 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                         *start >= *r.start() && *end <= *r.end()
                     });
                     if in_math_context {
-                        let overlaps_wiki = wiki_ranges.iter().any(|r| {
+                        let overlaps_link = link_ranges.iter().any(|r| {
                             (*start >= *r.start() && *start <= *r.end()) || (*end >= *r.start() && *end <= *r.end())
                         });
-                        if !overlaps_wiki {
+                        if !overlaps_link {
                             for col in *start..=*end {
                                 if col < n {
                                     line_styles[col] = Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
@@ -1004,8 +1153,8 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                     }
                 }
             } else if let HighlightToken::Symbol { start, end, ch } = &tokens[i] {
-                // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >
-                let mut is_operator = matches!(ch, '+' | '-' | '*' | '/' | '^' | '&' | '|' | '!' | '=' | '<' | '>');
+                // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >, (, ), ,, [, ]
+                let mut is_operator = matches!(ch, '+' | '-' | '*' | '/' | '^' | '&' | '|' | '!' | '=' | '<' | '>' | '(' | ')' | ',' | '[' | ']');
                 if *ch == '%' {
                     // Only highlight '%' as an operator if it's infix (modulo)
                     let mut is_infix = false;
@@ -1034,14 +1183,19 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                         *start >= *r.start() && *end <= *r.end()
                     });
                     if in_math_context {
-                        for col in *start..=*end {
-                            if col < n {
-                                let italic = line_styles[col].map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC)).unwrap_or(false);
-                                let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
-                                if italic {
-                                    style = style.italic();
+                        let overlaps_link = link_ranges.iter().any(|r| {
+                            (*start >= *r.start() && *start <= *r.end()) || (*end >= *r.start() && *end <= *r.end())
+                        });
+                        if !overlaps_link {
+                            for col in *start..=*end {
+                                if col < n {
+                                    let italic = line_styles[col].map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC)).unwrap_or(false);
+                                    let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                                    if italic {
+                                        style = style.italic();
+                                    }
+                                    line_styles[col] = Some(style);
                                 }
-                                line_styles[col] = Some(style);
                             }
                         }
                     }
@@ -1494,7 +1648,15 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             let _ = self.load_note(prev_path);
             true
         } else {
-            false
+            // Fallback: go one level up to home.md if we aren't already there
+            let home_path = self.wiki_mgr.root_dir().join("home.md");
+            if self.active_path != home_path && home_path.exists() {
+                let _ = self.save_current_note();
+                let _ = self.load_note(home_path);
+                true
+            } else {
+                false
+            }
         }
     }
 
@@ -1773,38 +1935,20 @@ fn open_system_link(target: &str) -> std::io::Result<()> {
 }
 
 fn get_any_link_under_cursor(line: &str, col: usize) -> Option<LinkType> {
+    // Try to find exact match (tolerance 0) first
+    if let Some(link) = get_any_link_under_cursor_with_tolerance(line, col, 0) {
+        return Some(link);
+    }
+    // Fall back to a tolerance of 3 characters (highly useful on Windows Terminal
+    // where mouse coordinate alignments can be off due to padding or scaling)
+    get_any_link_under_cursor_with_tolerance(line, col, 3)
+}
+
+fn get_any_link_under_cursor_with_tolerance(line: &str, col: usize, tolerance: usize) -> Option<LinkType> {
     let chars: Vec<char> = line.chars().collect();
     
-    // 1. Check Wiki Link [[Wiki Link]]
+    // 1. Check Markdown Link [Text](URL)
     let mut pos = 0;
-    while pos < chars.len() {
-        if pos + 1 < chars.len() && chars[pos] == '[' && chars[pos + 1] == '[' {
-            let start_pos = pos;
-            let mut end_pos = None;
-            let mut idx = pos + 2;
-            while idx + 1 < chars.len() {
-                if chars[idx] == ']' && chars[idx + 1] == ']' {
-                    end_pos = Some(idx + 1);
-                    break;
-                }
-                idx += 1;
-            }
-            if let Some(absolute_end) = end_pos {
-                if col >= start_pos && col <= absolute_end {
-                    let content: String = chars[start_pos + 2..absolute_end - 1].iter().collect();
-                    return Some(LinkType::Wiki(content.trim().to_string()));
-                }
-                pos = absolute_end + 1;
-            } else {
-                break;
-            }
-        } else {
-            pos += 1;
-        }
-    }
-
-    // 2. Check Markdown Link [Text](URL)
-    pos = 0;
     while pos < chars.len() {
         if chars[pos] == '[' {
             let start_bracket = pos;
@@ -1832,7 +1976,9 @@ fn get_any_link_under_cursor(line: &str, col: usize) -> Option<LinkType> {
                         idx2 += 1;
                     }
                     if let Some(close_p) = end_paren {
-                        if col >= start_bracket && col <= close_p {
+                        let start_with_tol = start_bracket.saturating_sub(tolerance);
+                        let end_with_tol = close_p + tolerance;
+                        if col >= start_with_tol && col <= end_with_tol {
                             let url: String = chars[start_paren + 1..close_p].iter().collect();
                             return Some(LinkType::Markdown(url.trim().to_string()));
                         }
@@ -1845,7 +1991,65 @@ fn get_any_link_under_cursor(line: &str, col: usize) -> Option<LinkType> {
         pos += 1;
     }
 
-    // 3. Check Raw HTTP/HTTPS URL
+    // 2. Check Parentheses Link [(URL)]
+    pos = 0;
+    while pos < chars.len() {
+        if pos + 1 < chars.len() && chars[pos] == '[' && chars[pos + 1] == '(' {
+            let start_pos = pos;
+            let mut end_pos = None;
+            let mut idx = pos + 2;
+            while idx + 1 < chars.len() {
+                if chars[idx] == ')' && chars[idx + 1] == ']' {
+                    end_pos = Some(idx + 1);
+                    break;
+                }
+                idx += 1;
+            }
+            if let Some(absolute_end) = end_pos {
+                let start_with_tol = start_pos.saturating_sub(tolerance);
+                let end_with_tol = absolute_end + tolerance;
+                if col >= start_with_tol && col <= end_with_tol {
+                    let url: String = chars[start_pos + 2..absolute_end - 1].iter().collect();
+                    return Some(LinkType::Markdown(url.trim().to_string()));
+                }
+                pos = absolute_end + 1;
+                continue;
+            }
+        }
+        pos += 1;
+    }
+
+    // 3. Check Wiki Link [[Wiki Link]]
+    pos = 0;
+    while pos < chars.len() {
+        if pos + 1 < chars.len() && chars[pos] == '[' && chars[pos + 1] == '[' {
+            let start_pos = pos;
+            let mut end_pos = None;
+            let mut idx = pos + 2;
+            while idx + 1 < chars.len() {
+                if chars[idx] == ']' && chars[idx + 1] == ']' {
+                    end_pos = Some(idx + 1);
+                    break;
+                }
+                idx += 1;
+            }
+            if let Some(absolute_end) = end_pos {
+                let start_with_tol = start_pos.saturating_sub(tolerance);
+                let end_with_tol = absolute_end + tolerance;
+                if col >= start_with_tol && col <= end_with_tol {
+                    let content: String = chars[start_pos + 2..absolute_end - 1].iter().collect();
+                    return Some(LinkType::Wiki(content.trim().to_string()));
+                }
+                pos = absolute_end + 1;
+            } else {
+                break;
+            }
+        } else {
+            pos += 1;
+        }
+    }
+
+    // 4. Check Raw HTTP/HTTPS URL
     pos = 0;
     while pos < chars.len() {
         if pos + 7 < chars.len() && (chars[pos..pos+7] == ['h','t','t','p',':','/','/'] || 
@@ -1860,7 +2064,9 @@ fn get_any_link_under_cursor(line: &str, col: usize) -> Option<LinkType> {
                 }
                 end_url += 1;
             }
-            if col >= start_url && col < end_url {
+            let start_with_tol = start_url.saturating_sub(tolerance);
+            let end_with_tol = end_url + tolerance;
+            if col >= start_with_tol && col < end_with_tol {
                 let url: String = chars[start_url..end_url].iter().collect();
                 let mut url_str = url;
                 while url_str.ends_with('.') || url_str.ends_with(',') || url_str.ends_with(';') || url_str.ends_with('?') || url_str.ends_with('!') {
@@ -1975,6 +2181,7 @@ fn main() -> Result<(), io::Error> {
         },
         left_panel_open: app.left_panel_open,
         right_panel_open: app.right_panel_open,
+        history_stack: app.history_stack.iter().map(|p| p.to_string_lossy().to_string()).collect(),
     };
     let _ = session.save();
     let _ = write_cursor_shape_sequence(terminal.backend_mut(), 0);
@@ -2057,11 +2264,11 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
                 app.help_scroll = app.help_scroll.saturating_add(10);
             }
             KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
-                app.help_tab_idx = if app.help_tab_idx == 0 { 4 } else { app.help_tab_idx - 1 };
+                app.help_tab_idx = if app.help_tab_idx == 0 { 7 } else { app.help_tab_idx - 1 };
                 app.help_scroll = 0;
             }
             KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
-                app.help_tab_idx = (app.help_tab_idx + 1) % 5;
+                app.help_tab_idx = (app.help_tab_idx + 1) % 8;
                 app.help_scroll = 0;
             }
             KeyCode::Char('1') => {
@@ -2082,6 +2289,18 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
             }
             KeyCode::Char('5') => {
                 app.help_tab_idx = 4;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('6') => {
+                app.help_tab_idx = 5;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('7') => {
+                app.help_tab_idx = 6;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('8') => {
+                app.help_tab_idx = 7;
                 app.help_scroll = 0;
             }
             KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -2147,6 +2366,40 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         let _ = app.config.save();
                     }
                     app.show_update_modal = false;
+                    app.update_highlights();
+                    continue;
+                }
+
+                // If export menu modal is open
+                if app.show_export_menu {
+                    match key.code {
+                        KeyCode::Char('1') => {
+                            app.show_export_menu = false;
+                            match app.export_current_note_to_html() {
+                                Ok(path) => {
+                                    let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("note.html");
+                                    app.set_status_message(format!("Exported {} to {}", filename, path.to_string_lossy()));
+                                }
+                                Err(e) => {
+                                    app.set_status_message(format!("Export failed: {}", e));
+                                }
+                            }
+                        }
+                        KeyCode::Char('2') => {
+                            app.show_export_menu = false;
+                            match app.compile_wiki_to_markdown() {
+                                Ok(path) => {
+                                    app.set_status_message(format!("Compiled wiki to {}", path.to_string_lossy()));
+                                }
+                                Err(e) => {
+                                    app.set_status_message(format!("Compile failed: {}", e));
+                                }
+                            }
+                        }
+                        _ => {
+                            app.show_export_menu = false;
+                        }
+                    }
                     app.update_highlights();
                     continue;
                 }
@@ -2268,30 +2521,22 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                     app.show_search_results = false;
                     continue;
                 }
-                // Ctrl-s: Export current note as HTML
+                // Ctrl-s: Save current note explicitly
                 if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    match app.export_current_note_to_html() {
-                        Ok(path) => {
-                            let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("note.html");
-                            app.set_status_message(format!("Exported {} to {}", filename, path.to_string_lossy()));
+                    match app.save_current_note() {
+                        Ok(()) => {
+                            app.set_status_message("Saved current note".to_string());
                         }
                         Err(e) => {
-                            app.set_status_message(format!("Export failed: {}", e));
+                            app.set_status_message(format!("Save failed: {}", e));
                         }
                     }
                     app.update_highlights();
                     continue;
                 }
-                // Ctrl-w: Compile entire wiki to Markdown
-                if key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    match app.compile_wiki_to_markdown() {
-                        Ok(path) => {
-                            app.set_status_message(format!("Compiled wiki to {}", path.to_string_lossy()));
-                        }
-                        Err(e) => {
-                            app.set_status_message(format!("Compile failed: {}", e));
-                        }
-                    }
+                // Ctrl-e: Open Export Menu
+                if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.show_export_menu = true;
                     app.update_highlights();
                     continue;
                 }
@@ -2457,14 +2702,25 @@ fn run_app<B: Backend + std::io::Write>(terminal: &mut Terminal<B>, app: &mut Ap
                         }
 
                         // Send event to Editor state
+                        let lines_before = if prev_mode == EditorMode::Normal {
+                            Some(app.editor_state.lines.clone())
+                        } else {
+                            None
+                        };
+
                         for _ in 0..count {
                             app.editor_event_handler.on_key_event(key, &mut app.editor_state);
                         }
 
-                        // Trigger math calculation update on exiting Insert Mode
+                        // Trigger math calculation update on exiting Insert Mode or on Normal Mode edits
                         if prev_mode == EditorMode::Insert && app.editor_state.mode == EditorMode::Normal {
                             app.re_evaluate_calculations();
                             app.update_outgoing_links();
+                        } else if let Some(ref before) = lines_before {
+                            if before != &app.editor_state.lines {
+                                app.re_evaluate_calculations();
+                                app.update_outgoing_links();
+                            }
                         }
                     }
                     FocusedPanel::WikiMap => {
@@ -3064,11 +3320,14 @@ fn ui(f: &mut Frame, app: &mut App) {
 
         // We construct the tab headers row:
         let tab_headers = [
-            " 1. General ",
-            " 2. Math & Trig ",
-            " 3. Complex & Symbolic ",
-            " 4. Lists & Stats ",
-            " 5. Constants ",
+            "1.\u{a0}General",
+            "2.\u{a0}Math\u{a0}&\u{a0}Trig",
+            "3.\u{a0}Complex\u{a0}&\u{a0}Symbolic",
+            "4.\u{a0}Lists\u{a0}&\u{a0}Stats",
+            "5.\u{a0}Constants",
+            "6.\u{a0}Markdown",
+            "7.\u{a0}Vim\u{a0}Motions",
+            "8.\u{a0}About",
         ];
 
         let mut header_spans = Vec::new();
@@ -3077,9 +3336,9 @@ fn ui(f: &mut Frame, app: &mut App) {
                 header_spans.push(Span::styled("   ", Style::default().fg(Color::Rgb(86, 95, 137))));
             }
             if i == app.help_tab_idx {
-                header_spans.push(Span::styled(format!("▶{}◀", title), Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
+                header_spans.push(Span::styled(format!("▶\u{a0}{}\u{a0}◀", title), Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
             } else {
-                header_spans.push(Span::styled(format!(" {} ", title), Style::default().fg(Color::Rgb(86, 95, 137))));
+                header_spans.push(Span::styled(format!("\u{a0}{}\u{a0}", title), Style::default().fg(Color::Rgb(86, 95, 137))));
             }
         }
         let tab_row = Line::from(header_spans);
@@ -3102,8 +3361,8 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled("Switch between Help Tabs (Left / Right)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
-                    Span::styled(" 1 - 5       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                    Span::styled("Switch directly to Help Tabs 1 through 5", Style::default().fg(Color::Rgb(169, 177, 214))),
+                    Span::styled(" 1 - 8       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Switch directly to Help Tabs 1 through 8", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
                     Span::styled(" j / k       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -3153,11 +3412,11 @@ fn ui(f: &mut Frame, app: &mut App) {
                 ]),
                 Line::from(vec![
                     Span::styled(" Ctrl-s      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                    Span::styled("Export current note to HTML", Style::default().fg(Color::Rgb(169, 177, 214))),
+                    Span::styled("Save current note explicitly", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
-                    Span::styled(" Ctrl-w      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                    Span::styled("Compile entire wiki to Markdown files", Style::default().fg(Color::Rgb(169, 177, 214))),
+                    Span::styled(" Ctrl-e      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Open Export Menu (HTML / Markdown)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(""),
                 Line::from(vec![Span::styled("── Wiki Map Panel (focused) ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
@@ -3414,6 +3673,138 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled(" mp                 ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                     Span::styled("1.67262192369e-27 kg (Proton mass)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
+                Line::from(vec![
+                    Span::styled(" inf                ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Infinity (mathematical constant)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            5 => vec![
+                Line::from(vec![Span::styled("── Implemented Markdown Formatting ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" # Heading 1 ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Large header (supports # to ###### for H1 to H6)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" **bold**    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Bold text using double asterisks/underscores", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" *italic*    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Italic text using single asterisks/underscores", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" ~~strike~~  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Strikethrough text using double tildes", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" > quote     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Blockquote format for emphasized paragraphs", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" ---         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Horizontal rule/divider (three hyphens or asterisks)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" - list / 1. ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Bullet lists (-/*) and ordered numbered lists", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" - [ ] todo  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Interactive task list item (press 't' to toggle)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" [[Link]]    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Wiki-style link to navigate/create pages (press Enter)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            6 => vec![
+                Line::from(vec![Span::styled("── Implemented Vim Motions & Editing ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" h / j / k / l ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Move cursor Left, Down, Up, Right", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" w / b / e     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Move forward/backward word, or to word end", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" 0 / ^ / $     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Move to line start, first non-blank, or line end", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" { / }         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Move cursor paragraph backward / forward", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Ctrl-u / d    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Scroll cursor half page Up / Down", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" i / a         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Enter Insert Mode before / after cursor", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" I / A         ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Insert at first non-blank / Append at end of line", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" v             ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Enter Visual Mode to select and edit text", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" x             ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Delete character under cursor", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" r <char>      ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Replace character under cursor with <char>", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" ~             ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Toggle character casing (Normal/Visual modes)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" dd / dw / d$  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Delete line, delete word, or delete to line end", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" cc / cw / C   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Change (delete and insert) line, word, or to line end", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" u / Ctrl-r    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Undo last change / Redo change", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            7 => vec![
+                Line::from(vec![Span::styled("── About calki ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(" Author:     ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Jessica Gurchiek (kemika / kemika180)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Version:    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" License:    ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("GPL-3.0-only", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" Repository: ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("https://github.com/kemika180/calki", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(" calki is a terminal-based Markdown note editor and interactive math sheet", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" calculator with local wiki-style link navigation, designed for fast and", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" efficient mathematical notebook keeping.", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
             ],
             _ => Vec::new(),
         };
@@ -3483,12 +3874,18 @@ fn ui(f: &mut Frame, app: &mut App) {
             .bg(Color::Rgb(22, 22, 30))
             .title(Span::styled(" Update Available ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()));
 
+        let version_span = if let Some(ref version) = app.update_available {
+            Span::styled(format!(" (v{}) is available on crates.io!", version), Style::default().fg(text_fg_color))
+        } else {
+            Span::styled(" is available on crates.io!", Style::default().fg(text_fg_color))
+        };
+
         let text = vec![
             Line::from(""),
             Line::from(vec![
                 Span::styled(" A new version of ", Style::default().fg(text_fg_color)),
                 Span::styled("calki", Style::default().bold().fg(Color::Rgb(187, 154, 247))),
-                Span::styled(" is available on GitHub!", Style::default().fg(text_fg_color)),
+                version_span,
             ]).centered(),
             Line::from(""),
             Line::from(vec![
@@ -3496,6 +3893,42 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Span::styled("Ignore this update  ", Style::default().fg(text_fg_color)),
                 Span::styled("  [any other key] ", Style::default().fg(Color::Rgb(255, 158, 100)).bold()),
                 Span::styled("Dismiss  ", Style::default().fg(text_fg_color)),
+            ]).centered(),
+        ];
+
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+        f.render_widget(Clear, area);
+        f.render_widget(paragraph, area);
+    }
+
+    // Export menu popup
+    if app.show_export_menu {
+        let area = centered_rect(65, 30, f.area());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(Color::Rgb(187, 154, 247))) // Purple border for export
+            .bg(Color::Rgb(22, 22, 30))
+            .title(Span::styled(" Export Menu ", Style::default().fg(Color::Rgb(187, 154, 247)).bold()));
+
+        let text = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Choose an export option:", Style::default().fg(text_fg_color)),
+            ]).centered(),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  [1] ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                Span::styled("Export current note to HTML", Style::default().fg(text_fg_color)),
+            ]).centered(),
+            Line::from(vec![
+                Span::styled("  [2] ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                Span::styled("Compile entire wiki to Markdown", Style::default().fg(text_fg_color)),
+            ]).centered(),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  [Esc] ", Style::default().fg(Color::Rgb(255, 158, 100)).bold()),
+                Span::styled("Cancel", Style::default().fg(text_fg_color)),
             ]).centered(),
         ];
 
@@ -4091,6 +4524,7 @@ mod main_tests {
             focused_panel: "Variables".to_string(),
             left_panel_open: false,
             right_panel_open: true,
+            history_stack: vec![],
         };
         let serialized = serde_json::to_string(&state).unwrap();
         let deserialized: SessionState = serde_json::from_str(&serialized).unwrap();
@@ -4268,8 +4702,23 @@ mod main_tests {
         // Col 45 is inside https://rust-lang.org
         assert!(matches!(get_any_link_under_cursor(line, 45), Some(LinkType::RawUrl(url)) if url == "https://rust-lang.org"));
         
-        // Col 0 is outside any link
+        // Col 0 is outside any link (6 characters away from [Google] which starts at Col 6)
         assert_eq!(get_any_link_under_cursor(line, 0), None);
+
+        // Tolerance check: starts at Col 6. Col 3 is 3 characters away, should match due to tolerance.
+        assert!(matches!(get_any_link_under_cursor(line, 3), Some(LinkType::Markdown(url)) if url == "https://google.com"));
+
+        // Col 2 is 4 characters away, should NOT match.
+        assert_eq!(get_any_link_under_cursor(line, 2), None);
+
+        // Wiki Link tolerance checking
+        let wiki_line = "See [[My Page]] for info.";
+        // [[My Page]] is at index 4 to 14.
+        assert!(matches!(get_any_link_under_cursor(wiki_line, 8), Some(LinkType::Wiki(name)) if name == "My Page"));
+        // Col 1 is 3 characters away from index 4. Should match.
+        assert!(matches!(get_any_link_under_cursor(wiki_line, 1), Some(LinkType::Wiki(name)) if name == "My Page"));
+        // Col 0 is 4 characters away from index 4. Should NOT match.
+        assert_eq!(get_any_link_under_cursor(wiki_line, 0), None);
     }
 
     #[test]
@@ -4681,6 +5130,85 @@ mod main_tests {
     }
 
     #[test]
+    fn test_navigation_history_fallback() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_history");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        let home_path = wiki_root.join("home.md");
+        let other_path = wiki_root.join("other.md");
+        std::fs::write(&other_path, "# Other Note\n").unwrap();
+
+        // Load other note first
+        app.load_note(other_path.clone()).unwrap();
+        assert_eq!(app.active_path, other_path);
+        assert!(app.history_stack.is_empty());
+
+        // Call go_back() with empty history stack: should fall back to home.md
+        let res = app.go_back();
+        assert!(res);
+        assert_eq!(app.active_path, home_path);
+
+        // Call go_back() when already on home_path: should return false
+        let res2 = app.go_back();
+        assert!(!res2);
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_is_newer_version() {
+        assert!(is_newer_version("0.3.0", "0.3.1"));
+        assert!(is_newer_version("0.3.0", "0.4.0"));
+        assert!(is_newer_version("0.3.0", "1.0.0"));
+        assert!(!is_newer_version("0.3.0", "0.3.0"));
+        assert!(!is_newer_version("0.3.0", "0.2.9"));
+        assert!(!is_newer_version("0.3.0", "0.2.0"));
+    }
+
+    #[test]
+    fn test_normal_mode_edit_recalculation() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_temp_normal_recalc");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.editor_state = EditorState::new(edtui::Lines::from("a = 10\na + 5 => 15"));
+        app.editor_state.mode = EditorMode::Normal;
+        app.re_evaluate_calculations();
+        assert_eq!(app.variables_cache.len(), 1);
+        assert_eq!(app.variables_cache[0], ("a".to_string(), "10".to_string()));
+
+        // Simulate deleting a character in Normal Mode using key handler ('x' key)
+        app.editor_state.cursor = edtui::Index2::new(0, 0); // over 'a'
+        
+        let lines_before = Some(app.editor_state.lines.clone());
+        
+        // Process key 'x'
+        app.editor_event_handler.on_key_event(
+            crossterm::event::KeyEvent::new(KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE),
+            &mut app.editor_state
+        );
+        
+        // In the run_app logic, it detects that the lines changed in Normal Mode:
+        if let Some(ref before) = lines_before {
+            if before != &app.editor_state.lines {
+                app.re_evaluate_calculations();
+            }
+        }
+
+        // The variable 'a' is deleted, so calculations should be re-evaluated and variable cache updated
+        assert!(app.variables_cache.is_empty());
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
     fn test_compute_syntax_highlights_markdown() {
         let lines = vec![
             "# h1".chars().collect::<Vec<char>>(),
@@ -4754,6 +5282,60 @@ mod main_tests {
         // Row 12: Crossed out ("~~strikethrough~~" at [8, 24] is crossed out)
         let strike_hl = highlights.iter().find(|h| h.start.row == 12 && h.start.col == 8 && h.end.col == 24).unwrap();
         assert_eq!(strike_hl.style, Style::default().fg(Color::Rgb(169, 177, 214)).crossed_out());
+    }
+
+    #[test]
+    fn test_compute_syntax_highlights_new_formatting() {
+        let lines = vec![
+            "my_func(123) => 123".chars().collect::<Vec<char>>(),
+            "`45.6`".chars().collect::<Vec<char>>(),
+            "[(https://google.com)]".chars().collect::<Vec<char>>(),
+            "[Google](https://google.com)".chars().collect::<Vec<char>>(),
+            "[[Google](https://google.com)]".chars().collect::<Vec<char>>(),
+            "https://google.com".chars().collect::<Vec<char>>(),
+        ];
+        let highlights = App::compute_syntax_highlights(&lines, None);
+
+        let purple = Color::Rgb(187, 154, 247);
+        let blue = Color::Rgb(122, 162, 247);
+        let teal = Color::Rgb(115, 218, 202);
+
+        // Row 0: "my_func(123) => 123"
+        // "my_func" is at col 0..=6. Should be blue and bold.
+        let hl_func = highlights.iter().find(|h| h.start.row == 0 && h.start.col == 0 && h.end.col == 6).unwrap();
+        assert_eq!(hl_func.style, Style::default().fg(blue).bold());
+
+        // "123" (inside) is at col 8..=10. Should be Teal.
+        let hl_num1 = highlights.iter().find(|h| h.start.row == 0 && h.start.col == 8 && h.end.col == 10).unwrap();
+        assert_eq!(hl_num1.style.fg, Some(teal));
+
+        // "(" is at col 7, ")" is at col 11. Should be Orange.
+        let orange = Color::Rgb(255, 158, 100);
+        let hl_paren1 = highlights.iter().find(|h| h.start.row == 0 && h.start.col == 7 && h.end.col == 7).unwrap();
+        assert_eq!(hl_paren1.style.fg, Some(orange));
+        let hl_paren2 = highlights.iter().find(|h| h.start.row == 0 && h.start.col == 11 && h.end.col == 11).unwrap();
+        assert_eq!(hl_paren2.style.fg, Some(orange));
+
+        // Row 1: "`45.6`"
+        // "45.6" is at col 1..=4. Should be Teal.
+        let hl_num2 = highlights.iter().find(|h| h.start.row == 1 && h.start.col == 1 && h.end.col == 4).unwrap();
+        assert_eq!(hl_num2.style.fg, Some(teal));
+
+        // Row 2: "[(https://google.com)]" - should be purple & underlined
+        let hl_link1 = highlights.iter().find(|h| h.start.row == 2 && h.start.col == 0 && h.end.col == 21).unwrap();
+        assert_eq!(hl_link1.style, Style::default().fg(purple).underlined());
+
+        // Row 3: "[Google](https://google.com)" - should be purple & underlined
+        let hl_link2 = highlights.iter().find(|h| h.start.row == 3 && h.start.col == 0 && h.end.col == 27).unwrap();
+        assert_eq!(hl_link2.style, Style::default().fg(purple).underlined());
+
+        // Row 4: "[[Google](https://google.com)]" - should be purple & underlined
+        let hl_link3 = highlights.iter().find(|h| h.start.row == 4 && h.start.col == 0 && h.end.col == 28).unwrap();
+        assert_eq!(hl_link3.style, Style::default().fg(purple).underlined());
+
+        // Row 5: "https://google.com" - should be purple & underlined
+        let hl_link4 = highlights.iter().find(|h| h.start.row == 5 && h.start.col == 0 && h.end.col == 17).unwrap();
+        assert_eq!(hl_link4.style, Style::default().fg(purple).underlined());
     }
 
     #[test]
@@ -4910,8 +5492,26 @@ mod main_tests {
         assert!(app.show_help);
         assert_eq!(app.help_tab_idx, 0);
 
-        // Press '6' should not close modal and do nothing
+        // Press '6' should switch to tab 5
         let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('6'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 5);
+
+        // Press '7' should switch to tab 6
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('7'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 6);
+
+        // Press '8' should switch to tab 7
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('8'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 7);
+
+        // Press '9' should not close modal and do nothing
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('9'), crossterm::event::KeyModifiers::NONE));
         assert!(handled);
         assert!(app.show_help);
 
@@ -4997,6 +5597,26 @@ mod main_tests {
         assert!(md_content.contains("# calki Compiled Wiki"));
 
         // Clean up
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn test_export_menu_dialog() {
+        let wiki_root = std::env::current_dir().unwrap().join("test_wiki_export_menu");
+        if wiki_root.exists() {
+            let _ = std::fs::remove_dir_all(&wiki_root);
+        }
+        std::fs::create_dir_all(&wiki_root).unwrap();
+
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.show_export_menu = false;
+
+        app.show_export_menu = true;
+        assert!(app.show_export_menu);
+
+        app.show_export_menu = false;
+        assert!(!app.show_export_menu);
+
         let _ = std::fs::remove_dir_all(&wiki_root);
     }
 

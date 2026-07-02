@@ -897,6 +897,13 @@ impl Default for Context {
                 unit: None,
             },
         );
+        variables.insert(
+            "inf".to_string(),
+            Quantity { is_bool: false, list: None,
+                value: std::f64::INFINITY,
+                unit: None,
+            },
+        );
 
         // Common physical and mathematical constants
         let constants = vec![
@@ -3093,6 +3100,11 @@ res_j =>
         let expr_hbar = parse_line("hbar =>").unwrap_expr();
         let res_hbar = eval_expr(&expr_hbar, &mut ctx).unwrap();
         assert_eq!(res_hbar.value, 1.054571817e-34);
+
+        // 5. Test inf
+        let expr_inf = parse_line("inf =>").unwrap_expr();
+        let res_inf = eval_expr(&expr_inf, &mut ctx).unwrap();
+        assert!(res_inf.value.is_infinite());
     }
 
     #[test]

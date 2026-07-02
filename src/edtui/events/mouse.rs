@@ -89,36 +89,30 @@ impl MouseEventHandler {
     }
 
     fn handle_scroll_up(state: &mut EditorState) {
-        state.view.viewport.y = state.view.viewport.y.saturating_sub(SCROLL_LINES);
-        Self::clamp_cursor_to_viewport(state);
+        if state.view.viewport.y > 0 {
+            state.view.viewport.y -= 1;
+            state.cursor.row = state.cursor.row.saturating_sub(1);
+        } else {
+            state.cursor.row = state.cursor.row.saturating_sub(1);
+        }
+        state.clamp_column();
+        if state.mode == EditorMode::Visual {
+            set_selection(&mut state.selection, state.cursor);
+        }
     }
 
     fn handle_scroll_down(state: &mut EditorState) {
         let last_visible_row = state.view.viewport.y + state.view.num_rows.saturating_sub(1);
-        if last_visible_row >= state.lines.last_row_index() {
-            return;
+        let last_row = state.lines.last_row_index();
+        if last_visible_row < last_row {
+            state.view.viewport.y += 1;
+            state.cursor.row = (state.cursor.row + 1).min(last_row);
+        } else {
+            state.cursor.row = (state.cursor.row + 1).min(last_row);
         }
-        let max_viewport_y = state.lines.len().saturating_sub(1);
-        state.view.viewport.y = (state.view.viewport.y + SCROLL_LINES).min(max_viewport_y);
-        Self::clamp_cursor_to_viewport(state);
-    }
-
-    fn clamp_cursor_to_viewport(state: &mut EditorState) {
-        let viewport_y = state.view.viewport.y;
-        let viewport_height = state.view.num_rows;
-
-        if viewport_height == 0 {
-            return;
-        }
-
-        let viewport_bottom = viewport_y + viewport_height.saturating_sub(1);
-
-        if state.cursor.row < viewport_y {
-            state.cursor.row = viewport_y;
-            state.clamp_column();
-        } else if state.cursor.row > viewport_bottom {
-            state.cursor.row = viewport_bottom.min(state.lines.last_row_index());
-            state.clamp_column();
+        state.clamp_column();
+        if state.mode == EditorMode::Visual {
+            set_selection(&mut state.selection, state.cursor);
         }
     }
 
@@ -264,5 +258,44 @@ impl MousePosition {
             row: row.into(),
             col: col.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::edtui::Lines;
+
+    #[test]
+    fn test_mouse_scrolling_preserves_relative_cursor_row() {
+        let mut state = EditorState::default();
+        state.lines = Lines::from("line1\nline2\nline3\nline4\nline5\nline6");
+        // Set viewport to show 3 lines: line2, line3, line4.
+        state.view.num_rows = 3;
+        state.view.viewport.y = 1; // line2
+        state.cursor.row = 2;      // line3 (visual row 1)
+
+        // Set screen area so bounds checks pass
+        state.view.screen_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+        // Scroll down
+        MouseEventHandler::on_event(MouseEvent::ScrollDown(MousePosition::new(0, 0)), &mut state);
+        assert_eq!(state.view.viewport.y, 2);
+        assert_eq!(state.cursor.row, 3); // still visual row 1 relative to viewport
+
+        // Scroll up
+        MouseEventHandler::on_event(MouseEvent::ScrollUp(MousePosition::new(0, 0)), &mut state);
+        assert_eq!(state.view.viewport.y, 1);
+        assert_eq!(state.cursor.row, 2);
+
+        // Scroll up again
+        MouseEventHandler::on_event(MouseEvent::ScrollUp(MousePosition::new(0, 0)), &mut state);
+        assert_eq!(state.view.viewport.y, 0);
+        assert_eq!(state.cursor.row, 1);
+
+        // Scroll up again (cannot scroll viewport since viewport.y is 0, so cursor moves up)
+        MouseEventHandler::on_event(MouseEvent::ScrollUp(MousePosition::new(0, 0)), &mut state);
+        assert_eq!(state.view.viewport.y, 0);
+        assert_eq!(state.cursor.row, 0);
     }
 }

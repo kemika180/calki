@@ -83,20 +83,26 @@ impl KeyInput {
     /// where these require AltGr (e.g., German, Swiss German).
     #[must_use]
     pub fn normalize_altgr(self) -> Self {
-        if let KeyCode::Char(c) = self.key {
+        let mut key_input = self;
+        if let KeyCode::Char(c) = key_input.key {
+            // Strip shift from any non-alphabetic characters (since shift is redundant/incorrect for them)
+            if !c.is_alphabetic() {
+                key_input.modifiers = key_input.modifiers.without_shift();
+            }
+
             // AltGr is typically reported as Ctrl+Alt on Windows/some terminals
             // Some terminals may report it as just Alt
-            let has_altgr_modifiers = self.modifiers.is_ctrl_alt() || self.modifiers.is_alt_only();
+            let has_altgr_modifiers = key_input.modifiers.is_ctrl_alt() || key_input.modifiers.is_alt_only();
 
             if has_altgr_modifiers && !c.is_ascii_alphabetic() {
                 return Self {
-                    key: self.key,
-                    modifiers: self.modifiers.without_ctrl_alt(),
+                    key: key_input.key,
+                    modifiers: key_input.modifiers.without_ctrl_alt(),
                 };
             }
         }
 
-        self
+        key_input
     }
 }
 
@@ -202,6 +208,16 @@ impl Modifiers {
             shift: self.shift,
         }
     }
+
+    /// Returns modifiers with Shift stripped.
+    #[must_use]
+    pub(crate) fn without_shift(&self) -> Self {
+        Self {
+            ctrl: self.ctrl,
+            alt: self.alt,
+            shift: false,
+        }
+    }
 }
 
 impl From<crossterm::event::KeyModifiers> for Modifiers {
@@ -243,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_normalize_altgr_preserves_shift() {
-        // Ctrl+Alt+Shift+{ should normalize to Shift+{
+        // Ctrl+Alt+Shift+{ should normalize to just { (no modifiers)
         let mods = Modifiers {
             ctrl: true,
             alt: true,
@@ -252,7 +268,7 @@ mod tests {
         let input = KeyInput::with_modifiers('{', mods);
         let normalized = input.normalize_altgr();
         assert_eq!(normalized.key, KeyCode::Char('{'));
-        assert_eq!(normalized.modifiers, Modifiers::SHIFT);
+        assert_eq!(normalized.modifiers, Modifiers::NONE);
     }
 
     #[test]
