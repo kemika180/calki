@@ -85,35 +85,41 @@ impl ClipboardTrait for SystemClipboard {
     fn set_text(&mut self, text: String) {
         self.internal = text.clone();
         
-        // 1. Try local arboard system clipboard
-        if let Some(ref mut clip) = self.arboard_clip {
-            let _ = clip.set_text(text.clone());
+        #[cfg(not(test))]
+        {
+            // 1. Try local arboard system clipboard
+            if let Some(ref mut clip) = self.arboard_clip {
+                let _ = clip.set_text(text.clone());
+            }
+            
+            // 2. Write to terminal using OSC 52 escape sequence
+            let b64 = encode_base64(text.as_bytes());
+            let osc52 = format!("\x1b]52;c;{}\x07", b64);
+            
+            // If in tmux, wrap it in tmux passthrough
+            let is_tmux = std::env::var("TMUX").is_ok();
+            let payload = if is_tmux {
+                format!("\x1bPtmux;\x1b\x1b]52;c;{}\x07\x1b\\", b64)
+            } else {
+                osc52
+            };
+            
+            let mut stdout = std::io::stdout();
+            let _ = stdout.write_all(payload.as_bytes());
+            let _ = stdout.flush();
         }
-        
-        // 2. Write to terminal using OSC 52 escape sequence
-        let b64 = encode_base64(text.as_bytes());
-        let osc52 = format!("\x1b]52;c;{}\x07", b64);
-        
-        // If in tmux, wrap it in tmux passthrough
-        let is_tmux = std::env::var("TMUX").is_ok();
-        let payload = if is_tmux {
-            format!("\x1bPtmux;\x1b\x1b]52;c;{}\x07\x1b\\", b64)
-        } else {
-            osc52
-        };
-        
-        let mut stdout = std::io::stdout();
-        let _ = stdout.write_all(payload.as_bytes());
-        let _ = stdout.flush();
     }
 
     fn get_text(&mut self) -> String {
-        // 1. Try local arboard system clipboard
-        if let Some(ref mut clip) = self.arboard_clip
-            && let Ok(txt) = clip.get_text() {
-                self.internal = txt;
-                return self.internal.clone();
-            }
+        #[cfg(not(test))]
+        {
+            // 1. Try local arboard system clipboard
+            if let Some(ref mut clip) = self.arboard_clip
+                && let Ok(txt) = clip.get_text() {
+                    self.internal = txt;
+                    return self.internal.clone();
+                }
+        }
         // Fall back to internal clipboard
         self.internal.clone()
     }
@@ -3568,20 +3574,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled(" solve(eq, x)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                     Span::styled("Solve linear equation eq for x (e.g. solve(2*x + 5 == 15, x) => 5)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
-                Line::from(""),
-                Line::from(vec![Span::styled("── Programming & Logic ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-                Line::from(vec![
-                    Span::styled(" Scoped Blocks     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                    Span::styled("{ local_var = expr; expr }", Style::default().fg(Color::Rgb(169, 177, 214))),
-                ]),
-                Line::from(vec![
-                    Span::styled(" if/else Expression", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                    Span::styled("if cond { expr } else { expr }", Style::default().fg(Color::Rgb(169, 177, 214))),
-                ]),
-                Line::from(vec![
-                    Span::styled(" switch Statement  ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                    Span::styled("switch val { pattern => expr; default => expr }", Style::default().fg(Color::Rgb(169, 177, 214))),
-                ]),
+
                 Line::from(""),
                 Line::from(vec![Span::styled("── Radix Notation & Bitwise ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
                 Line::from(vec![
@@ -3598,24 +3591,14 @@ fn ui(f: &mut Frame, app: &mut App) {
                 ]),
             ],
             3 => vec![
-                Line::from(vec![Span::styled("── List Functional Operations ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![Span::styled("── Statistics & Aggregations ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
                 Line::from(vec![
-                    Span::styled(" map(expr, list)    ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                    Span::styled("Transforms list elements (e.g. map(x^2, [1, 2, 3]) => [1, 4, 9])", Style::default().fg(Color::Rgb(169, 177, 214))),
-                ]),
-                Line::from(vec![
-                    Span::styled(" reduce(expr, list) ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                    Span::styled("Accumulates list (e.g. reduce(x + y, [1, 2, 3]) => 6)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                    Span::styled(" sum(x, ...)        ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
+                    Span::styled("Sum of elements / arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
                     Span::styled(" prod(x, ...)       ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
                     Span::styled("Product of list elements / arguments (combines units)", Style::default().fg(Color::Rgb(169, 177, 214))),
-                ]),
-                Line::from(""),
-                Line::from(vec![Span::styled("── Statistics ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
-                Line::from(vec![
-                    Span::styled(" sum(x, ...)        ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
-                    Span::styled("Sum of elements / arguments", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
                     Span::styled(" mean / average     ", Style::default().fg(Color::Rgb(125, 207, 255)).bold()),
