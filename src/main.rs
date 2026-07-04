@@ -700,6 +700,8 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             let in_block;
             let mut in_quote = false;
             let mut prev_char = None;
+            let mut has_lbrace = false;
+            let mut has_rbrace = false;
             for &c in line {
                 if c == '"' && prev_char != Some('\\') {
                     in_quote = !in_quote;
@@ -707,13 +709,15 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                 if !in_quote {
                     if c == '{' {
                         line_braces += 1;
+                        has_lbrace = true;
                     } else if c == '}' {
                         line_braces -= 1;
+                        has_rbrace = true;
                     }
                 }
                 prev_char = Some(c);
             }
-            in_block = brace_level > 0 || line.contains(&'{') || line.contains(&'}');
+            in_block = brace_level > 0 || has_lbrace || has_rbrace;
 
             let mut is_math_line = false;
             let mut backtick_ranges = Vec::new();
