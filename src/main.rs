@@ -598,6 +598,7 @@ impl App {
 
 fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: Option<&str>) -> Vec<edtui::Highlight> {
     let mut highlights = Vec::new();
+    let mut brace_level = 0;
 
     let mut defined_vars = std::collections::HashSet::new();
     for line in lines_vecs {
@@ -694,7 +695,26 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             is_special_line = true;
         }
 
+        let mut line_braces = 0;
         if !is_special_line {
+            let in_block;
+            let mut in_quote = false;
+            let mut prev_char = None;
+            for &c in line {
+                if c == '"' && prev_char != Some('\\') {
+                    in_quote = !in_quote;
+                }
+                if !in_quote {
+                    if c == '{' {
+                        line_braces += 1;
+                    } else if c == '}' {
+                        line_braces -= 1;
+                    }
+                }
+                prev_char = Some(c);
+            }
+            in_block = brace_level > 0 || line.contains(&'{') || line.contains(&'}');
+
             let mut is_math_line = false;
             let mut backtick_ranges = Vec::new();
 
@@ -809,6 +829,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                     for col in (arrow_pos + 2)..n {
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
                     }
+                    processed = true;
                 }
             } else if let Some(eq_pos) = eq_idx {
                 let lhs = &line[..eq_pos];
@@ -854,6 +875,14 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
                     }
                     has_main_assignment = true;
+                    processed = true;
+                }
+            }
+
+            if !processed && in_block {
+                is_math_line = true;
+                for col in 0..n {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
                 }
             }
 
@@ -1183,8 +1212,8 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                     }
                 }
             } else if let HighlightToken::Symbol { start, end, ch } = &tokens[i] {
-                // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >, (, ), ,, [, ]
-                let mut is_operator = matches!(ch, '+' | '-' | '*' | '/' | '^' | '&' | '|' | '!' | '=' | '<' | '>' | '(' | ')' | ',' | '[' | ']');
+                // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >, (, ), {, }, ;, ,, [, ]
+                let mut is_operator = matches!(ch, '+' | '-' | '*' | '/' | '^' | '&' | '|' | '!' | '=' | '<' | '>' | '(' | ')' | '{' | '}' | ',' | ';' | '[' | ']');
                 if *ch == '%' {
                     // Only highlight '%' as an operator if it's infix (modulo)
                     let mut is_infix = false;
@@ -1463,6 +1492,10 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                     line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
                 }
             }
+        }
+
+        if !is_special_line {
+            brace_level = std::cmp::max(0, brace_level + line_braces);
         }
 
         // Convert the style array to edtui::Highlight ranges
@@ -5368,12 +5401,17 @@ mod main_tests {
             "[Google](https://google.com)".chars().collect::<Vec<char>>(),
             "[[Google](https://google.com)]".chars().collect::<Vec<char>>(),
             "https://google.com".chars().collect::<Vec<char>>(),
+            "for x in range(1, 11) {".chars().collect::<Vec<char>>(),
+            "    sum = sum + x;".chars().collect::<Vec<char>>(),
+            "    sum;".chars().collect::<Vec<char>>(),
+            "} => 55".chars().collect::<Vec<char>>(),
         ];
         let highlights = App::compute_syntax_highlights(&lines, None);
 
         let purple = Color::Rgb(187, 154, 247);
         let blue = Color::Rgb(122, 162, 247);
         let teal = Color::Rgb(115, 218, 202);
+        let orange = Color::Rgb(255, 158, 100);
 
         // Row 0: "my_func(123) => 123"
         // "my_func" is at col 0..=6. Should be blue and bold.
@@ -5385,7 +5423,6 @@ mod main_tests {
         assert_eq!(hl_num1.style.fg, Some(teal));
 
         // "(" is at col 7, ")" is at col 11. Should be Orange.
-        let orange = Color::Rgb(255, 158, 100);
         let hl_paren1 = highlights.iter().find(|h| h.start.row == 0 && h.start.col == 7 && h.end.col == 7).unwrap();
         assert_eq!(hl_paren1.style.fg, Some(orange));
         let hl_paren2 = highlights.iter().find(|h| h.start.row == 0 && h.start.col == 11 && h.end.col == 11).unwrap();
@@ -5411,6 +5448,35 @@ mod main_tests {
         // Row 5: "https://google.com" - should be purple & underlined
         let hl_link4 = highlights.iter().find(|h| h.start.row == 5 && h.start.col == 0 && h.end.col == 17).unwrap();
         assert_eq!(hl_link4.style, Style::default().fg(purple).underlined());
+
+        // Row 6: "for x in range(1, 11) {"
+        // "for" at col 0..=2 should be bold orange
+        let hl_for = highlights.iter().find(|h| h.start.row == 6 && h.start.col == 0 && h.end.col == 2).unwrap();
+        assert_eq!(hl_for.style, Style::default().fg(orange).bold());
+        // "in" at col 6..=7 should be bold orange
+        let hl_in = highlights.iter().find(|h| h.start.row == 6 && h.start.col == 6 && h.end.col == 7).unwrap();
+        assert_eq!(hl_in.style, Style::default().fg(orange).bold());
+        // "range" at col 9..=13 should be bold blue
+        let hl_range = highlights.iter().find(|h| h.start.row == 6 && h.start.col == 9 && h.end.col == 13).unwrap();
+        assert_eq!(hl_range.style, Style::default().fg(blue).bold());
+
+        // Row 7: "    sum = sum + x;"
+        // "=" at col 8 should be orange
+        let hl_eq = highlights.iter().find(|h| h.start.row == 7 && h.start.col == 8 && h.end.col == 8).unwrap();
+        assert_eq!(hl_eq.style.fg, Some(orange));
+
+        // Row 8: "    sum;"
+        // ";" at col 7 should be orange
+        let hl_semi = highlights.iter().find(|h| h.start.row == 8 && h.start.col == 7 && h.end.col == 7).unwrap();
+        assert_eq!(hl_semi.style.fg, Some(orange));
+
+        // Row 9: "} => 55"
+        // "}" at col 0 should be orange
+        let hl_rbrace = highlights.iter().find(|h| h.start.row == 9 && h.start.col == 0 && h.end.col == 0).unwrap();
+        assert_eq!(hl_rbrace.style.fg, Some(orange));
+        // "=>" at col 2..=3 should be bold orange
+        let hl_arrow = highlights.iter().find(|h| h.start.row == 9 && h.start.col == 2 && h.end.col == 3).unwrap();
+        assert_eq!(hl_arrow.style, Style::default().fg(orange).bold());
     }
 
     #[test]
