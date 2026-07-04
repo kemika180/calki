@@ -29,15 +29,18 @@ use crate::edtui::actions::Chainable;
 use crate::edtui::events::{KeyEventRegister, KeyInput};
 use crate::edtui::clipboard::ClipboardTrait;
 use serde::{Deserialize, Serialize};
+#[cfg(not(test))]
 use std::io::Write;
 
 struct SystemClipboard {
+    #[allow(dead_code)]
     arboard_clip: Option<arboard::Clipboard>,
     internal: String,
 }
 
 impl SystemClipboard {
     fn new() -> Self {
+        #[allow(unused_mut, unused_variables)]
         let arboard_clip = arboard::Clipboard::new().ok();
         Self {
             arboard_clip,
@@ -46,6 +49,7 @@ impl SystemClipboard {
     }
 }
 
+#[cfg(not(test))]
 fn encode_base64(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
