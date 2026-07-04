@@ -719,6 +719,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
             }
 
             let mut eq_idx = None;
+            let mut has_main_assignment = false;
             let mut search_idx = 0;
             while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
                 if !is_in_backticks(pos) {
@@ -783,6 +784,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                                 line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
                             }
                             processed = true;
+                            has_main_assignment = true;
                         }
                     }
                 }
@@ -845,6 +847,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                     for col in (eq_pos + 1)..n {
                         line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
                     }
+                    has_main_assignment = true;
                 }
             }
 
@@ -1135,6 +1138,27 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                             }
                         }
                     }
+                } else {
+                    let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
+                        *start >= *r.start() && *end <= *r.end()
+                    });
+                    if in_math_context {
+                        let overlaps_link = link_ranges.iter().any(|r| {
+                            (*start >= *r.start() && *start <= *r.end()) || (*end >= *r.start() && *end <= *r.end())
+                        });
+                        if !overlaps_link {
+                            for col in *start..=*end {
+                                if col < n {
+                                    let italic = line_styles[col].map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC)).unwrap_or(false);
+                                    let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                                    if italic {
+                                        style = style.italic();
+                                    }
+                                    line_styles[col] = Some(style);
+                                }
+                            }
+                        }
+                    }
                 }
             } else if let HighlightToken::In { start, end } = &tokens[i] {
                 let in_math_context = is_math_line || backtick_ranges.iter().any(|r| {
@@ -1175,7 +1199,7 @@ fn compute_syntax_highlights<T: AsRef<[char]>>(lines_vecs: &[T], selected_var: O
                 }
 
                 if is_operator {
-                    if *ch == '=' && eq_idx == Some(*start) {
+                    if *ch == '=' && has_main_assignment && eq_idx == Some(*start) {
                         // Skip main assignment operator (already styled as Bold Orange)
                         continue;
                     }
