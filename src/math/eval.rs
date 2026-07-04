@@ -260,6 +260,33 @@ fn simplify(expr: &Expr) -> Expr {
             let s_args = args.iter().map(simplify).collect();
             Expr::FnCall(name.clone(), s_args)
         }
+        Expr::For { var, iterable, body } => {
+            Expr::For {
+                var: var.clone(),
+                iterable: Box::new(simplify(iterable)),
+                body: Box::new(simplify(body)),
+            }
+        }
+        Expr::While { cond, body } => {
+            Expr::While {
+                cond: Box::new(simplify(cond)),
+                body: Box::new(simplify(body)),
+            }
+        }
+        Expr::Block(exprs) => {
+            let s_exprs = exprs.iter().map(simplify).collect();
+            Expr::Block(s_exprs)
+        }
+        Expr::IfElse { cond, then_expr, else_expr } => {
+            Expr::IfElse {
+                cond: Box::new(simplify(cond)),
+                then_expr: Box::new(simplify(then_expr)),
+                else_expr: Box::new(simplify(else_expr)),
+            }
+        }
+        Expr::LocalAssign(name, val_expr) => {
+            Expr::LocalAssign(name.clone(), Box::new(simplify(val_expr)))
+        }
         _ => expr.clone(),
     }
 }
@@ -394,6 +421,12 @@ pub(crate) fn expr_to_string(expr: &Expr) -> String {
                 cases_strs.push(format!("default => {}", expr_to_string(def)));
             }
             format!("switch {} {{\n  {}\n}}", expr_to_string(val), cases_strs.join("\n  "))
+        }
+        Expr::For { var, iterable, body } => {
+            format!("for {} in {} {}", var, expr_to_string(iterable), expr_to_string(body))
+        }
+        Expr::While { cond, body } => {
+            format!("while {} {}", expr_to_string(cond), expr_to_string(body))
         }
         Expr::StringLiteral(val) => {
             format!("\"{}\"", val)
@@ -543,6 +576,12 @@ fn expr_contains_var(expr: &Expr, var_name: &str) -> bool {
             expr_contains_var(val, var_name) || 
             cases.iter().any(|(pat, body)| expr_contains_var(pat, var_name) || expr_contains_var(body, var_name)) ||
             default_case.as_ref().map_or(false, |def| expr_contains_var(def, var_name))
+        }
+        Expr::For { var, iterable, body } => {
+            var == var_name || expr_contains_var(iterable, var_name) || expr_contains_var(body, var_name)
+        }
+        Expr::While { cond, body } => {
+            expr_contains_var(cond, var_name) || expr_contains_var(body, var_name)
         }
     }
 }
@@ -988,12 +1027,67 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             })
         }
         Expr::Block(exprs) => {
-            let original_variables = ctx.variables.clone();
+            let original_keys: std::collections::HashSet<String> = ctx.variables.keys().cloned().collect();
             let mut last_val = Quantity::scalar(0.0, None);
             for expr in exprs {
                 last_val = eval_expr(expr, ctx)?;
             }
-            ctx.variables = original_variables;
+            ctx.variables.retain(|k, _| original_keys.contains(k));
+            Ok(last_val)
+        }
+        Expr::For { var, iterable, body } => {
+            let iterable_val = eval_expr(iterable, ctx)?;
+            let elements = match iterable_val.list {
+                Some(el) => el,
+                None => return Err(format!("Cannot iterate over non-list value: {}", expr_to_string(iterable))),
+            };
+
+            let max_iterations = 2000;
+            if elements.len() > max_iterations {
+                return Err(format!("Loop exceeds maximum iteration limit of {}", max_iterations));
+            }
+
+            let mut last_val = Quantity::scalar(0.0, None);
+            let original_loop_var = ctx.variables.get(var).cloned();
+
+            for element in elements {
+                ctx.variables.insert(var.clone(), element);
+                last_val = eval_expr(body, ctx)?;
+            }
+
+            if let Some(pv) = original_loop_var {
+                ctx.variables.insert(var.clone(), pv);
+            } else {
+                ctx.variables.remove(var);
+            }
+
+            Ok(last_val)
+        }
+        Expr::While { cond, body } => {
+            let mut last_val = Quantity::scalar(0.0, None);
+            let mut iterations = 0;
+            let max_iterations = 2000;
+
+            loop {
+                let cond_val = eval_expr(cond, ctx)?;
+                let is_true = if cond_val.is_bool {
+                    cond_val.value != 0.0
+                } else {
+                    return Err("Condition in while loop must be a boolean".to_string());
+                };
+
+                if !is_true {
+                    break;
+                }
+
+                iterations += 1;
+                if iterations > max_iterations {
+                    return Err(format!("While loop exceeded maximum iteration limit of {}", max_iterations));
+                }
+
+                last_val = eval_expr(body, ctx)?;
+            }
+
             Ok(last_val)
         }
         Expr::LocalAssign(name, val_expr) => {
@@ -1150,6 +1244,114 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     mapped_elements.push(res?);
                 }
                 return Ok(Quantity::list(mapped_elements));
+            }
+            if name == "filter" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'filter' expects 2 arguments".to_string());
+                }
+                let filter_expr = &args[0];
+                let list_qty = eval_expr(&args[1], ctx)?;
+                let elements = list_qty.list.as_ref().ok_or("Second argument to 'filter' must be a list")?;
+
+                let var_name = find_variable_in_expr(filter_expr).unwrap_or_else(|| "x".to_string());
+
+                let mut filtered_elements = Vec::new();
+                for el in elements {
+                    let prev_val = ctx.variables.insert(var_name.clone(), el.clone());
+                    let res = eval_expr(filter_expr, ctx);
+                    if let Some(pv) = prev_val {
+                        ctx.variables.insert(var_name.clone(), pv);
+                    } else {
+                        ctx.variables.remove(&var_name);
+                    }
+                    let res_qty = res?;
+                    let keep = if res_qty.is_bool {
+                        res_qty.value != 0.0
+                    } else {
+                        return Err("Filter condition expression must evaluate to a boolean".to_string());
+                    };
+                    if keep {
+                        filtered_elements.push(el.clone());
+                    }
+                }
+                return Ok(Quantity::list(filtered_elements));
+            }
+            if name == "any" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'any' expects 2 arguments".to_string());
+                }
+                let any_expr = &args[0];
+                let list_qty = eval_expr(&args[1], ctx)?;
+                let elements = list_qty.list.as_ref().ok_or("Second argument to 'any' must be a list")?;
+
+                let var_name = find_variable_in_expr(any_expr).unwrap_or_else(|| "x".to_string());
+
+                for el in elements {
+                    let prev_val = ctx.variables.insert(var_name.clone(), el.clone());
+                    let res = eval_expr(any_expr, ctx);
+                    if let Some(pv) = prev_val {
+                        ctx.variables.insert(var_name.clone(), pv);
+                    } else {
+                        ctx.variables.remove(&var_name);
+                    }
+                    let res_qty = res?;
+                    let is_true = if res_qty.is_bool {
+                        res_qty.value != 0.0
+                    } else {
+                        return Err("Condition expression in 'any' must evaluate to a boolean".to_string());
+                    };
+                    if is_true {
+                        return Ok(Quantity::boolean(true));
+                    }
+                }
+                return Ok(Quantity::boolean(false));
+            }
+            if name == "all" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'all' expects 2 arguments".to_string());
+                }
+                let all_expr = &args[0];
+                let list_qty = eval_expr(&args[1], ctx)?;
+                let elements = list_qty.list.as_ref().ok_or("Second argument to 'all' must be a list")?;
+
+                let var_name = find_variable_in_expr(all_expr).unwrap_or_else(|| "x".to_string());
+
+                for el in elements {
+                    let prev_val = ctx.variables.insert(var_name.clone(), el.clone());
+                    let res = eval_expr(all_expr, ctx);
+                    if let Some(pv) = prev_val {
+                        ctx.variables.insert(var_name.clone(), pv);
+                    } else {
+                        ctx.variables.remove(&var_name);
+                    }
+                    let res_qty = res?;
+                    let is_true = if res_qty.is_bool {
+                        res_qty.value != 0.0
+                    } else {
+                        return Err("Condition expression in 'all' must evaluate to a boolean".to_string());
+                    };
+                    if !is_true {
+                        return Ok(Quantity::boolean(false));
+                    }
+                }
+                return Ok(Quantity::boolean(true));
+            }
+            if name == "zip" {
+                if args.len() != 2 {
+                    return Err("Built-in function 'zip' expects 2 arguments".to_string());
+                }
+                let list1_qty = eval_expr(&args[0], ctx)?;
+                let list2_qty = eval_expr(&args[1], ctx)?;
+                let el1 = list1_qty.list.as_ref().ok_or("First argument to 'zip' must be a list")?;
+                let el2 = list2_qty.list.as_ref().ok_or("Second argument to 'zip' must be a list")?;
+
+                let min_len = std::cmp::min(el1.len(), el2.len());
+                let mut zipped = Vec::new();
+                for i in 0..min_len {
+                    let pair = vec![el1[i].clone(), el2[i].clone()];
+                    zipped.push(Quantity::list(pair));
+                }
+                return Ok(Quantity::list(zipped));
             }
             if name == "reduce" {
                 if args.len() != 2 {
@@ -2150,6 +2352,56 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                         unit: target_unit,
                     })
                 }
+                "range" => {
+                    if arg_vals.is_empty() || arg_vals.len() > 3 {
+                        return Err("Built-in function 'range' expects 1, 2, or 3 arguments".to_string());
+                    }
+                    let start;
+                    let end;
+                    let step;
+                    
+                    if arg_vals.len() == 1 {
+                        start = 0.0;
+                        end = arg_vals[0].value;
+                        step = 1.0;
+                    } else if arg_vals.len() == 2 {
+                        start = arg_vals[0].value;
+                        end = arg_vals[1].value;
+                        step = 1.0;
+                    } else {
+                        start = arg_vals[0].value;
+                        end = arg_vals[1].value;
+                        step = arg_vals[2].value;
+                    }
+
+                    if step == 0.0 {
+                        return Err("Step value for 'range' cannot be zero".to_string());
+                    }
+
+                    let mut elements = Vec::new();
+                    let mut current = start;
+                    let max_range_size = 5000;
+
+                    if step > 0.0 {
+                        while current < end {
+                            if elements.len() >= max_range_size {
+                                return Err(format!("Range size exceeded safety limit of {}", max_range_size));
+                            }
+                            elements.push(Quantity::scalar(current, None));
+                            current += step;
+                        }
+                    } else {
+                        while current > end {
+                            if elements.len() >= max_range_size {
+                                return Err(format!("Range size exceeded safety limit of {}", max_range_size));
+                            }
+                            elements.push(Quantity::scalar(current, None));
+                            current += step;
+                        }
+                    }
+
+                    Ok(Quantity::list(elements))
+                }
                 _ => {
                     // Custom user-defined functions
                     let (params, body) = ctx
@@ -2539,6 +2791,38 @@ fn find_variable_in_expr(expr: &Expr) -> Option<String> {
         }
         Expr::Not(inner) => find_variable_in_expr(inner),
         Expr::BitNot(inner) => find_variable_in_expr(inner),
+        Expr::Block(exprs) => {
+            for ex in exprs {
+                if let Some(v) = find_variable_in_expr(ex) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        Expr::IfElse { cond, then_expr, else_expr } => {
+            find_variable_in_expr(cond)
+                .or_else(|| find_variable_in_expr(then_expr))
+                .or_else(|| find_variable_in_expr(else_expr))
+        }
+        Expr::Switch { val, cases, default_case } => {
+            find_variable_in_expr(val)
+                .or_else(|| {
+                    for (p, b) in cases {
+                        if let Some(v) = find_variable_in_expr(p).or_else(|| find_variable_in_expr(b)) {
+                            return Some(v);
+                        }
+                    }
+                    None
+                })
+                .or_else(|| default_case.as_ref().and_then(|def| find_variable_in_expr(def)))
+        }
+        Expr::LocalAssign(_, val_expr) => find_variable_in_expr(val_expr),
+        Expr::For { var: _, iterable, body } => {
+            find_variable_in_expr(iterable).or_else(|| find_variable_in_expr(body))
+        }
+        Expr::While { cond, body } => {
+            find_variable_in_expr(cond).or_else(|| find_variable_in_expr(body))
+        }
         _ => None,
     }
 }
@@ -2573,6 +2857,40 @@ fn find_all_variables_in_expr_helper(expr: &Expr, vars: &mut Vec<String>) {
         }
         Expr::Not(inner) => find_all_variables_in_expr_helper(inner, vars),
         Expr::BitNot(inner) => find_all_variables_in_expr_helper(inner, vars),
+        Expr::Block(exprs) => {
+            for ex in exprs {
+                find_all_variables_in_expr_helper(ex, vars);
+            }
+        }
+        Expr::IfElse { cond, then_expr, else_expr } => {
+            find_all_variables_in_expr_helper(cond, vars);
+            find_all_variables_in_expr_helper(then_expr, vars);
+            find_all_variables_in_expr_helper(else_expr, vars);
+        }
+        Expr::Switch { val, cases, default_case } => {
+            find_all_variables_in_expr_helper(val, vars);
+            for (p, b) in cases {
+                find_all_variables_in_expr_helper(p, vars);
+                find_all_variables_in_expr_helper(b, vars);
+            }
+            if let Some(def) = default_case {
+                find_all_variables_in_expr_helper(def, vars);
+            }
+        }
+        Expr::LocalAssign(name, val_expr) => {
+            if !vars.contains(name) {
+                vars.push(name.clone());
+            }
+            find_all_variables_in_expr_helper(val_expr, vars);
+        }
+        Expr::For { var: _, iterable, body } => {
+            find_all_variables_in_expr_helper(iterable, vars);
+            find_all_variables_in_expr_helper(body, vars);
+        }
+        Expr::While { cond, body } => {
+            find_all_variables_in_expr_helper(cond, vars);
+            find_all_variables_in_expr_helper(body, vars);
+        }
         _ => {}
     }
 }
@@ -3126,5 +3444,94 @@ res_j =>
 
         let q6 = Quantity::scalar(55.0, Some("miles/hour".to_string()));
         assert_eq!(format_quantity(&q6), "55 miles/hour");
+    }
+
+    #[test]
+    fn test_loops_and_ranges() {
+        use crate::math::parser::parse_line;
+        let mut ctx = Context::default();
+
+        // 1. Test range(5)
+        let expr_r1 = parse_line("range(5) =>").unwrap_expr();
+        let res_r1 = eval_expr(&expr_r1, &mut ctx).unwrap();
+        let list_elements = res_r1.list.unwrap();
+        assert_eq!(list_elements.len(), 5);
+        assert_eq!(list_elements[0].value, 0.0);
+        assert_eq!(list_elements[4].value, 4.0);
+
+        // 2. Test range(2, 6)
+        let expr_r2 = parse_line("range(2, 6) =>").unwrap_expr();
+        let res_r2 = eval_expr(&expr_r2, &mut ctx).unwrap();
+        let list_elements2 = res_r2.list.unwrap();
+        assert_eq!(list_elements2.len(), 4);
+        assert_eq!(list_elements2[0].value, 2.0);
+        assert_eq!(list_elements2[3].value, 5.0);
+
+        // 3. Test range(1, 10, 2)
+        let expr_r3 = parse_line("range(1, 10, 2) =>").unwrap_expr();
+        let res_r3 = eval_expr(&expr_r3, &mut ctx).unwrap();
+        let list_elements3 = res_r3.list.unwrap();
+        assert_eq!(list_elements3.len(), 5);
+        assert_eq!(list_elements3[0].value, 1.0);
+        assert_eq!(list_elements3[4].value, 9.0);
+
+        // 4. Test for loop: summing values
+        let expr_assign = Expr::LocalAssign("sum".to_string(), Box::new(Expr::Number(0.0)));
+        eval_expr(&expr_assign, &mut ctx).unwrap();
+
+        let expr_for = parse_line("for x in range(1, 6) { sum = sum + x; sum } =>").unwrap_expr();
+        let res_for = eval_expr(&expr_for, &mut ctx).unwrap();
+        assert_eq!(res_for.value, 15.0);
+
+        let expr_sum = parse_line("sum =>").unwrap_expr();
+        let res_sum = eval_expr(&expr_sum, &mut ctx).unwrap();
+        assert_eq!(res_sum.value, 15.0);
+
+        // 5. Test while loop
+        let expr_assign_w = Expr::LocalAssign("count".to_string(), Box::new(Expr::Number(0.0)));
+        eval_expr(&expr_assign_w, &mut ctx).unwrap();
+
+        let expr_while = parse_line("while count < 3 { count = count + 1; count } =>").unwrap_expr();
+        let res_while = eval_expr(&expr_while, &mut ctx).unwrap();
+        assert_eq!(res_while.value, 3.0);
+
+        let expr_count = parse_line("count =>").unwrap_expr();
+        let res_count = eval_expr(&expr_count, &mut ctx).unwrap();
+        assert_eq!(res_count.value, 3.0);
+
+        // 6. Test filter
+        let expr_filter = parse_line("filter(x > 2, range(5)) =>").unwrap_expr();
+        let res_filter = eval_expr(&expr_filter, &mut ctx).unwrap();
+        let filter_elements = res_filter.list.unwrap();
+        assert_eq!(filter_elements.len(), 2);
+        assert_eq!(filter_elements[0].value, 3.0);
+        assert_eq!(filter_elements[1].value, 4.0);
+
+        // 7. Test any/all
+        let expr_any_t = parse_line("any(x > 3, range(5)) =>").unwrap_expr();
+        let res_any_t = eval_expr(&expr_any_t, &mut ctx).unwrap();
+        assert_eq!(res_any_t.value, 1.0); // true
+
+        let expr_any_f = parse_line("any(x > 5, range(5)) =>").unwrap_expr();
+        let res_any_f = eval_expr(&expr_any_f, &mut ctx).unwrap();
+        assert_eq!(res_any_f.value, 0.0); // false
+
+        let expr_all_t = parse_line("all(x >= 0, range(5)) =>").unwrap_expr();
+        let res_all_t = eval_expr(&expr_all_t, &mut ctx).unwrap();
+        assert_eq!(res_all_t.value, 1.0); // true
+
+        let expr_all_f = parse_line("all(x > 2, range(5)) =>").unwrap_expr();
+        let res_all_f = eval_expr(&expr_all_f, &mut ctx).unwrap();
+        assert_eq!(res_all_f.value, 0.0); // false
+
+        // 8. Test zip
+        let expr_zip = parse_line("zip(range(2), range(10, 12)) =>").unwrap_expr();
+        let res_zip = eval_expr(&expr_zip, &mut ctx).unwrap();
+        let zip_elements = res_zip.list.unwrap();
+        assert_eq!(zip_elements.len(), 2);
+        assert_eq!(zip_elements[0].list.as_ref().unwrap()[0].value, 0.0);
+        assert_eq!(zip_elements[0].list.as_ref().unwrap()[1].value, 10.0);
+        assert_eq!(zip_elements[1].list.as_ref().unwrap()[0].value, 1.0);
+        assert_eq!(zip_elements[1].list.as_ref().unwrap()[1].value, 11.0);
     }
 }

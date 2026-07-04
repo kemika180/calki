@@ -56,6 +56,15 @@ pub enum Expr {
         cases: Vec<(Expr, Expr)>,
         default_case: Option<Box<Expr>>,
     },
+    For {
+        var: String,
+        iterable: Box<Expr>,
+        body: Box<Expr>,
+    },
+    While {
+        cond: Box<Expr>,
+        body: Box<Expr>,
+    },
     StringLiteral(String),
 }
 
@@ -237,6 +246,27 @@ impl Parser {
                         cond: Box::new(cond),
                         then_expr: Box::new(then_expr),
                         else_expr: Box::new(else_expr),
+                    })
+                } else if name == "for" && self.peek() != Some(&Token::LPar) {
+                    let next_tok = self.next_token().ok_or_else(|| "Expected loop variable after 'for'".to_string())?;
+                    let var = match next_tok {
+                        Token::Identifier(v) => v,
+                        t => return Err(format!("Expected identifier as loop variable, found {:?}", t)),
+                    };
+                    self.expect(Token::In, "Expected 'in' after loop variable")?;
+                    let iterable = self.parse_expression(0)?;
+                    let body = self.parse_expression(0)?;
+                    Ok(Expr::For {
+                        var,
+                        iterable: Box::new(iterable),
+                        body: Box::new(body),
+                    })
+                } else if name == "while" && self.peek() != Some(&Token::LPar) {
+                    let cond = self.parse_expression(0)?;
+                    let body = self.parse_expression(0)?;
+                    Ok(Expr::While {
+                        cond: Box::new(cond),
+                        body: Box::new(body),
                     })
                 } else if self.peek() == Some(&Token::LPar) {
                     self.next_token(); // consume '('

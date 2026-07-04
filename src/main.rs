@@ -2264,11 +2264,11 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
                 app.help_scroll = app.help_scroll.saturating_add(10);
             }
             KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
-                app.help_tab_idx = if app.help_tab_idx == 0 { 7 } else { app.help_tab_idx - 1 };
+                app.help_tab_idx = if app.help_tab_idx == 0 { 8 } else { app.help_tab_idx - 1 };
                 app.help_scroll = 0;
             }
             KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
-                app.help_tab_idx = (app.help_tab_idx + 1) % 8;
+                app.help_tab_idx = (app.help_tab_idx + 1) % 9;
                 app.help_scroll = 0;
             }
             KeyCode::Char('1') => {
@@ -2301,6 +2301,10 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
             }
             KeyCode::Char('8') => {
                 app.help_tab_idx = 7;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('9') => {
+                app.help_tab_idx = 8;
                 app.help_scroll = 0;
             }
             KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -3325,9 +3329,10 @@ fn ui(f: &mut Frame, app: &mut App) {
             "3.\u{a0}Complex\u{a0}&\u{a0}Symbolic",
             "4.\u{a0}Lists\u{a0}&\u{a0}Stats",
             "5.\u{a0}Constants",
-            "6.\u{a0}Markdown",
-            "7.\u{a0}Vim\u{a0}Motions",
-            "8.\u{a0}About",
+            "6.\u{a0}Programming",
+            "7.\u{a0}Markdown",
+            "8.\u{a0}Vim\u{a0}Motions",
+            "9.\u{a0}About",
         ];
 
         let mut header_spans = Vec::new();
@@ -3361,8 +3366,8 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled("Switch between Help Tabs (Left / Right)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
-                    Span::styled(" 1 - 8       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
-                    Span::styled("Switch directly to Help Tabs 1 through 8", Style::default().fg(Color::Rgb(169, 177, 214))),
+                    Span::styled(" 1 - 9       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Switch directly to Help Tabs 1 through 9", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
                 Line::from(vec![
                     Span::styled(" j / k       ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -3679,6 +3684,69 @@ fn ui(f: &mut Frame, app: &mut App) {
                 ]),
             ],
             5 => vec![
+                Line::from(vec![Span::styled("── Variables & Scoping ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" x = value   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Define a variable in global scope", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" { y = 2 }   ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Block scope: new local variables discard on exit", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Functions ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" f(x) = x^2  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Define user function f with parameter x", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" map(expr, L)", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Evaluate expr for each element in list L", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" filter(e, L)", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Filter list L keeping elements where boolean expr e is true", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" reduce(e, L)", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Reduce list L using expr e (accumulator and element)", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" any(expr, L)", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Returns true if expr is true for any element in list L", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" all(expr, L)", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Returns true if expr is true for all elements in list L", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" zip(L1, L2) ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Zip two lists L1 and L2 together into a list of pairs", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("── Control Flow & Loops ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
+                Line::from(vec![
+                    Span::styled(" if C A else B", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("If condition C is true, evaluate A, else evaluate B", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" switch V {...}", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Match value V against case patterns and default case", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" for x in L  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Iterate through elements of list L using loop var x", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" while cond  ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Evaluate body repeatedly while cond is true", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+                Line::from(vec![
+                    Span::styled(" range(a,b,s)", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
+                    Span::styled("Generate a list of numbers from a to b with step s", Style::default().fg(Color::Rgb(169, 177, 214))),
+                ]),
+            ],
+            6 => vec![
                 Line::from(vec![Span::styled("── Implemented Markdown Formatting ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
                 Line::from(vec![
                     Span::styled(" # Heading 1 ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -3717,7 +3785,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled("Wiki-style link to navigate/create pages (press Enter)", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
             ],
-            6 => vec![
+            7 => vec![
                 Line::from(vec![Span::styled("── Implemented Vim Motions & Editing ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
                 Line::from(vec![
                     Span::styled(" h / j / k / l ", Style::default().fg(Color::Rgb(158, 206, 106)).bold()),
@@ -3776,7 +3844,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                     Span::styled("Undo last change / Redo change", Style::default().fg(Color::Rgb(169, 177, 214))),
                 ]),
             ],
-            7 => vec![
+            8 => vec![
                 Line::from(vec![Span::styled("── About calki ──", Style::default().bold().fg(Color::Rgb(255, 158, 100)))]),
                 Line::from(""),
                 Line::from(vec![
@@ -4079,7 +4147,7 @@ fn tokenize_line_for_highlighting(line: &[char]) -> Vec<HighlightToken> {
             }
             let end = i;
             let name: String = line[start..end].iter().collect();
-            if name == "in" || name == "to" {
+            if name == "in" || name == "to" || name == "if" || name == "else" || name == "switch" || name == "default" || name == "for" || name == "while" {
                 tokens.push(HighlightToken::In { start, end: end.saturating_sub(1) });
             } else {
                 tokens.push(HighlightToken::Identifier { start, end: end.saturating_sub(1), name });
@@ -5510,8 +5578,14 @@ mod main_tests {
         assert!(app.show_help);
         assert_eq!(app.help_tab_idx, 7);
 
-        // Press '9' should not close modal and do nothing
+        // Press '9' should switch to tab 8
         let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('9'), crossterm::event::KeyModifiers::NONE));
+        assert!(handled);
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 8);
+
+        // Press '0' should not close modal and do nothing
+        let handled = handle_modal_key(&mut app, crossterm::event::KeyEvent::new(KeyCode::Char('0'), crossterm::event::KeyModifiers::NONE));
         assert!(handled);
         assert!(app.show_help);
 
