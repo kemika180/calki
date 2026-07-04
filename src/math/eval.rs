@@ -3533,5 +3533,10 @@ res_j =>
         assert_eq!(zip_elements[0].list.as_ref().unwrap()[1].value, 10.0);
         assert_eq!(zip_elements[1].list.as_ref().unwrap()[0].value, 1.0);
         assert_eq!(zip_elements[1].list.as_ref().unwrap()[1].value, 11.0);
+
+        // 9. Test multi-line block contained in {} with semicolon separation
+        let expr_multiline = parse_line("{\n  a = 10;\n  b = 20;\n  a + b\n} =>").unwrap_expr();
+        let res_multiline = eval_expr(&expr_multiline, &mut ctx).unwrap();
+        assert_eq!(res_multiline.value, 30.0);
     }
 }

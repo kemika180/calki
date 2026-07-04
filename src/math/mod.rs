@@ -51,12 +51,7 @@ pub fn evaluate_sheet(
                 block_lines.clear();
             }
         } else {
-            let is_block_start = if let Some(eq_pos) = cleaned.find('=') {
-                let is_arrow = eq_pos + 1 < cleaned.len() && cleaned.as_bytes()[eq_pos + 1] == b'>';
-                !is_arrow && cleaned.ends_with('{')
-            } else {
-                false
-            };
+            let is_block_start = cleaned.ends_with('{');
 
             if is_block_start {
                 block_lines.push(line_text.to_string());
@@ -387,6 +382,32 @@ v3 = rate("JPY") =>
         let (output2, _) = evaluate_sheet(sheet2, &rates);
         assert!(output2.contains("v1 = rate(\"USD\") => 1"), "Actual: {}", output2);
         assert!(output2.contains("v2 = rate(\"EUR\") => 0.85"), "Actual: {}", output2);
-        assert!(output2.contains("v3 = rate(\"JPY\") => 0"), "Actual: {}", output2);
+        assert_eq!(output2.contains("v3 = rate(\"JPY\") => 0"), true);
+
+        // 3. Test raw multi-line block sheet evaluation
+        let sheet3 = r#"
+res = {
+    a = 10;
+    b = 20;
+    a + b
+} =>
+"#;
+        let (output3, _) = evaluate_sheet(sheet3, &rates);
+        assert!(output3.contains("res = {\n    a = 10;\n    b = 20;\n    a + b\n} => 30"), "Actual: {}", output3);
+
+        // 4. Test multi-line while loop sheet evaluation
+        let sheet4 = r#"
+res_while = {
+    n = 5;
+    fact = 1;
+    while n > 1 {
+        fact = fact * n;
+        n = n - 1;
+    }
+    fact
+} =>
+"#;
+        let (output4, _) = evaluate_sheet(sheet4, &rates);
+        assert!(output4.contains("res_while = {\n    n = 5;\n    fact = 1;\n    while n > 1 {\n        fact = fact * n;\n        n = n - 1;\n    }\n    fact\n} => 120"), "Actual: {}", output4);
     }
 }
