@@ -1029,11 +1029,18 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
         Expr::Block(exprs) => {
             let original_keys: std::collections::HashSet<String> = ctx.variables.keys().cloned().collect();
             let mut last_val = Quantity::scalar(0.0, None);
+            let mut result = Ok(());
             for expr in exprs {
-                last_val = eval_expr(expr, ctx)?;
+                match eval_expr(expr, ctx) {
+                    Ok(val) => last_val = val,
+                    Err(e) => {
+                        result = Err(e);
+                        break;
+                    }
+                }
             }
             ctx.variables.retain(|k, _| original_keys.contains(k));
-            Ok(last_val)
+            result.map(|_| last_val)
         }
         Expr::For { var, iterable, body } => {
             let iterable_val = eval_expr(iterable, ctx)?;
@@ -1050,9 +1057,16 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             let mut last_val = Quantity::scalar(0.0, None);
             let original_loop_var = ctx.variables.get(var).cloned();
 
+            let mut loop_err = None;
             for element in elements {
                 ctx.variables.insert(var.clone(), element);
-                last_val = eval_expr(body, ctx)?;
+                match eval_expr(body, ctx) {
+                    Ok(val) => last_val = val,
+                    Err(e) => {
+                        loop_err = Some(e);
+                        break;
+                    }
+                }
             }
 
             if let Some(pv) = original_loop_var {
@@ -1061,7 +1075,11 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 ctx.variables.remove(var);
             }
 
-            Ok(last_val)
+            if let Some(e) = loop_err {
+                Err(e)
+            } else {
+                Ok(last_val)
+            }
         }
         Expr::While { cond, body } => {
             let mut last_val = Quantity::scalar(0.0, None);
@@ -3538,5 +3556,18 @@ res_j =>
         let expr_multiline = parse_line("{\n  a = 10;\n  b = 20;\n  a + b\n} =>").unwrap_expr();
         let res_multiline = eval_expr(&expr_multiline, &mut ctx).unwrap();
         assert_eq!(res_multiline.value, 30.0);
+
+        // 10. Test error scope isolation for Blocks
+        let expr_err_block = parse_line("{\n  block_local_err = 42;\n  non_existent_func(1)\n} =>").unwrap_expr();
+        let res_err_block = eval_expr(&expr_err_block, &mut ctx);
+        assert!(res_err_block.is_err());
+        assert!(!ctx.variables.contains_key("block_local_err"));
+
+        // 11. Test loop variable restoration on For loop error
+        ctx.variables.insert("loop_var".to_string(), Quantity::scalar(999.0, None));
+        let expr_err_loop = parse_line("for loop_var in range(3) {\n  non_existent_func(1)\n} =>").unwrap_expr();
+        let res_err_loop = eval_expr(&expr_err_loop, &mut ctx);
+        assert!(res_err_loop.is_err());
+        assert_eq!(ctx.variables.get("loop_var").unwrap().value, 999.0);
     }
 }
