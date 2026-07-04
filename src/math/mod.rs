@@ -36,7 +36,7 @@ pub fn evaluate_sheet(
 
     for line_text in sheet_text.lines() {
         let cleaned = clean_line(line_text);
-        if brace_level > 0 {
+        if brace_level > 0 || cleaned.ends_with('{') {
             block_lines.push(line_text.to_string());
             for c in cleaned.chars() {
                 if c == '{' {
@@ -46,30 +46,11 @@ pub fn evaluate_sheet(
                 }
             }
             if brace_level <= 0 {
-                let combined = block_lines.join("\n");
-                grouped_lines.push(combined);
+                grouped_lines.push(block_lines.join("\n"));
                 block_lines.clear();
             }
         } else {
-            let is_block_start = cleaned.ends_with('{');
-
-            if is_block_start {
-                block_lines.push(line_text.to_string());
-                brace_level = 0;
-                for c in cleaned.chars() {
-                    if c == '{' {
-                        brace_level += 1;
-                    } else if c == '}' {
-                        brace_level -= 1;
-                    }
-                }
-                if brace_level <= 0 {
-                    grouped_lines.push(line_text.to_string());
-                    block_lines.clear();
-                }
-            } else {
-                grouped_lines.push(line_text.to_string());
-            }
+            grouped_lines.push(line_text.to_string());
         }
     }
     if !block_lines.is_empty() {
