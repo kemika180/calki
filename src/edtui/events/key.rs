@@ -962,16 +962,15 @@ impl KeyEventHandler {
 
         // Always insert characters in insert mode
         if mode == EditorMode::Insert {
-            if let input::KeyCode::Char(c) = key_input.key {
-                if key_input.modifiers == input::Modifiers::NONE
-                    || key_input.modifiers == input::Modifiers::SHIFT
-                {
-                    if self.capture_on_insert {
-                        state.capture();
-                    }
-                    InsertChar(c).execute(state);
-                    return;
+            if let input::KeyCode::Char(c) = key_input.key
+                && (key_input.modifiers == input::Modifiers::NONE
+                    || key_input.modifiers == input::Modifiers::SHIFT)
+            {
+                if self.capture_on_insert {
+                    state.capture();
                 }
+                InsertChar(c).execute(state);
+                return;
             }
 
             if matches!(key_input.key, input::KeyCode::Tab)
@@ -986,13 +985,12 @@ impl KeyEventHandler {
         }
 
         // Always add characters to search in search mode
-        if mode == EditorMode::Search {
-            if let input::KeyCode::Char(c) = key_input.key {
-                if key_input.modifiers == input::Modifiers::NONE {
-                    AppendCharToSearch(c).execute(state);
-                    return;
-                }
-            }
+        if mode == EditorMode::Search
+            && let input::KeyCode::Char(c) = key_input.key
+            && key_input.modifiers == input::Modifiers::NONE
+        {
+            AppendCharToSearch(c).execute(state);
+            return;
         }
 
         // Else lookup an action from the register

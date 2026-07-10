@@ -696,7 +696,7 @@ fn expr_contains_var(expr: &Expr, var_name: &str) -> bool {
                 })
                 || default_case
                     .as_ref()
-                    .map_or(false, |def| expr_contains_var(def, var_name))
+                    .is_some_and(|def| expr_contains_var(def, var_name))
         }
         Expr::For {
             var,
@@ -1103,7 +1103,7 @@ impl Default for Context {
             Quantity {
                 is_bool: false,
                 list: None,
-                value: std::f64::INFINITY,
+                value: f64::INFINITY,
                 unit: None,
             },
         );
@@ -3241,11 +3241,11 @@ fn format_float(val: f64) -> String {
 // Formats a Quantity nicely for buffer output
 pub fn format_quantity(qty: &Quantity) -> String {
     if let Some(ref u) = qty.unit {
-        if u.starts_with("sparkline:") {
-            return u["sparkline:".len()..].to_string();
+        if let Some(rest) = u.strip_prefix("sparkline:") {
+            return rest.to_string();
         }
-        if u.starts_with("formula:") {
-            return u["formula:".len()..].to_string();
+        if let Some(rest) = u.strip_prefix("formula:") {
+            return rest.to_string();
         }
         if u == "complex"
             && let Some(ref list) = qty.list

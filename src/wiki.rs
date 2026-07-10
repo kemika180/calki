@@ -16,38 +16,38 @@ impl WikiManager {
         let mut registry_map = HashMap::new();
 
         if registry_path.exists() {
-            if let Ok(content) = fs::read_to_string(&registry_path) {
-                if let Ok(map) = serde_json::from_str(&content) {
-                    registry_map = map;
-                }
+            if let Ok(content) = fs::read_to_string(&registry_path)
+                && let Ok(map) = serde_json::from_str(&content)
+            {
+                registry_map = map;
             }
         } else if root_dir.exists() {
             if let Ok(entries) = fs::read_dir(&root_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-                        if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                            let outgoing = Self::parse_outgoing_links(&path);
-                            registry_map.insert(file_name.to_string(), outgoing);
-                        }
+                    if path.is_file()
+                        && path.extension().and_then(|s| s.to_str()) == Some("md")
+                        && let Some(file_name) = path.file_name().and_then(|s| s.to_str())
+                    {
+                        let outgoing = Self::parse_outgoing_links(&path);
+                        registry_map.insert(file_name.to_string(), outgoing);
                     }
                 }
             }
-            if !registry_map.is_empty() {
-                if let Ok(content) = serde_json::to_string_pretty(&registry_map) {
-                    let _ = fs::write(&registry_path, content);
-                }
+            if !registry_map.is_empty()
+                && let Ok(content) = serde_json::to_string_pretty(&registry_map)
+            {
+                let _ = fs::write(&registry_path, content);
             }
         }
 
         let cursors_path = root_dir.join(".calki-cursors.json");
         let mut cursors_map = HashMap::new();
-        if cursors_path.exists() {
-            if let Ok(content) = fs::read_to_string(&cursors_path) {
-                if let Ok(map) = serde_json::from_str(&content) {
-                    cursors_map = map;
-                }
-            }
+        if cursors_path.exists()
+            && let Ok(content) = fs::read_to_string(&cursors_path)
+            && let Ok(map) = serde_json::from_str(&content)
+        {
+            cursors_map = map;
         }
 
         Self {
@@ -366,10 +366,10 @@ Back to [[Home]].
         let registry = self.registry.borrow();
         for (file_name, outgoing) in registry.iter() {
             // Don't backlink to itself
-            if let Some(target_name) = target_path.file_name().and_then(|s| s.to_str()) {
-                if file_name == target_name {
-                    continue;
-                }
+            if let Some(target_name) = target_path.file_name().and_then(|s| s.to_str())
+                && file_name == target_name
+            {
+                continue;
             }
 
             let is_referenced = outgoing.iter().any(|link| {

@@ -935,7 +935,7 @@ pub fn auto_scale_quantity(
         }
 
         let scaled_abs = (base_unit_val / multiplier).abs();
-        if scaled_abs >= 1.0 && scaled_abs < 1000.0 {
+        if (1.0..1000.0).contains(&scaled_abs) {
             best_prefix = prefix;
             best_multiplier = multiplier;
             found = true;

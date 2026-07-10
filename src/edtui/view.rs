@@ -321,51 +321,49 @@ impl Widget for EditorView<'_, '_> {
             };
 
             // Render line number in the gutter
-            if line_numbers_enabled {
-                if let Some(gutter) = gutter_row_area {
-                    let is_cursor_line = row_index == cursor.row;
-                    let line_num = if is_relative {
-                        if is_cursor_line {
-                            row_index + 1
-                        } else {
-                            row_index.abs_diff(cursor.row)
-                        }
-                    } else {
+            if line_numbers_enabled && let Some(gutter) = gutter_row_area {
+                let is_cursor_line = row_index == cursor.row;
+                let line_num = if is_relative {
+                    if is_cursor_line {
                         row_index + 1
-                    };
-
-                    // Right-align line numbers, but left-align current line
-                    let num_str = if is_relative && is_cursor_line {
-                        format!(
-                            "{:<width$}",
-                            line_num,
-                            width = (line_number_width - 1) as usize
-                        )
                     } else {
-                        format!(
-                            "{:>width$}",
-                            line_num,
-                            width = (line_number_width - 1) as usize
-                        )
-                    };
-                    let num_span = Span::styled(num_str, line_numbers_style);
+                        row_index.abs_diff(cursor.row)
+                    }
+                } else {
+                    row_index + 1
+                };
 
-                    let line_num_area = Rect::new(gutter.x, gutter.y, gutter.width, 1);
-                    buf.set_span(
-                        line_num_area.x,
-                        line_num_area.y,
-                        &num_span,
-                        line_num_area.width,
-                    );
+                // Right-align line numbers, but left-align current line
+                let num_str = if is_relative && is_cursor_line {
+                    format!(
+                        "{:<width$}",
+                        line_num,
+                        width = (line_number_width - 1) as usize
+                    )
+                } else {
+                    format!(
+                        "{:>width$}",
+                        line_num,
+                        width = (line_number_width - 1) as usize
+                    )
+                };
+                let num_span = Span::styled(num_str, line_numbers_style);
 
-                    let num_lines = render_line.num_lines() as u16;
-                    gutter_row_area = Some(Rect::new(
-                        gutter.x,
-                        gutter.y.saturating_add(num_lines),
-                        gutter.width,
-                        gutter.height.saturating_sub(num_lines),
-                    ));
-                }
+                let line_num_area = Rect::new(gutter.x, gutter.y, gutter.width, 1);
+                buf.set_span(
+                    line_num_area.x,
+                    line_num_area.y,
+                    &num_span,
+                    line_num_area.width,
+                );
+
+                let num_lines = render_line.num_lines() as u16;
+                gutter_row_area = Some(Rect::new(
+                    gutter.x,
+                    gutter.y.saturating_add(num_lines),
+                    gutter.width,
+                    gutter.height.saturating_sub(num_lines),
+                ));
             }
 
             // Determine the cursor position.

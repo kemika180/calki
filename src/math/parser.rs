@@ -166,18 +166,12 @@ impl Parser {
     }
 
     fn is_infix_modulo(&self) -> bool {
-        if let Some(next_tok) = self.tokens.get(self.pos + 1) {
-            match next_tok {
-                Token::Number(_)
-                | Token::Identifier(_)
-                | Token::LPar
-                | Token::LBrack
-                | Token::Not => true,
-                _ => false,
-            }
-        } else {
-            false
-        }
+        matches!(
+            self.tokens.get(self.pos + 1),
+            Some(
+                Token::Number(_) | Token::Identifier(_) | Token::LPar | Token::LBrack | Token::Not
+            )
+        )
     }
 
     // Core Pratt Parser loop
@@ -315,10 +309,10 @@ impl Parser {
                     }
 
                     let mut is_assign = false;
-                    if let Some(Token::Identifier(_)) = self.peek() {
-                        if let Some(Token::Equal) = self.tokens.get(self.pos + 1) {
-                            is_assign = true;
-                        }
+                    if let Some(Token::Identifier(_)) = self.peek()
+                        && let Some(Token::Equal) = self.tokens.get(self.pos + 1)
+                    {
+                        is_assign = true;
                     }
 
                     if is_assign {

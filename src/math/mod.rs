@@ -468,7 +468,7 @@ v3 = rate("JPY") =>
             "Actual: {}",
             output2
         );
-        assert_eq!(output2.contains("v3 = rate(\"JPY\") => 0"), true);
+        assert!(output2.contains("v3 = rate(\"JPY\") => 0"));
 
         // 3. Test raw multi-line block sheet evaluation
         let sheet3 = r#"

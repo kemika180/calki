@@ -327,27 +327,24 @@ fn trim_start_slice(mut slice: &[char]) -> &[char] {
 }
 
 fn is_repeatable_motion(key: crossterm::event::KeyEvent) -> bool {
-    if key.modifiers.is_empty() {
-        match key.code {
+    key.modifiers.is_empty()
+        && matches!(
+            key.code,
             KeyCode::Char('j')
-            | KeyCode::Char('k')
-            | KeyCode::Char('h')
-            | KeyCode::Char('l')
-            | KeyCode::Char('w')
-            | KeyCode::Char('b')
-            | KeyCode::Char('e')
-            | KeyCode::Char('x')
-            | KeyCode::Up
-            | KeyCode::Down
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::PageUp
-            | KeyCode::PageDown => true,
-            _ => false,
-        }
-    } else {
-        false
-    }
+                | KeyCode::Char('k')
+                | KeyCode::Char('h')
+                | KeyCode::Char('l')
+                | KeyCode::Char('w')
+                | KeyCode::Char('b')
+                | KeyCode::Char('e')
+                | KeyCode::Char('x')
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+        )
 }
 
 fn is_newer_version(local: &str, remote: &str) -> bool {
@@ -726,9 +723,9 @@ impl App {
             // 1c. Horizontal Rule
             let trimmed = trim_char_slice(line);
             if !is_special_line
-                && (trimmed == &['-', '-', '-']
-                    || trimmed == &['*', '*', '*']
-                    || trimmed == &['_', '_', '_'])
+                && (trimmed == ['-', '-', '-']
+                    || trimmed == ['*', '*', '*']
+                    || trimmed == ['_', '_', '_'])
                 && line.len() >= 3
             {
                 let hr_style = Style::default().fg(Color::Rgb(86, 95, 137)).dim(); // Muted Gray dim
@@ -754,7 +751,6 @@ impl App {
 
             let mut line_braces = 0;
             if !is_special_line {
-                let in_block;
                 let mut in_quote = false;
                 let mut prev_char = None;
                 let mut has_lbrace = false;
@@ -774,7 +770,7 @@ impl App {
                     }
                     prev_char = Some(c);
                 }
-                in_block = brace_level > 0 || has_lbrace || has_rbrace;
+                let in_block = brace_level > 0 || has_lbrace || has_rbrace;
 
                 let mut is_math_line = false;
                 let mut backtick_ranges = Vec::new();
@@ -808,87 +804,79 @@ impl App {
                 let mut has_main_assignment = false;
                 let mut search_idx = 0;
                 while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
-                    if !is_in_backticks(pos) {
-                        if arrow_idx != Some(pos) {
-                            eq_idx = Some(pos);
-                            break;
-                        }
+                    if !is_in_backticks(pos) && arrow_idx != Some(pos) {
+                        eq_idx = Some(pos);
+                        break;
                     }
                     search_idx = pos + 1;
                 }
 
                 let mut processed = false;
                 if let Some(arrow_pos) = arrow_idx {
-                    if let Some(eq_pos) = eq_idx {
-                        if eq_pos < arrow_pos {
-                            let lhs = &line[..eq_pos];
-                            let lhs_trimmed = trim_char_slice(lhs);
-                            let is_lhs_valid = !lhs_trimmed.is_empty()
-                                && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
-                            let is_assignment = is_lhs_valid && {
-                                let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
-                                let not_comparison =
-                                    eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
-                                not_equality && not_comparison
-                            };
-                            let is_fn_def = !is_assignment && {
-                                if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
-                                    if let Some(lpar_pos) =
-                                        lhs_trimmed.iter().position(|&c| c == '(')
-                                    {
-                                        let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
-                                        let args_slice =
-                                            &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
-                                        let fn_valid = !fn_name.is_empty()
-                                            && fn_name
+                    if let Some(eq_pos) = eq_idx
+                        && eq_pos < arrow_pos
+                    {
+                        let lhs = &line[..eq_pos];
+                        let lhs_trimmed = trim_char_slice(lhs);
+                        let is_lhs_valid = !lhs_trimmed.is_empty()
+                            && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                        let is_assignment = is_lhs_valid && {
+                            let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
+                            let not_comparison =
+                                eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
+                            not_equality && not_comparison
+                        };
+                        let is_fn_def = !is_assignment && {
+                            if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
+                                if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
+                                    let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
+                                    let args_slice =
+                                        &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
+                                    let fn_valid = !fn_name.is_empty()
+                                        && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                                    let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
+                                        let arg_trimmed = trim_char_slice(arg);
+                                        arg_trimmed.is_empty()
+                                            || arg_trimmed
                                                 .iter()
-                                                .all(|&c| c.is_alphanumeric() || c == '_');
-                                        let args_valid =
-                                            args_slice.split(|&c| c == ',').all(|arg| {
-                                                let arg_trimmed = trim_char_slice(arg);
-                                                arg_trimmed.is_empty()
-                                                    || arg_trimmed
-                                                        .iter()
-                                                        .all(|&c| c.is_alphanumeric() || c == '_')
-                                            });
-                                        fn_valid && args_valid
-                                    } else {
-                                        false
-                                    }
+                                                .all(|&c| c.is_alphanumeric() || c == '_')
+                                    });
+                                    fn_valid && args_valid
                                 } else {
                                     false
                                 }
-                            };
-
-                            if is_assignment || is_fn_def {
-                                is_math_line = true;
-                                // LHS (Cyan)
-                                for col in 0..eq_pos {
-                                    line_styles[col] =
-                                        Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                                }
-                                // '=' (Bold Orange)
-                                line_styles[eq_pos] =
-                                    Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                                // RHS expression up to '=>' (Teal Green)
-                                for col in (eq_pos + 1)..arrow_pos {
-                                    line_styles[col] =
-                                        Some(Style::default().fg(Color::Rgb(115, 218, 202)));
-                                }
-                                // '=>' (Bold Orange)
-                                for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
-                                    line_styles[col] =
-                                        Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                                }
-                                // The result after '=>' (Teal Green + Italic)
-                                for col in (arrow_pos + 2)..n {
-                                    line_styles[col] = Some(
-                                        Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
-                                    );
-                                }
-                                processed = true;
-                                has_main_assignment = true;
+                            } else {
+                                false
                             }
+                        };
+
+                        if is_assignment || is_fn_def {
+                            is_math_line = true;
+                            // LHS (Cyan)
+                            for col in 0..eq_pos {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+                            }
+                            // '=' (Bold Orange)
+                            line_styles[eq_pos] =
+                                Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                            // RHS expression up to '=>' (Teal Green)
+                            for col in (eq_pos + 1)..arrow_pos {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(115, 218, 202)));
+                            }
+                            // '=>' (Bold Orange)
+                            for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                            }
+                            // The result after '=>' (Teal Green + Italic)
+                            for col in (arrow_pos + 2)..n {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                            }
+                            processed = true;
+                            has_main_assignment = true;
                         }
                     }
 
@@ -1153,10 +1141,10 @@ impl App {
                     if let HighlightToken::Identifier { start, end, name } = &tokens[i] {
                         // Check if this is a function call (followed by '(')
                         let mut is_function = false;
-                        if i + 1 < tokens.len() {
-                            if let HighlightToken::Symbol { ch: '(', .. } = tokens[i + 1] {
-                                is_function = true;
-                            }
+                        if i + 1 < tokens.len()
+                            && let HighlightToken::Symbol { ch: '(', .. } = tokens[i + 1]
+                        {
+                            is_function = true;
                         }
 
                         if is_function {
@@ -1828,7 +1816,7 @@ impl App {
                         active_dir.join(path)
                     };
 
-                    if resolved_path.extension().map_or(false, |ext| ext == "md") {
+                    if resolved_path.extension().is_some_and(|ext| ext == "md") {
                         let _ = self.save_current_note();
                         self.history_stack.push(self.active_path.clone());
                         let _ = self.load_note(resolved_path);
@@ -3073,11 +3061,11 @@ fn run_app<B: Backend + std::io::Write>(
                             {
                                 app.re_evaluate_calculations();
                                 app.update_outgoing_links();
-                            } else if let Some(ref before) = lines_before {
-                                if before != &app.editor_state.lines {
-                                    app.re_evaluate_calculations();
-                                    app.update_outgoing_links();
-                                }
+                            } else if let Some(ref before) = lines_before
+                                && before != &app.editor_state.lines
+                            {
+                                app.re_evaluate_calculations();
+                                app.update_outgoing_links();
                             }
                         }
                         FocusedPanel::WikiMap => {
@@ -3604,7 +3592,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                 _ => edtui::LineNumbers::None,
             };
             let line_number_width = if line_num_config != edtui::LineNumbers::None {
-                (app.editor_state.lines.len().max(1).to_string().len() + 1) as usize
+                app.editor_state.lines.len().max(1).to_string().len() + 1
             } else {
                 0
             };
@@ -6782,10 +6770,10 @@ mod main_tests {
         );
 
         // In the run_app logic, it detects that the lines changed in Normal Mode:
-        if let Some(ref before) = lines_before {
-            if before != &app.editor_state.lines {
-                app.re_evaluate_calculations();
-            }
+        if let Some(ref before) = lines_before
+            && before != &app.editor_state.lines
+        {
+            app.re_evaluate_calculations();
         }
 
         // The variable 'a' is deleted, so calculations should be re-evaluated and variable cache updated
