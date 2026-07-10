@@ -1,17 +1,17 @@
 use std::cmp::min;
 
-use jagged::{index::RowIndex, Index2};
+use jagged::{Index2, index::RowIndex};
 
 use crate::edtui::{
+    EditorState,
     clipboard::ClipboardTrait,
     helper::{append_str, insert_str, max_row},
-    EditorState,
 };
 
 #[cfg(test)]
 use crate::edtui::EditorMode;
 
-use super::{delete::delete_selection, Execute};
+use super::{Execute, delete::delete_selection};
 
 #[derive(Clone, Debug)]
 pub struct Paste;
@@ -94,11 +94,11 @@ impl Execute for CopyLine {
 
 #[cfg(test)]
 mod tests {
+    use crate::edtui::Index2;
+    use crate::edtui::Lines;
     use crate::edtui::actions::Undo;
     use crate::edtui::clipboard::InternalClipboard;
     use crate::edtui::state::selection::Selection;
-    use crate::edtui::Index2;
-    use crate::edtui::Lines;
 
     use super::*;
     fn test_state() -> EditorState {

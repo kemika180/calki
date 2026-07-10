@@ -1,7 +1,7 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
-use std::cell::RefCell;
 
 pub struct WikiManager {
     root_dir: PathBuf,
@@ -67,7 +67,9 @@ impl WikiManager {
 
     pub fn save_cursor_position(&self, file_path: &Path, row: usize, col: usize) {
         if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
-            self.cursors.borrow_mut().insert(file_name.to_string(), (row, col));
+            self.cursors
+                .borrow_mut()
+                .insert(file_name.to_string(), (row, col));
             let cursors_path = self.root_dir.join(".calki-cursors.json");
             if let Ok(content) = serde_json::to_string_pretty(&*self.cursors.borrow()) {
                 let _ = fs::write(&cursors_path, content);
@@ -291,7 +293,9 @@ Back to [[Home]].
     // Updates the registry entry for a file, saving it to disk
     pub fn update_registry_entry(&self, file_path: &Path, outgoing: Vec<String>) {
         if let Some(file_name) = file_path.file_name().and_then(|s| s.to_str()) {
-            self.registry.borrow_mut().insert(file_name.to_string(), outgoing);
+            self.registry
+                .borrow_mut()
+                .insert(file_name.to_string(), outgoing);
             let registry_path = self.root_dir.join(".calki-links.json");
             if let Ok(content) = serde_json::to_string_pretty(&*self.registry.borrow()) {
                 let _ = fs::write(&registry_path, content);
@@ -354,7 +358,10 @@ Back to [[Home]].
     pub fn scan_backlinks(&self, target_path: &Path) -> Vec<String> {
         let mut backlinks = Vec::new();
         let target_title = self.path_to_title(target_path).to_lowercase();
-        let target_file_name = target_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let target_file_name = target_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
 
         let registry = self.registry.borrow();
         for (file_name, outgoing) in registry.iter() {
@@ -367,7 +374,10 @@ Back to [[Home]].
 
             let is_referenced = outgoing.iter().any(|link| {
                 let linked_path = self.link_to_path(link);
-                let linked_file_name = linked_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let linked_file_name = linked_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
                 linked_file_name == target_file_name || link.to_lowercase() == target_title
             });
 
@@ -413,7 +423,9 @@ mod tests {
 
     #[test]
     fn test_wiki_link_registry() {
-        let temp_dir = std::env::current_dir().unwrap().join("test_wiki_temp_registry");
+        let temp_dir = std::env::current_dir()
+            .unwrap()
+            .join("test_wiki_temp_registry");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
         }
@@ -448,7 +460,9 @@ mod tests {
 
     #[test]
     fn test_wiki_cursors_registry() {
-        let temp_dir = std::env::current_dir().unwrap().join("test_wiki_temp_cursors");
+        let temp_dir = std::env::current_dir()
+            .unwrap()
+            .join("test_wiki_temp_cursors");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
         }
@@ -473,7 +487,9 @@ mod tests {
 
     #[test]
     fn test_init_wiki_conditional_onboarding() {
-        let temp_dir = std::env::current_dir().unwrap().join("test_wiki_temp_conditional");
+        let temp_dir = std::env::current_dir()
+            .unwrap()
+            .join("test_wiki_temp_conditional");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
         }

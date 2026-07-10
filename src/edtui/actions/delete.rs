@@ -2,11 +2,11 @@ use jagged::index::RowIndex;
 
 use super::Execute;
 use crate::edtui::{
+    EditorState, Index2, Lines,
     actions::motion::CharacterClass,
     clipboard::ClipboardTrait,
     helper::{is_out_of_bounds, max_col_insert, skip_whitespace, skip_whitespace_rev},
     state::selection::Selection,
-    EditorState, Index2, Lines,
 };
 
 /// Deletes a character at the current cursor position. Does not
@@ -357,10 +357,10 @@ impl Execute for JoinLineWithLineBelow {
 
 #[cfg(test)]
 mod tests {
-    use crate::edtui::state::selection::Selection;
     use crate::edtui::EditorMode;
     use crate::edtui::Index2;
     use crate::edtui::Lines;
+    use crate::edtui::state::selection::Selection;
 
     use super::*;
     fn test_state() -> EditorState {

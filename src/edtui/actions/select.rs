@@ -1,8 +1,8 @@
 use jagged::index::RowIndex;
 
-use super::{delete::delete_selection, motion::CharacterClass, Execute};
+use super::{Execute, delete::delete_selection, motion::CharacterClass};
 use crate::edtui::{
-    clipboard::ClipboardTrait, state::selection::Selection, EditorMode, EditorState, Index2, Lines,
+    EditorMode, EditorState, Index2, Lines, clipboard::ClipboardTrait, state::selection::Selection,
 };
 
 /// Selects text between specified delimiter characters.
@@ -204,9 +204,9 @@ impl Execute for ChangeSelection {
 
 #[cfg(test)]
 mod tests {
-    use crate::edtui::state::selection::Selection;
     use crate::edtui::Index2;
     use crate::edtui::Lines;
+    use crate::edtui::state::selection::Selection;
 
     use super::*;
     fn test_state() -> EditorState {
@@ -230,8 +230,8 @@ mod tests {
 
     #[test]
     fn test_select_line_with_motion() {
-        use crate::edtui::actions::motion::MoveUp;
         use crate::edtui::EditorMode;
+        use crate::edtui::actions::motion::MoveUp;
 
         let mut state = EditorState::new(Lines::from("First line\nSecond line\nThird line"));
 
@@ -257,8 +257,8 @@ mod tests {
 
     #[test]
     fn test_select_line_with_downward_motion() {
-        use crate::edtui::actions::motion::MoveDown;
         use crate::edtui::EditorMode;
+        use crate::edtui::actions::motion::MoveDown;
 
         let mut state = EditorState::new(Lines::from("First line\nSecond line\nThird line"));
 
@@ -287,8 +287,8 @@ mod tests {
 
     #[test]
     fn test_select_line_with_horizontal_motion() {
-        use crate::edtui::actions::motion::MoveForward;
         use crate::edtui::EditorMode;
+        use crate::edtui::actions::motion::MoveForward;
 
         let mut state = EditorState::new(Lines::from("First line\nSecond line\nThird line"));
 
@@ -318,8 +318,8 @@ mod tests {
 
     #[test]
     fn test_select_line_multiple_upward_movements() {
-        use crate::edtui::actions::motion::MoveUp;
         use crate::edtui::EditorMode;
+        use crate::edtui::actions::motion::MoveUp;
 
         let mut state = EditorState::new(Lines::from("Line 0\nLine 1\nLine 2\nLine 3"));
 
@@ -358,8 +358,8 @@ mod tests {
 
     #[test]
     fn test_select_line_multiple_downward_movements() {
-        use crate::edtui::actions::motion::MoveDown;
         use crate::edtui::EditorMode;
+        use crate::edtui::actions::motion::MoveDown;
 
         let mut state = EditorState::new(Lines::from("Line 0\nLine 1\nLine 2\nLine 3"));
 
@@ -398,8 +398,8 @@ mod tests {
 
     #[test]
     fn test_select_line_mixed_movements() {
-        use crate::edtui::actions::motion::{MoveDown, MoveUp};
         use crate::edtui::EditorMode;
+        use crate::edtui::actions::motion::{MoveDown, MoveUp};
 
         let mut state = EditorState::new(Lines::from("Line 0\nLine 1\nLine 2\nLine 3\nLine 4"));
 

@@ -1,6 +1,6 @@
+pub mod eval;
 pub mod lexer;
 pub mod parser;
-pub mod eval;
 pub mod units;
 
 use crate::math::parser::Line;
@@ -66,7 +66,12 @@ pub fn evaluate_sheet(
                 let evaluated = evaluate_inline_math(&text, &mut ctx);
                 updated_lines.push(evaluated);
             }
-            Line::Assignment { name, expr, raw_prefix, current_result } => {
+            Line::Assignment {
+                name,
+                expr,
+                raw_prefix,
+                current_result,
+            } => {
                 let is_explicit = eval::is_explicit_conversion(&expr, &ctx);
                 match eval::eval_and_scale(&expr, &mut ctx) {
                     Ok(qty) => {
@@ -106,9 +111,16 @@ pub fn evaluate_sheet(
                     }
                 }
             }
-            Line::FnDefinition { name, args, expr, raw_prefix: _ } => {
-                ctx.functions.insert(name.clone(), (args.clone(), expr.clone()));
-                let formatted_fn = format!("({}) = {}", args.join(", "), eval::expr_to_string(&expr));
+            Line::FnDefinition {
+                name,
+                args,
+                expr,
+                raw_prefix: _,
+            } => {
+                ctx.functions
+                    .insert(name.clone(), (args.clone(), expr.clone()));
+                let formatted_fn =
+                    format!("({}) = {}", args.join(", "), eval::expr_to_string(&expr));
                 if let Some(pos) = vars_inspector.iter().position(|(n, _)| n == &name) {
                     vars_inspector[pos] = (name.clone(), formatted_fn);
                 } else {
@@ -116,17 +128,17 @@ pub fn evaluate_sheet(
                 }
                 updated_lines.push(line_text.to_string());
             }
-            Line::Evaluation { expr, raw_prefix, .. } => {
-                match eval::eval_and_scale(&expr, &mut ctx) {
-                    Ok(qty) => {
-                        let formatted = eval::format_quantity(&qty);
-                        updated_lines.push(format!("{} {}", raw_prefix, formatted));
-                    }
-                    Err(err) => {
-                        updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
-                    }
+            Line::Evaluation {
+                expr, raw_prefix, ..
+            } => match eval::eval_and_scale(&expr, &mut ctx) {
+                Ok(qty) => {
+                    let formatted = eval::format_quantity(&qty);
+                    updated_lines.push(format!("{} {}", raw_prefix, formatted));
                 }
-            }
+                Err(err) => {
+                    updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
+                }
+            },
         }
     }
 
@@ -169,7 +181,8 @@ fn evaluate_inline_math(text: &str, ctx: &mut eval::Context) -> String {
                                     result.push_str(&format!("`{} => {}`", expr_part, formatted));
                                 }
                                 Err(err) => {
-                                    result.push_str(&format!("`{} => [Error: {}]`", expr_part, err));
+                                    result
+                                        .push_str(&format!("`{} => [Error: {}]`", expr_part, err));
                                 }
                             }
                         } else {
@@ -227,7 +240,11 @@ cost = commute / mileage * gas_cost
 cost =>
 "#;
         let (unit_output, _) = evaluate_sheet(unit_sheet, &rates);
-        assert!(unit_output.contains("cost => $13.3304/day"), "Actual output: {}", unit_output);
+        assert!(
+            unit_output.contains("cost => $13.3304/day"),
+            "Actual output: {}",
+            unit_output
+        );
 
         // Test unit cancellation with standalone units (implied 1)
         let unit_sheet_2 = r#"
@@ -241,9 +258,21 @@ cost in $/week =>
 cost * 5 days =>
 "#;
         let (unit_output_2, _) = evaluate_sheet(unit_sheet_2, &rates);
-        assert!(unit_output_2.contains("cost => $13.3304/day"), "Actual output: {}", unit_output_2);
-        assert!(unit_output_2.contains("cost in $/week => $93.3126/week"), "Actual output: {}", unit_output_2);
-        assert!(unit_output_2.contains("cost * 5 days => $66.6519"), "Actual output: {}", unit_output_2);
+        assert!(
+            unit_output_2.contains("cost => $13.3304/day"),
+            "Actual output: {}",
+            unit_output_2
+        );
+        assert!(
+            unit_output_2.contains("cost in $/week => $93.3126/week"),
+            "Actual output: {}",
+            unit_output_2
+        );
+        assert!(
+            unit_output_2.contains("cost * 5 days => $66.6519"),
+            "Actual output: {}",
+            unit_output_2
+        );
 
         // Test payment reproduction
         let payment_sheet = r#"
@@ -261,7 +290,11 @@ payment = (monthly * principal) / (1 - (1 + monthly) ^ (-1 * months))
 payment =>
 "#;
         let (payment_output, _) = evaluate_sheet(payment_sheet, &rates);
-        assert!(payment_output.contains("payment => $534.607"), "Actual output:\n{}", payment_output);
+        assert!(
+            payment_output.contains("payment => $534.607"),
+            "Actual output:\n{}",
+            payment_output
+        );
 
         // Test assignment with trailing arrow
         let assignment_arrow_sheet = r#"
@@ -269,8 +302,16 @@ a = 10 + 20 =>
 b = a * 2 => 60
 "#;
         let (arrow_output, _) = evaluate_sheet(assignment_arrow_sheet, &rates);
-        assert!(arrow_output.contains("a = 10 + 20 => 30"), "Actual output:\n{}", arrow_output);
-        assert!(arrow_output.contains("b = a * 2 => 60"), "Actual output:\n{}", arrow_output);
+        assert!(
+            arrow_output.contains("a = 10 + 20 => 30"),
+            "Actual output:\n{}",
+            arrow_output
+        );
+        assert!(
+            arrow_output.contains("b = a * 2 => 60"),
+            "Actual output:\n{}",
+            arrow_output
+        );
 
         // Test de-duplication of variables in inspector
         let dup_sheet = r#"
@@ -295,12 +336,36 @@ e3 =>
 e4 =>
 "#;
         let (energy_output, _) = evaluate_sheet(energy_sheet, &rates);
-        assert!(energy_output.contains("e1 = 0.000001 J => 1 uJ"), "Actual output:\n{}", energy_output);
-        assert!(energy_output.contains("e2 = 0.000001 J to J => 0.000001 J"), "Actual output:\n{}", energy_output);
-        assert!(energy_output.contains("e3 = 1500 J => 1.5 kJ"), "Actual output:\n{}", energy_output);
-        assert!(energy_output.contains("e4 = 1500 J to J => 1500 J"), "Actual output:\n{}", energy_output);
-        assert!(energy_output.contains("e1 => 1 uJ"), "Actual output:\n{}", energy_output);
-        assert!(energy_output.contains("e2 => 0.000001 J"), "Actual output:\n{}", energy_output);
+        assert!(
+            energy_output.contains("e1 = 0.000001 J => 1 uJ"),
+            "Actual output:\n{}",
+            energy_output
+        );
+        assert!(
+            energy_output.contains("e2 = 0.000001 J to J => 0.000001 J"),
+            "Actual output:\n{}",
+            energy_output
+        );
+        assert!(
+            energy_output.contains("e3 = 1500 J => 1.5 kJ"),
+            "Actual output:\n{}",
+            energy_output
+        );
+        assert!(
+            energy_output.contains("e4 = 1500 J to J => 1500 J"),
+            "Actual output:\n{}",
+            energy_output
+        );
+        assert!(
+            energy_output.contains("e1 => 1 uJ"),
+            "Actual output:\n{}",
+            energy_output
+        );
+        assert!(
+            energy_output.contains("e2 => 0.000001 J"),
+            "Actual output:\n{}",
+            energy_output
+        );
 
         // Test custom unit scaling/prefixing
         let custom_scale_sheet = r#"
@@ -309,8 +374,16 @@ B = 1 MA to m =>
 B to A =>
 "#;
         let (custom_scale_output, _) = evaluate_sheet(custom_scale_sheet, &rates);
-        assert!(custom_scale_output.contains("B = 1 MA to m => 10000000 m"), "Actual output:\n{}", custom_scale_output);
-        assert!(custom_scale_output.contains("B to A => 1000000 A"), "Actual output:\n{}", custom_scale_output);
+        assert!(
+            custom_scale_output.contains("B = 1 MA to m => 10000000 m"),
+            "Actual output:\n{}",
+            custom_scale_output
+        );
+        assert!(
+            custom_scale_output.contains("B to A => 1000000 A"),
+            "Actual output:\n{}",
+            custom_scale_output
+        );
 
         // Test frequency and pressure scaling/conversions
         let freq_press_sheet = r#"
@@ -320,10 +393,26 @@ p1 = 30 psi to kPa =>
 p2 = 1.5 bar =>
 "#;
         let (fp_output, _) = evaluate_sheet(freq_press_sheet, &rates);
-        assert!(fp_output.contains("f1 = 4500000000 Hz => 4.5 GHz"), "Actual output:\n{}", fp_output);
-        assert!(fp_output.contains("f2 = 120000 Hz => 120 kHz"), "Actual output:\n{}", fp_output);
-        assert!(fp_output.contains("p1 = 30 psi to kPa => 206.8427 kPa"), "Actual output:\n{}", fp_output);
-        assert!(fp_output.contains("p2 = 1.5 bar => 1.5 bar"), "Actual output:\n{}", fp_output);
+        assert!(
+            fp_output.contains("f1 = 4500000000 Hz => 4.5 GHz"),
+            "Actual output:\n{}",
+            fp_output
+        );
+        assert!(
+            fp_output.contains("f2 = 120000 Hz => 120 kHz"),
+            "Actual output:\n{}",
+            fp_output
+        );
+        assert!(
+            fp_output.contains("p1 = 30 psi to kPa => 206.8427 kPa"),
+            "Actual output:\n{}",
+            fp_output
+        );
+        assert!(
+            fp_output.contains("p2 = 1.5 bar => 1.5 bar"),
+            "Actual output:\n{}",
+            fp_output
+        );
     }
 
     #[test]
@@ -343,8 +432,16 @@ r1 = fib(5) =>
 r2 = fib(6) =>
 "#;
         let (output1, _) = evaluate_sheet(sheet1, &rates);
-        assert!(output1.contains("r1 = fib(5) => 5"), "Actual output:\n{}", output1);
-        assert!(output1.contains("r2 = fib(6) => 8"), "Actual output:\n{}", output1);
+        assert!(
+            output1.contains("r1 = fib(5) => 5"),
+            "Actual output:\n{}",
+            output1
+        );
+        assert!(
+            output1.contains("r2 = fib(6) => 8"),
+            "Actual output:\n{}",
+            output1
+        );
 
         // 2. Test switch statement with string/unit-like values and default case
         let sheet2 = r#"
@@ -361,8 +458,16 @@ v2 = rate("EUR") =>
 v3 = rate("JPY") =>
 "#;
         let (output2, _) = evaluate_sheet(sheet2, &rates);
-        assert!(output2.contains("v1 = rate(\"USD\") => 1"), "Actual: {}", output2);
-        assert!(output2.contains("v2 = rate(\"EUR\") => 0.85"), "Actual: {}", output2);
+        assert!(
+            output2.contains("v1 = rate(\"USD\") => 1"),
+            "Actual: {}",
+            output2
+        );
+        assert!(
+            output2.contains("v2 = rate(\"EUR\") => 0.85"),
+            "Actual: {}",
+            output2
+        );
         assert_eq!(output2.contains("v3 = rate(\"JPY\") => 0"), true);
 
         // 3. Test raw multi-line block sheet evaluation
@@ -374,7 +479,11 @@ res = {
 } =>
 "#;
         let (output3, _) = evaluate_sheet(sheet3, &rates);
-        assert!(output3.contains("res = {\n    a = 10;\n    b = 20;\n    a + b\n} => 30"), "Actual: {}", output3);
+        assert!(
+            output3.contains("res = {\n    a = 10;\n    b = 20;\n    a + b\n} => 30"),
+            "Actual: {}",
+            output3
+        );
 
         // 4. Test multi-line while loop sheet evaluation
         let sheet4 = r#"

@@ -179,7 +179,11 @@ impl Execute for ToggleCase {
                         continue;
                     };
                     let col_start = if row == start.row { start.col } else { 0 };
-                    let col_end = if row == end.row { end.col } else { len_col.saturating_sub(1) };
+                    let col_end = if row == end.row {
+                        end.col
+                    } else {
+                        len_col.saturating_sub(1)
+                    };
 
                     for col in col_start..=col_end {
                         let index = crate::edtui::Index2::new(row, col);
@@ -246,8 +250,8 @@ impl Execute for Composed {
 
 #[cfg(test)]
 mod tests {
-    use crate::edtui::clipboard::InternalClipboard;
     use crate::edtui::Lines;
+    use crate::edtui::clipboard::InternalClipboard;
 
     use super::*;
     fn test_state() -> EditorState {
@@ -305,7 +309,7 @@ mod tests {
         state.cursor.col = 4;
         state.selection = Some(crate::edtui::state::selection::Selection::new(
             crate::edtui::Index2::new(0, 2),
-            crate::edtui::Index2::new(0, 4)
+            crate::edtui::Index2::new(0, 4),
         ));
 
         ToggleCase.execute(&mut state);

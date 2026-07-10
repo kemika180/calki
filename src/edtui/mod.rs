@@ -325,12 +325,12 @@ mod state;
 mod view;
 
 pub use events::EditorEventHandler;
-pub use state::{highlight::Highlight, mode::EditorMode, EditorState};
-pub use view::{theme::EditorTheme, EditorStatusLine, EditorView, LineNumbers};
+pub use state::{EditorState, highlight::Highlight, mode::EditorMode};
+pub use view::{EditorStatusLine, EditorView, LineNumbers, theme::EditorTheme};
 
 #[cfg(feature = "syntax-highlighting")]
 pub use view::syntax_higlighting::{
-    SyntaxHighlighter, SyntaxHighlighterError, SYNTAX_SET, THEME_SET,
+    SYNTAX_SET, SyntaxHighlighter, SyntaxHighlighterError, THEME_SET,
 };
 
 #[cfg(feature = "syntax-highlighting")]
@@ -338,5 +338,5 @@ pub use syntect;
 
 /// A data structure that contains chars organized in rows and columns
 pub type Lines = jagged::Jagged<char>;
-pub use jagged::index::RowIndex;
 pub use jagged::Index2;
+pub use jagged::index::RowIndex;

@@ -4,11 +4,11 @@ pub(crate) mod paste;
 
 #[allow(deprecated)]
 pub use key::deprecated::KeyEvent;
-pub use key::{input::KeyInput, KeyEventHandler, KeyEventRegister, KeyInputSequence};
+pub use key::{KeyEventHandler, KeyEventRegister, KeyInputSequence, input::KeyInput};
 
 pub use mouse::{MouseEvent, MouseEventHandler};
 
-use crate::edtui::{events::paste::PasteEventHandler, EditorState};
+use crate::edtui::{EditorState, events::paste::PasteEventHandler};
 use crossterm::event::Event as CTEvent;
 
 /// Handles key and mouse events.

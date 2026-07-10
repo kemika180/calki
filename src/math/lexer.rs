@@ -16,31 +16,31 @@ pub enum Token {
     Comma,      // ,
     LBrack,     // [
     RBrack,     // ]
-    
+
     // Comparisons
-    Less,       // <
-    LessEq,     // <=
-    Greater,    // >
-    GreaterEq,  // >=
-    DoubleEq,   // ==
-    NotEq,      // !=
+    Less,      // <
+    LessEq,    // <=
+    Greater,   // >
+    GreaterEq, // >=
+    DoubleEq,  // ==
+    NotEq,     // !=
 
     // Logical
-    And,        // and
-    Or,         // or
-    Not,        // not
+    And, // and
+    Or,  // or
+    Not, // not
 
     // Bitwise
-    Ampersand,  // &
-    Pipe,       // |
-    Tilde,      // ~
-    LShift,     // <<
-    RShift,     // >>
+    Ampersand, // &
+    Pipe,      // |
+    Tilde,     // ~
+    LShift,    // <<
+    RShift,    // >>
 
     // Braces / Statement Separators
-    LBrace,     // {
-    RBrace,     // }
-    Semicolon,  // ;
+    LBrace,    // {
+    RBrace,    // }
+    Semicolon, // ;
 
     // Types
     StringLiteral(String),
@@ -214,21 +214,22 @@ impl<'a> Lexer<'a> {
                     let mut chars_clone = self.chars.clone();
                     chars_clone.next(); // consume current digit (which would be '0' for hex/bin)
                     if ch == '0'
-                        && let Some((_, next_ch)) = chars_clone.peek() {
-                            if *next_ch == 'x' || *next_ch == 'X' {
-                                self.chars.next();
-                                self.chars.next();
-                                let token = self.lex_hex_number(idx + 2)?;
-                                tokens.push(token);
-                                continue;
-                            } else if *next_ch == 'b' || *next_ch == 'B' {
-                                self.chars.next();
-                                self.chars.next();
-                                let token = self.lex_bin_number(idx + 2)?;
-                                tokens.push(token);
-                                continue;
-                            }
+                        && let Some((_, next_ch)) = chars_clone.peek()
+                    {
+                        if *next_ch == 'x' || *next_ch == 'X' {
+                            self.chars.next();
+                            self.chars.next();
+                            let token = self.lex_hex_number(idx + 2)?;
+                            tokens.push(token);
+                            continue;
+                        } else if *next_ch == 'b' || *next_ch == 'B' {
+                            self.chars.next();
+                            self.chars.next();
+                            let token = self.lex_bin_number(idx + 2)?;
+                            tokens.push(token);
+                            continue;
                         }
+                    }
                     let token = self.lex_number(idx)?;
                     tokens.push(token);
                 }
@@ -256,7 +257,10 @@ impl<'a> Lexer<'a> {
             }
         }
         if end_idx == start_idx {
-            return Err(format!("Empty hexadecimal literal at position {}", start_idx));
+            return Err(format!(
+                "Empty hexadecimal literal at position {}",
+                start_idx
+            ));
         }
         let hex_str = &self.input[start_idx..end_idx];
         match i64::from_str_radix(hex_str, 16) {
@@ -281,7 +285,10 @@ impl<'a> Lexer<'a> {
         let bin_str = &self.input[start_idx..end_idx];
         match i64::from_str_radix(bin_str, 2) {
             Ok(val) => Ok(Token::Number(val as f64)),
-            Err(e) => Err(format!("Failed to parse binary number '{}': {}", bin_str, e)),
+            Err(e) => Err(format!(
+                "Failed to parse binary number '{}': {}",
+                bin_str, e
+            )),
         }
     }
 
@@ -407,10 +414,7 @@ mod tests {
         let tokens = lexer.lex().unwrap();
         assert_eq!(
             tokens,
-            vec![
-                Token::Number(50.0),
-                Token::Identifier("km/h".to_string()),
-            ]
+            vec![Token::Number(50.0), Token::Identifier("km/h".to_string()),]
         );
     }
 

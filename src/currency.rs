@@ -95,16 +95,19 @@ pub fn trigger_background_update() {
 
 fn fetch_and_save_rates(file_path: PathBuf) -> Result<(), String> {
     let url = "https://open.er-api.com/v6/latest/USD";
-    
+
     // Call the API with a 3-second timeout
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(3))
         .build();
 
-    let response = agent.get(url).call()
+    let response = agent
+        .get(url)
+        .call()
         .map_err(|e| format!("API request failed: {}", e))?;
 
-    let json_val: serde_json::Value = response.into_json()
+    let json_val: serde_json::Value = response
+        .into_json()
         .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
 
     let rates_obj = json_val["rates"]
@@ -136,8 +139,7 @@ fn fetch_and_save_rates(file_path: PathBuf) -> Result<(), String> {
     let json_str = serde_json::to_string_pretty(&cache)
         .map_err(|e| format!("Failed to serialize cache: {}", e))?;
 
-    fs::write(file_path, json_str)
-        .map_err(|e| format!("Failed to write cache file: {}", e))?;
+    fs::write(file_path, json_str).map_err(|e| format!("Failed to write cache file: {}", e))?;
 
     Ok(())
 }

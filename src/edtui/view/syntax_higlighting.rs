@@ -4,7 +4,9 @@ use crate::edtui::syntect::{
     highlighting::{Theme, ThemeSet},
     parsing::{SyntaxReference, SyntaxSet},
 };
-use crate::edtui::view::syntax_higlighting::SyntaxHighlighterError::{ExtensionNotFound, ThemeNotFound};
+use crate::edtui::view::syntax_higlighting::SyntaxHighlighterError::{
+    ExtensionNotFound, ThemeNotFound,
+};
 use once_cell::sync::Lazy;
 use ratatui_core::style::{Color, Style};
 use std::error::Error;

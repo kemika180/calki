@@ -3,11 +3,11 @@
 use crate::edtui::actions::Execute;
 use crate::edtui::{EditorState, Index2, Lines};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui_core::backend::Backend;
 use ratatui_core::terminal::Terminal;
-use std::io::{stdout, Result};
+use std::io::{Result, stdout};
 
 /// Action that requests opening the editor content in an external system editor.
 ///

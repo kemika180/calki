@@ -1,6 +1,8 @@
 pub(crate) mod deprecated;
 pub(crate) mod input;
 
+#[cfg(feature = "system-editor")]
+use crate::edtui::actions::OpenSystemEditor;
 use crate::edtui::actions::cpaste::PasteOverSelection;
 use crate::edtui::actions::delete::{
     DeleteCharForward, DeleteToEndOfLine, DeleteToFirstCharOfLine, DeleteWordBackward,
@@ -10,8 +12,6 @@ use crate::edtui::actions::motion::{
     MoveHalfPageDown, MovePageDown, MovePageUp, MoveToFirstRow, MoveToLastRow,
 };
 use crate::edtui::actions::search::StartSearch;
-#[cfg(feature = "system-editor")]
-use crate::edtui::actions::OpenSystemEditor;
 use crate::edtui::actions::{
     Action, AppendCharToSearch, AppendNewline, Chainable, ChangeInnerBetween, ChangeInnerWord,
     ChangeSelection, CopyLine, CopySelection, DeleteChar, DeleteLine, DeleteSelection, Execute,

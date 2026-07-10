@@ -2,11 +2,11 @@ use crossterm::event::{MouseEvent as CTMouseEvent, MouseEventKind};
 use jagged::Index2;
 
 use crate::edtui::{
+    EditorMode, EditorState,
     actions::{Execute, SwitchMode},
     helper::char_width,
     state::selection::set_selection,
     view::line_wrapper::LineWrapper,
-    EditorMode, EditorState,
 };
 
 /// The number of lines to scroll per scroll wheel event.
@@ -273,7 +273,7 @@ mod tests {
         // Set viewport to show 3 lines: line2, line3, line4.
         state.view.num_rows = 3;
         state.view.viewport.y = 1; // line2
-        state.cursor.row = 2;      // line3 (visual row 1)
+        state.cursor.row = 2; // line3 (visual row 1)
 
         // Set screen area so bounds checks pass
         state.view.screen_area = ratatui::layout::Rect::new(0, 0, 80, 24);

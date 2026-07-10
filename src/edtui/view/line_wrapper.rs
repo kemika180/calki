@@ -210,9 +210,18 @@ mod tests {
         let spans = vec![Span::raw("Hello"), Span::raw("World")];
         let wrapped_spans = LineWrapper::wrap_spans(spans, 3, 0);
 
-        assert_eq!(wrapped_spans[0], vec![Span::styled("Hel", Style::default())]);
-        assert_eq!(wrapped_spans[1], vec![Span::styled("loW", Style::default())]);
-        assert_eq!(wrapped_spans[2], vec![Span::styled("orl", Style::default())]);
+        assert_eq!(
+            wrapped_spans[0],
+            vec![Span::styled("Hel", Style::default())]
+        );
+        assert_eq!(
+            wrapped_spans[1],
+            vec![Span::styled("loW", Style::default())]
+        );
+        assert_eq!(
+            wrapped_spans[2],
+            vec![Span::styled("orl", Style::default())]
+        );
         assert_eq!(wrapped_spans[3], vec![Span::styled("d", Style::default())]);
     }
 
@@ -221,8 +230,14 @@ mod tests {
         let spans = vec![Span::raw("Hello "), Span::raw("World")];
         let wrapped_spans = LineWrapper::wrap_spans(spans, 7, 0);
 
-        assert_eq!(wrapped_spans[0], vec![Span::styled("Hello", Style::default())]);
-        assert_eq!(wrapped_spans[1], vec![Span::styled("World", Style::default())]);
+        assert_eq!(
+            wrapped_spans[0],
+            vec![Span::styled("Hello", Style::default())]
+        );
+        assert_eq!(
+            wrapped_spans[1],
+            vec![Span::styled("World", Style::default())]
+        );
     }
 
     #[test]
@@ -230,7 +245,13 @@ mod tests {
         let spans = vec![Span::raw("Hell🙂!")];
         let wrapped_spans = LineWrapper::wrap_spans(spans, 4, 0);
 
-        assert_eq!(wrapped_spans[0], vec![Span::styled("Hell", Style::default())]);
-        assert_eq!(wrapped_spans[1], vec![Span::styled("🙂!", Style::default())]);
+        assert_eq!(
+            wrapped_spans[0],
+            vec![Span::styled("Hell", Style::default())]
+        );
+        assert_eq!(
+            wrapped_spans[1],
+            vec![Span::styled("🙂!", Style::default())]
+        );
     }
 }

@@ -1,7 +1,7 @@
 use crate::edtui::{
-    actions::{cpaste::PasteOverSelection, Execute, Paste},
-    clipboard::ClipboardTrait,
     EditorState,
+    actions::{Execute, Paste, cpaste::PasteOverSelection},
+    clipboard::ClipboardTrait,
 };
 
 /// Handles a paste event.
@@ -11,7 +11,9 @@ impl PasteEventHandler {
     pub(crate) fn on_event(text: String, state: &mut EditorState) {
         state.clip.set_text(text);
         match state.mode {
-            crate::edtui::EditorMode::Normal | crate::edtui::EditorMode::Insert => Paste.execute(state),
+            crate::edtui::EditorMode::Normal | crate::edtui::EditorMode::Insert => {
+                Paste.execute(state)
+            }
             crate::edtui::EditorMode::Visual => PasteOverSelection.execute(state),
             crate::edtui::EditorMode::Search => {} // TODO: Insert into search
         }

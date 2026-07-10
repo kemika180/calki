@@ -10,7 +10,12 @@ pub struct Quantity {
 
 impl Quantity {
     pub fn scalar(value: f64, unit: Option<String>) -> Self {
-        Self { value, unit, list: None, is_bool: false }
+        Self {
+            value,
+            unit,
+            list: None,
+            is_bool: false,
+        }
     }
 
     pub fn list(elements: Vec<Quantity>) -> Self {
@@ -163,11 +168,11 @@ impl Parser {
     fn is_infix_modulo(&self) -> bool {
         if let Some(next_tok) = self.tokens.get(self.pos + 1) {
             match next_tok {
-                Token::Number(_) |
-                Token::Identifier(_) |
-                Token::LPar |
-                Token::LBrack |
-                Token::Not => true,
+                Token::Number(_)
+                | Token::Identifier(_)
+                | Token::LPar
+                | Token::LBrack
+                | Token::Not => true,
                 _ => false,
             }
         } else {
@@ -182,7 +187,7 @@ impl Parser {
 
         while !self.is_at_end() {
             let next_tok = self.peek().cloned().unwrap();
-            
+
             // Handle percentage as a suffix operator (highest precedence) unless it acts as infix modulo
             if next_tok == Token::Percentage {
                 if self.is_infix_modulo() {
@@ -248,10 +253,17 @@ impl Parser {
                         else_expr: Box::new(else_expr),
                     })
                 } else if name == "for" && self.peek() != Some(&Token::LPar) {
-                    let next_tok = self.next_token().ok_or_else(|| "Expected loop variable after 'for'".to_string())?;
+                    let next_tok = self
+                        .next_token()
+                        .ok_or_else(|| "Expected loop variable after 'for'".to_string())?;
                     let var = match next_tok {
                         Token::Identifier(v) => v,
-                        t => return Err(format!("Expected identifier as loop variable, found {:?}", t)),
+                        t => {
+                            return Err(format!(
+                                "Expected identifier as loop variable, found {:?}",
+                                t
+                            ));
+                        }
                     };
                     self.expect(Token::In, "Expected 'in' after loop variable")?;
                     let iterable = self.parse_expression(0)?;
@@ -301,14 +313,14 @@ impl Parser {
                     if self.peek() == Some(&Token::RBrace) {
                         break;
                     }
-                    
+
                     let mut is_assign = false;
                     if let Some(Token::Identifier(_)) = self.peek() {
                         if let Some(Token::Equal) = self.tokens.get(self.pos + 1) {
                             is_assign = true;
                         }
                     }
-                    
+
                     if is_assign {
                         let name_tok = self.next_token().unwrap();
                         let name = match name_tok {
@@ -321,7 +333,7 @@ impl Parser {
                     } else {
                         exprs.push(self.parse_expression(0)?);
                     }
-                    
+
                     if self.peek() == Some(&Token::Semicolon) {
                         self.next_token();
                     }
@@ -334,7 +346,7 @@ impl Parser {
                 self.expect(Token::LBrace, "Expected '{' after switch value")?;
                 let mut cases = Vec::new();
                 let mut default_case = None;
-                
+
                 while self.peek() != Some(&Token::RBrace) && !self.is_at_end() {
                     while self.peek() == Some(&Token::Semicolon) {
                         self.next_token();
@@ -342,7 +354,7 @@ impl Parser {
                     if self.peek() == Some(&Token::RBrace) {
                         break;
                     }
-                    
+
                     if self.peek() == Some(&Token::Default) {
                         self.next_token(); // consume 'default'
                         self.expect(Token::Arrow, "Expected '=>' after 'default'")?;
@@ -354,7 +366,7 @@ impl Parser {
                         let res_expr = self.parse_expression(0)?;
                         cases.push((pattern, res_expr));
                     }
-                    
+
                     if self.peek() == Some(&Token::Semicolon) {
                         self.next_token();
                     }
@@ -366,14 +378,16 @@ impl Parser {
                     default_case,
                 })
             }
-            Token::StringLiteral(val) => {
-                Ok(Expr::StringLiteral(val))
-            }
+            Token::StringLiteral(val) => Ok(Expr::StringLiteral(val)),
             Token::Minus => {
                 // Unary minus: represented as 0 - expr
                 let (_, right_bp) = prefix_binding_power(&Token::Minus);
                 let expr = self.parse_expression(right_bp)?;
-                Ok(Expr::BinaryOp(Op::Sub, Box::new(Expr::Number(0.0)), Box::new(expr)))
+                Ok(Expr::BinaryOp(
+                    Op::Sub,
+                    Box::new(Expr::Number(0.0)),
+                    Box::new(expr),
+                ))
             }
             Token::Plus => {
                 // Unary plus: just return the expression
@@ -470,7 +484,11 @@ impl Parser {
             }
             Token::GreaterEq => {
                 let right = self.parse_expression(right_bp)?;
-                Ok(Expr::BinaryOp(Op::GreaterEq, Box::new(left), Box::new(right)))
+                Ok(Expr::BinaryOp(
+                    Op::GreaterEq,
+                    Box::new(left),
+                    Box::new(right),
+                ))
             }
             Token::DoubleEq => {
                 let right = self.parse_expression(right_bp)?;
@@ -572,7 +590,12 @@ fn infix_binding_power(op: &Token) -> Option<(u8, u8)> {
         Token::And => Some((3, 4)),
         Token::Pipe => Some((5, 6)),
         Token::Ampersand => Some((7, 8)),
-        Token::Less | Token::LessEq | Token::Greater | Token::GreaterEq | Token::DoubleEq | Token::NotEq => Some((9, 10)),
+        Token::Less
+        | Token::LessEq
+        | Token::Greater
+        | Token::GreaterEq
+        | Token::DoubleEq
+        | Token::NotEq => Some((9, 10)),
         Token::LShift | Token::RShift => Some((11, 12)),
         Token::Plus | Token::Minus => Some((13, 14)),
         Token::Star | Token::Slash | Token::Percentage => Some((15, 16)),
@@ -600,43 +623,51 @@ pub fn parse_line(line_text: &str) -> Line {
             let right_part = trimmed[eq_pos + 1..].trim();
 
             // Check if left_part is a function signature: name(args)
-            if left_part.contains('(') && left_part.ends_with(')')
-                && let Some(lpar_pos) = left_part.find('(') {
-                    let fn_name = left_part[..lpar_pos].trim();
-                    let args_str = &left_part[lpar_pos + 1..left_part.len() - 1];
-                    let args: Vec<String> = args_str
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
+            if left_part.contains('(')
+                && left_part.ends_with(')')
+                && let Some(lpar_pos) = left_part.find('(')
+            {
+                let fn_name = left_part[..lpar_pos].trim();
+                let args_str = &left_part[lpar_pos + 1..left_part.len() - 1];
+                let args: Vec<String> = args_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
 
-                    if !fn_name.is_empty() && fn_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                        let lexer = Lexer::new(right_part);
-                        if let Ok(tokens) = lexer.lex() {
-                            let parser = Parser::new(tokens);
-                            if let Ok(expr) = parser.parse() {
-                                let raw_prefix = line_text[..line_text.find('=').unwrap() + 1].to_string();
-                                return Line::FnDefinition {
-                                    name: fn_name.to_string(),
-                                    args,
-                                    expr,
-                                    raw_prefix,
-                                };
-                            }
+                if !fn_name.is_empty() && fn_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    let lexer = Lexer::new(right_part);
+                    if let Ok(tokens) = lexer.lex() {
+                        let parser = Parser::new(tokens);
+                        if let Ok(expr) = parser.parse() {
+                            let raw_prefix =
+                                line_text[..line_text.find('=').unwrap() + 1].to_string();
+                            return Line::FnDefinition {
+                                name: fn_name.to_string(),
+                                args,
+                                expr,
+                                raw_prefix,
+                            };
                         }
                     }
                 }
+            }
 
             // Otherwise, check if left_part is a single variable name
             if !left_part.is_empty() && left_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                let (expr_part, current_result, has_arrow) = if let Some(arrow_pos) = right_part.find("=>") {
-                    let expr_part = right_part[..arrow_pos].trim();
-                    let res_str = right_part[arrow_pos + 2..].trim();
-                    let current_result = if res_str.is_empty() { None } else { Some(res_str.to_string()) };
-                    (expr_part, current_result, true)
-                } else {
-                    (right_part, None, false)
-                };
+                let (expr_part, current_result, has_arrow) =
+                    if let Some(arrow_pos) = right_part.find("=>") {
+                        let expr_part = right_part[..arrow_pos].trim();
+                        let res_str = right_part[arrow_pos + 2..].trim();
+                        let current_result = if res_str.is_empty() {
+                            None
+                        } else {
+                            Some(res_str.to_string())
+                        };
+                        (expr_part, current_result, true)
+                    } else {
+                        (right_part, None, false)
+                    };
 
                 let lexer = Lexer::new(expr_part);
                 if let Ok(tokens) = lexer.lex() {
@@ -742,10 +773,7 @@ mod tests {
 
     #[test]
     fn test_standalone_units_parsing() {
-        assert_eq!(
-            parse_str("m"),
-            Expr::Variable("m".to_string())
-        );
+        assert_eq!(parse_str("m"), Expr::Variable("m".to_string()));
         assert_eq!(
             parse_str("10 miles / gallon"),
             Expr::BinaryOp(
@@ -754,14 +782,8 @@ mod tests {
                 Box::new(Expr::Variable("gallon".to_string()))
             )
         );
-        assert_eq!(
-            parse_str("cows"),
-            Expr::Variable("cows".to_string())
-        );
-        assert_eq!(
-            parse_str("$"),
-            Expr::Quantity(1.0, "$".to_string())
-        );
+        assert_eq!(parse_str("cows"), Expr::Variable("cows".to_string()));
+        assert_eq!(parse_str("$"), Expr::Quantity(1.0, "$".to_string()));
     }
 
     #[test]
@@ -802,7 +824,12 @@ mod tests {
 
         // Evaluation
         let l2 = parse_line("price * 2 => 300");
-        if let Line::Evaluation { expr, current_result, .. } = l2 {
+        if let Line::Evaluation {
+            expr,
+            current_result,
+            ..
+        } = l2
+        {
             assert_eq!(current_result, Some("300".to_string()));
             assert_eq!(
                 expr,

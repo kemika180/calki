@@ -11,9 +11,9 @@ use render_line::RenderLine;
 use syntax_higlighting::SyntaxHighlighter;
 
 use crate::edtui::{
-    helper::{max_col, rect_indent_y},
-    state::{highlight::Highlight, selection::Selection, EditorState},
     EditorMode, Index2,
+    helper::{max_col, rect_indent_y},
+    state::{EditorState, highlight::Highlight, selection::Selection},
 };
 
 #[cfg(feature = "syntax-highlighting")]

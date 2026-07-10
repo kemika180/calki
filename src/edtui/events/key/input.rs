@@ -92,7 +92,8 @@ impl KeyInput {
 
             // AltGr is typically reported as Ctrl+Alt on Windows/some terminals
             // Some terminals may report it as just Alt
-            let has_altgr_modifiers = key_input.modifiers.is_ctrl_alt() || key_input.modifiers.is_alt_only();
+            let has_altgr_modifiers =
+                key_input.modifiers.is_ctrl_alt() || key_input.modifiers.is_alt_only();
 
             if has_altgr_modifiers && !c.is_ascii_alphabetic() {
                 return Self {

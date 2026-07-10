@@ -1,8 +1,8 @@
 use crate::edtui::{
-    helper::{char_width, chars_width},
-    view::line_wrapper::LineWrapper,
-    view::LineNumbers,
     Lines,
+    helper::{char_width, chars_width},
+    view::LineNumbers,
+    view::line_wrapper::LineWrapper,
 };
 use ratatui_core::layout::{Position, Rect};
 
