@@ -619,6 +619,36 @@ pub(crate) fn help_content(tab: usize) -> Vec<Line<'static>> {
                     Style::default().fg(Color::Rgb(169, 177, 214)),
                 ),
             ]),
+            Line::from(vec![
+                Span::styled(
+                    " [[1,2],[3,4]] * B      ",
+                    Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
+                ),
+                Span::styled(
+                    "Infix * multiplies matrices / scales by a scalar",
+                    Style::default().fg(Color::Rgb(169, 177, 214)),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " det(A)                 ",
+                    Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
+                ),
+                Span::styled(
+                    "Determinant of a square matrix",
+                    Style::default().fg(Color::Rgb(169, 177, 214)),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " inv(A)                 ",
+                    Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
+                ),
+                Span::styled(
+                    "Inverse of a square matrix (via Gauss-Jordan)",
+                    Style::default().fg(Color::Rgb(169, 177, 214)),
+                ),
+            ]),
         ],
         4 => vec![
             Line::from(vec![Span::styled(
