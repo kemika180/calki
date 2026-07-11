@@ -149,12 +149,11 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
 
         // Force anything after '=>' to be italic
         if let Some(arrow_pos) = arrow_idx {
-            for col in (arrow_pos + 2)..n {
-                if let Some(s) = line_styles[col] {
-                    line_styles[col] = Some(s.italic());
+            for slot in &mut line_styles[(arrow_pos + 2).min(n)..n] {
+                if let Some(s) = *slot {
+                    *slot = Some(s.italic());
                 } else {
-                    line_styles[col] =
-                        Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                    *slot = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
                 }
             }
         }
@@ -306,12 +305,9 @@ fn paint_bold(
                 b_pos = start_pos + 1;
                 continue;
             }
-            for col in start_pos..=(end_pos + 1) {
-                if col < n {
-                    let base = line_styles[col]
-                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
-                    line_styles[col] = Some(base.bold());
-                }
+            for slot in &mut line_styles[start_pos.min(n)..(end_pos + 2).min(n)] {
+                let base = slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                *slot = Some(base.bold());
             }
             b_pos = end_pos + 2;
         } else {
@@ -329,12 +325,9 @@ fn paint_bold(
                 b_pos2 = start_pos + 1;
                 continue;
             }
-            for col in start_pos..=(end_pos + 1) {
-                if col < n {
-                    let base = line_styles[col]
-                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
-                    line_styles[col] = Some(base.bold());
-                }
+            for slot in &mut line_styles[start_pos.min(n)..(end_pos + 2).min(n)] {
+                let base = slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                *slot = Some(base.bold());
             }
             b_pos2 = end_pos + 2;
         } else {
@@ -379,12 +372,10 @@ fn paint_italic(
                 search += 1;
             }
             if let Some(end_pos) = found_end {
-                for col in i_pos..=end_pos {
-                    if col < n {
-                        let base = line_styles[col]
-                            .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
-                        line_styles[col] = Some(base.italic());
-                    }
+                for slot in &mut line_styles[i_pos.min(n)..(end_pos + 1).min(n)] {
+                    let base =
+                        slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    *slot = Some(base.italic());
                 }
                 i_pos = end_pos + 1;
             } else {
@@ -423,12 +414,10 @@ fn paint_italic(
                 search += 1;
             }
             if let Some(end_pos) = found_end {
-                for col in i_pos2..=end_pos {
-                    if col < n {
-                        let base = line_styles[col]
-                            .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
-                        line_styles[col] = Some(base.italic());
-                    }
+                for slot in &mut line_styles[i_pos2.min(n)..(end_pos + 1).min(n)] {
+                    let base =
+                        slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    *slot = Some(base.italic());
                 }
                 i_pos2 = end_pos + 1;
             } else {
@@ -458,12 +447,9 @@ fn paint_strike(
                 s_pos = start_pos + 1;
                 continue;
             }
-            for col in start_pos..=(end_pos + 1) {
-                if col < n {
-                    let base = line_styles[col]
-                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
-                    line_styles[col] = Some(base.crossed_out());
-                }
+            for slot in &mut line_styles[start_pos.min(n)..(end_pos + 2).min(n)] {
+                let base = slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                *slot = Some(base.crossed_out());
             }
             s_pos = end_pos + 2;
         } else {
@@ -692,28 +678,20 @@ fn section_b(
         if let Some(arrow_pos) = find_in_chars(inner, "=>") {
             let absolute_arrow = start_pos + 1 + arrow_pos;
             // Before => (Cyan)
-            for col in (start_pos + 1)..absolute_arrow {
-                if col < n {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                }
-            }
+            line_styles[(start_pos + 1).min(n)..absolute_arrow.min(n)]
+                .fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
             // => (Bold Orange)
             line_styles[absolute_arrow..std::cmp::min(absolute_arrow + 2, n)]
                 .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
             // After => (Italic Teal Green)
-            for col in (absolute_arrow + 2)..end_pos {
-                if col < n {
-                    line_styles[col] =
-                        Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-                }
-            }
+            let after = end_pos.min(n);
+            line_styles[(absolute_arrow + 2).min(after)..after].fill(Some(
+                Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
+            ));
         } else {
             // Entire inner content is Orange
-            for col in (start_pos + 1)..end_pos {
-                if col < n {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)));
-                }
-            }
+            line_styles[(start_pos + 1).min(n)..end_pos.min(n)]
+                .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100))));
         }
     }
 }
@@ -731,11 +709,7 @@ fn section_c(
     while let Some(start_pos) = find_in_chars_from(line, "[[", idx) {
         if let Some(end_pos) = find_in_chars_from(line, "]]", start_pos) {
             let absolute_end = end_pos + 1;
-            for col in start_pos..=absolute_end {
-                if col < n {
-                    line_styles[col] = Some(link_style);
-                }
-            }
+            line_styles[start_pos.min(n)..(absolute_end + 1).min(n)].fill(Some(link_style));
             link_ranges.push(start_pos..=absolute_end);
             idx = absolute_end + 1;
         } else {
@@ -771,11 +745,8 @@ fn section_c(
                         idx2 += 1;
                     }
                     if let Some(close_p) = end_paren {
-                        for col in start_bracket..=close_p {
-                            if col < n {
-                                line_styles[col] = Some(link_style);
-                            }
-                        }
+                        line_styles[start_bracket.min(n)..(close_p + 1).min(n)]
+                            .fill(Some(link_style));
                         link_ranges.push(start_bracket..=close_p);
                         m_pos = close_p + 1;
                         continue;
@@ -801,11 +772,7 @@ fn section_c(
                 idx += 1;
             }
             if let Some(absolute_end) = end_pos {
-                for col in start_pos..=absolute_end {
-                    if col < n {
-                        line_styles[col] = Some(link_style);
-                    }
-                }
+                line_styles[start_pos.min(n)..(absolute_end + 1).min(n)].fill(Some(link_style));
                 link_ranges.push(start_pos..=absolute_end);
                 p_pos = absolute_end + 1;
                 continue;
@@ -837,11 +804,7 @@ fn section_c(
             {
                 actual_end -= 1;
             }
-            for col in start_url..actual_end {
-                if col < n {
-                    line_styles[col] = Some(link_style);
-                }
-            }
+            line_styles[start_url.min(n)..actual_end.min(n)].fill(Some(link_style));
             if actual_end > start_url {
                 link_ranges.push(start_url..=actual_end - 1);
             }
@@ -885,12 +848,9 @@ fn section_d(
                             || (*end >= *r.start() && *end <= *r.end())
                     });
                     if !overlaps_link {
-                        for col in *start..=*end {
-                            if col < n {
-                                line_styles[col] =
-                                    Some(Style::default().fg(Color::Rgb(122, 162, 247)).bold()); // Blue #7aa2f7
-                            }
-                        }
+                        // Blue #7aa2f7
+                        line_styles[(*start).min(n)..(*end + 1).min(n)]
+                            .fill(Some(Style::default().fg(Color::Rgb(122, 162, 247)).bold()));
                     }
                 }
                 continue;
@@ -930,12 +890,9 @@ fn section_d(
                             || (end >= r.start() && end <= r.end())
                     });
                     if !overlaps_link {
-                        for col in *start..=*end {
-                            if col < n {
-                                line_styles[col] =
-                                    Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
-                            }
-                        }
+                        // Rose / Pink #f48fb1
+                        line_styles[(*start).min(n)..(*end + 1).min(n)]
+                            .fill(Some(Style::default().fg(Color::Rgb(244, 143, 177))));
                     }
                 }
             }
@@ -949,17 +906,15 @@ fn section_d(
                     (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
                 });
                 if !overlaps_link {
-                    for col in *start..=*end {
-                        if col < n {
-                            let italic = line_styles[col]
-                                .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
-                                .unwrap_or(false);
-                            let mut style = Style::default().fg(Color::Rgb(115, 218, 202)); // Teal #73daca
-                            if italic {
-                                style = style.italic();
-                            }
-                            line_styles[col] = Some(style);
+                    for slot in &mut line_styles[(*start).min(n)..(*end + 1).min(n)] {
+                        let italic = slot
+                            .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
+                            .unwrap_or(false);
+                        let mut style = Style::default().fg(Color::Rgb(115, 218, 202)); // Teal #73daca
+                        if italic {
+                            style = style.italic();
                         }
+                        *slot = Some(style);
                     }
                 }
             }
@@ -992,12 +947,9 @@ fn section_d(
                             || (*end >= *r.start() && *end <= *r.end())
                     });
                     if !overlaps_link {
-                        for col in *start..=*end {
-                            if col < n {
-                                line_styles[col] =
-                                    Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
-                            }
-                        }
+                        // Rose / Pink #f48fb1
+                        line_styles[(*start).min(n)..(*end + 1).min(n)]
+                            .fill(Some(Style::default().fg(Color::Rgb(244, 143, 177))));
                     }
                 }
             } else {
@@ -1011,19 +963,15 @@ fn section_d(
                             || (*end >= *r.start() && *end <= *r.end())
                     });
                     if !overlaps_link {
-                        for col in *start..=*end {
-                            if col < n {
-                                let italic = line_styles[col]
-                                    .map(|s| {
-                                        s.add_modifier.contains(ratatui::style::Modifier::ITALIC)
-                                    })
-                                    .unwrap_or(false);
-                                let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
-                                if italic {
-                                    style = style.italic();
-                                }
-                                line_styles[col] = Some(style);
+                        for slot in &mut line_styles[(*start).min(n)..(*end + 1).min(n)] {
+                            let italic = slot
+                                .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
+                                .unwrap_or(false);
+                            let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                            if italic {
+                                style = style.italic();
                             }
+                            *slot = Some(style);
                         }
                     }
                 }
@@ -1034,17 +982,15 @@ fn section_d(
                     .iter()
                     .any(|r| *start >= *r.start() && *end <= *r.end());
             if in_math_context {
-                for col in *start..=*end {
-                    if col < n {
-                        let italic = line_styles[col]
-                            .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
-                            .unwrap_or(false);
-                        let mut style = Style::default().fg(Color::Rgb(255, 158, 100)).bold();
-                        if italic {
-                            style = style.italic();
-                        }
-                        line_styles[col] = Some(style);
+                for slot in &mut line_styles[(*start).min(n)..(*end + 1).min(n)] {
+                    let italic = slot
+                        .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
+                        .unwrap_or(false);
+                    let mut style = Style::default().fg(Color::Rgb(255, 158, 100)).bold();
+                    if italic {
+                        style = style.italic();
                     }
+                    *slot = Some(style);
                 }
             }
         } else if let HighlightToken::Symbol { start, end, ch } = &tokens[i] {
@@ -1104,19 +1050,15 @@ fn section_d(
                             || (*end >= *r.start() && *end <= *r.end())
                     });
                     if !overlaps_link {
-                        for col in *start..=*end {
-                            if col < n {
-                                let italic = line_styles[col]
-                                    .map(|s| {
-                                        s.add_modifier.contains(ratatui::style::Modifier::ITALIC)
-                                    })
-                                    .unwrap_or(false);
-                                let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
-                                if italic {
-                                    style = style.italic();
-                                }
-                                line_styles[col] = Some(style);
+                        for slot in &mut line_styles[(*start).min(n)..(*end + 1).min(n)] {
+                            let italic = slot
+                                .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
+                                .unwrap_or(false);
+                            let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                            if italic {
+                                style = style.italic();
                             }
+                            *slot = Some(style);
                         }
                     }
                 }
