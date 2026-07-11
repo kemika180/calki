@@ -1,9 +1,9 @@
 //! Markdown + math syntax highlighting for the editor buffer.
 //!
-//! `compute_syntax_highlights` scans each line, paints a per-column style buffer
-//! across the markdown/math categories, then emits `edtui::Highlight` ranges.
-//! Relocated verbatim from `main.rs`; decomposition into per-category painters
-//! follows in later commits.
+//! `compute_syntax_highlights` is a thin per-line orchestrator: it paints a
+//! per-column style buffer via the `paint_*` (markdown + inline) and
+//! `section_a`/`b`/`c`/`d` (math/link/unit) painters, then `styles_to_highlights`
+//! collapses the buffer into `edtui::Highlight` ranges.
 
 use ratatui::prelude::*;
 use std::collections::HashSet;
@@ -494,14 +494,12 @@ fn paint_selected_var(line: &[char], line_styles: &mut [Option<Style>], sv_chars
                     true
                 };
                 if before_ok && after_ok {
-                    for col in start_idx..(start_idx + sv_len) {
-                        line_styles[col] = Some(
-                            Style::default()
-                                .bg(Color::Rgb(167, 82, 142))
-                                .fg(Color::Rgb(224, 230, 242))
-                                .bold(),
-                        );
-                    }
+                    line_styles[start_idx..(start_idx + sv_len)].fill(Some(
+                        Style::default()
+                            .bg(Color::Rgb(167, 82, 142))
+                            .fg(Color::Rgb(224, 230, 242))
+                            .bold(),
+                    ));
                 }
             }
         }
@@ -582,24 +580,19 @@ fn section_a(
             if is_assignment || is_fn_def {
                 is_math_line = true;
                 // LHS (Cyan)
-                for col in 0..eq_pos {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                }
+                line_styles[0..eq_pos].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
                 // '=' (Bold Orange)
                 line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
                 // RHS expression up to '=>' (Teal Green)
-                for col in (eq_pos + 1)..arrow_pos {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
-                }
+                line_styles[(eq_pos + 1)..arrow_pos]
+                    .fill(Some(Style::default().fg(Color::Rgb(115, 218, 202))));
                 // '=>' (Bold Orange)
-                for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                }
+                line_styles[arrow_pos..std::cmp::min(arrow_pos + 2, n)]
+                    .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
                 // The result after '=>' (Teal Green + Italic)
-                for col in (arrow_pos + 2)..n {
-                    line_styles[col] =
-                        Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-                }
+                line_styles[(arrow_pos + 2)..n].fill(Some(
+                    Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
+                ));
                 processed = true;
                 has_main_assignment = true;
             }
@@ -608,17 +601,14 @@ fn section_a(
         if !processed {
             is_math_line = true;
             // Expression before '=>' (Cyan/light blue)
-            for col in 0..arrow_pos {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-            }
+            line_styles[0..arrow_pos].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
             // Operator '=>' in Bold Orange
-            for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-            }
+            line_styles[arrow_pos..std::cmp::min(arrow_pos + 2, n)]
+                .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
             // The result after '=>' (Teal Green + Italic)
-            for col in (arrow_pos + 2)..n {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-            }
+            line_styles[(arrow_pos + 2)..n].fill(Some(
+                Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
+            ));
             processed = true;
         }
     } else if let Some(eq_pos) = eq_idx {
@@ -655,17 +645,13 @@ fn section_a(
         if is_assignment || is_fn_def {
             is_math_line = true;
             // LHS (Cyan)
-            for col in 0..eq_pos {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-            }
+            line_styles[0..eq_pos].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
             // '=' (Bold Orange)
             if eq_pos < n {
                 line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
             }
             // RHS (Teal Green)
-            for col in (eq_pos + 1)..n {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
-            }
+            line_styles[(eq_pos + 1)..n].fill(Some(Style::default().fg(Color::Rgb(115, 218, 202))));
             has_main_assignment = true;
             processed = true;
         }
@@ -673,9 +659,7 @@ fn section_a(
 
     if !processed && in_block {
         is_math_line = true;
-        for col in 0..n {
-            line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-        }
+        line_styles[0..n].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
     }
     (
         arrow_idx,
@@ -714,9 +698,8 @@ fn section_b(
                 }
             }
             // => (Bold Orange)
-            for col in absolute_arrow..std::cmp::min(absolute_arrow + 2, n) {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-            }
+            line_styles[absolute_arrow..std::cmp::min(absolute_arrow + 2, n)]
+                .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
             // After => (Italic Teal Green)
             for col in (absolute_arrow + 2)..end_pos {
                 if col < n {
