@@ -1,4 +1,4 @@
-//! Vector and matrix builtins: `vdot`, `vadd`, `vsub`, `transpose`, `matmul`, `det`, `len`.
+//! Vector and matrix builtins: `vdot`, `vadd`, `vsub`, `transpose`, `matmul`, `det`, `inv`, `len`.
 //! `vadd`/`vsub`/`matmul` defer to the shared quantity arithmetic; `vdot` and the
 //! reconciliation paths need the context's exchange rates.
 
@@ -226,4 +226,57 @@ pub(in crate::math::eval) fn det(name: &str, args: &[Quantity]) -> Result<Quanti
     check_built_in_args(name, args, 1)?;
     let m = to_square_matrix(&args[0], "det")?;
     Ok(Quantity::scalar(determinant(m), None))
+}
+
+/// Inverse of a square matrix via Gauss-Jordan elimination on `[A | I]`.
+fn invert(m: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, String> {
+    let n = m.len();
+    // Build the augmented matrix [A | I].
+    let mut aug: Vec<Vec<f64>> = m
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut r = row.clone();
+            r.extend((0..n).map(|j| if i == j { 1.0 } else { 0.0 }));
+            r
+        })
+        .collect();
+    for i in 0..n {
+        let mut pivot = i;
+        for r in (i + 1)..n {
+            if aug[r][i].abs() > aug[pivot][i].abs() {
+                pivot = r;
+            }
+        }
+        if aug[pivot][i].abs() < 1e-12 {
+            return Err("inv() matrix is singular (not invertible)".to_string());
+        }
+        aug.swap(i, pivot);
+        let piv = aug[i][i];
+        for x in aug[i].iter_mut() {
+            *x /= piv;
+        }
+        let pivot_row = aug[i].clone();
+        for (r, row) in aug.iter_mut().enumerate() {
+            if r != i {
+                let factor = row[i];
+                for (c, &pv) in pivot_row.iter().enumerate() {
+                    row[c] -= factor * pv;
+                }
+            }
+        }
+    }
+    // The right half of the reduced augmented matrix is the inverse.
+    Ok(aug.iter().map(|row| row[n..].to_vec()).collect())
+}
+
+pub(in crate::math::eval) fn inv(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    check_built_in_args(name, args, 1)?;
+    let m = to_square_matrix(&args[0], "inv")?;
+    let inverted = invert(&m)?;
+    let rows = inverted
+        .into_iter()
+        .map(|r| Quantity::list(r.into_iter().map(|v| Quantity::scalar(v, None)).collect()))
+        .collect();
+    Ok(Quantity::list(rows))
 }

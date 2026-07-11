@@ -1301,6 +1301,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "transpose" => builtins::vector::transpose(name, &arg_vals),
                 "matmul" => builtins::vector::matmul(name, &arg_vals, ctx),
                 "det" => builtins::vector::det(name, &arg_vals),
+                "inv" => builtins::vector::inv(name, &arg_vals),
                 "if" => builtins::logic::if_(name, &arg_vals),
                 "and" => builtins::logic::and(&arg_vals),
                 "or" => builtins::logic::or(&arg_vals),
@@ -1722,6 +1723,52 @@ mod tests {
         assert!(
             eval_expr(
                 &parse_line("det([[1, 2, 3], [4, 5, 6]]) =>").unwrap_expr(),
+                &mut ctx
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_matrix_inverse() {
+        let eval_q = |s: &str| -> Quantity {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx).unwrap()
+        };
+        // Flatten a matrix Quantity to row-major values.
+        let flat = |q: &Quantity| -> Vec<f64> {
+            q.list
+                .as_ref()
+                .unwrap()
+                .iter()
+                .flat_map(|row| row.list.as_ref().unwrap().iter().map(|c| c.value))
+                .collect()
+        };
+        // inv([[1,2],[3,4]]) = [[-2, 1], [1.5, -0.5]]
+        let inv_a = flat(&eval_q("inv([[1, 2], [3, 4]]) =>"));
+        for (got, exp) in inv_a.iter().zip([-2.0, 1.0, 1.5, -0.5].iter()) {
+            assert!((got - exp).abs() < 1e-9, "inv got {got}, expected {exp}");
+        }
+        // Round-trip A * inv(A) ~= identity (exercises the wired matrix `*`).
+        let prod = flat(&eval_q("[[1, 2], [3, 4]] * inv([[1, 2], [3, 4]]) =>"));
+        for (got, exp) in prod.iter().zip([1.0, 0.0, 0.0, 1.0].iter()) {
+            assert!(
+                (got - exp).abs() < 1e-9,
+                "round-trip got {got}, expected {exp}"
+            );
+        }
+        // Singular and non-square are errors.
+        let mut ctx = Context::default();
+        assert!(
+            eval_expr(
+                &parse_line("inv([[1, 2], [2, 4]]) =>").unwrap_expr(),
+                &mut ctx
+            )
+            .is_err()
+        );
+        assert!(
+            eval_expr(
+                &parse_line("inv([[1, 2, 3], [4, 5, 6]]) =>").unwrap_expr(),
                 &mut ctx
             )
             .is_err()
