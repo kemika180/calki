@@ -696,6 +696,18 @@ fn section_b(
     }
 }
 
+/// Whether a `[[...]]` span's char content is a numeric matrix literal rather than
+/// a wiki-link name (matrices have nested brackets or are comma-separated numbers).
+fn looks_like_matrix(content: &[char]) -> bool {
+    let s = trim_char_slice(content);
+    if s.contains(&'[') || s.contains(&']') {
+        return true;
+    }
+    s.contains(&',')
+        && s.iter()
+            .all(|&c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | ',' | ' ' | 'e' | 'E'))
+}
+
 fn section_c(
     line: &[char],
     n: usize,
@@ -704,13 +716,15 @@ fn section_c(
     let mut link_ranges = Vec::new();
     let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
 
-    // C1. Outgoing Wiki Links: [[Note Name]]
+    // C1. Outgoing Wiki Links: [[Note Name]] — but not matrix literals like [[1,2],[3,4]].
     let mut idx = 0;
     while let Some(start_pos) = find_in_chars_from(line, "[[", idx) {
         if let Some(end_pos) = find_in_chars_from(line, "]]", start_pos) {
             let absolute_end = end_pos + 1;
-            line_styles[start_pos.min(n)..(absolute_end + 1).min(n)].fill(Some(link_style));
-            link_ranges.push(start_pos..=absolute_end);
+            if !looks_like_matrix(&line[start_pos + 2..end_pos]) {
+                line_styles[start_pos.min(n)..(absolute_end + 1).min(n)].fill(Some(link_style));
+                link_ranges.push(start_pos..=absolute_end);
+            }
             idx = absolute_end + 1;
         } else {
             break;

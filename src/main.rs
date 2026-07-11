@@ -3417,6 +3417,25 @@ mod main_tests {
     }
 
     #[test]
+    fn test_compute_syntax_highlights_matrix_not_link() {
+        let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
+        // A matrix literal must NOT be painted as a wiki link.
+        let lines = vec!["[[1, 2], [3, 4]] =>".chars().collect::<Vec<char>>()];
+        let hl = crate::highlight::compute_syntax_highlights(&lines, None);
+        assert!(
+            hl.iter().all(|h| h.style != link_style),
+            "matrix literal was highlighted as a wiki link"
+        );
+        // A genuine wiki link IS still painted.
+        let lines2 = vec!["See [[My Note]] here".chars().collect::<Vec<char>>()];
+        let hl2 = crate::highlight::compute_syntax_highlights(&lines2, None);
+        assert!(
+            hl2.iter().any(|h| h.style == link_style),
+            "genuine wiki link was not highlighted"
+        );
+    }
+
+    #[test]
     fn test_compute_syntax_highlights_percentage() {
         let lines = vec![
             "val = 10%".chars().collect::<Vec<char>>(),
