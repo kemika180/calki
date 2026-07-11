@@ -6,6 +6,7 @@
 //! follows in later commits.
 
 use ratatui::prelude::*;
+use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::edtui;
@@ -105,10 +106,8 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
             }
             let in_block = brace_level > 0 || has_lbrace || has_rbrace;
 
-            let mut is_math_line = false;
             let mut backtick_ranges = Vec::new();
-
-            // First, find all backtick ranges on this line so we can ignore any inner content for top-level line math check
+            // Find all backtick ranges up front so the section painters can skip inline code.
             let mut b_idx = 0;
             while let Some(start_pos) = find_in_chars_from(line, "`", b_idx) {
                 if let Some(end_pos) = find_in_chars_from(line, "`", start_pos + 1) {
@@ -119,626 +118,26 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
                 }
             }
 
-            let is_in_backticks =
-                |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
-
-            // A. Base Block Math & Assignments (containing '=>' or '=') outside backticks
-            arrow_idx = None;
-            let mut search_idx = 0;
-            while let Some(pos) = find_in_chars_from(line, "=>", search_idx) {
-                if !is_in_backticks(pos) {
-                    arrow_idx = Some(pos);
-                    break;
-                }
-                search_idx = pos + 2;
-            }
-
-            let mut eq_idx = None;
-            let mut has_main_assignment = false;
-            let mut search_idx = 0;
-            while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
-                if !is_in_backticks(pos) && arrow_idx != Some(pos) {
-                    eq_idx = Some(pos);
-                    break;
-                }
-                search_idx = pos + 1;
-            }
-
-            let mut processed = false;
-            if let Some(arrow_pos) = arrow_idx {
-                if let Some(eq_pos) = eq_idx
-                    && eq_pos < arrow_pos
-                {
-                    let lhs = &line[..eq_pos];
-                    let lhs_trimmed = trim_char_slice(lhs);
-                    let is_lhs_valid = !lhs_trimmed.is_empty()
-                        && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
-                    let is_assignment = is_lhs_valid && {
-                        let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
-                        let not_comparison =
-                            eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
-                        not_equality && not_comparison
-                    };
-                    let is_fn_def = !is_assignment && {
-                        if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
-                            if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
-                                let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
-                                let args_slice = &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
-                                let fn_valid = !fn_name.is_empty()
-                                    && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
-                                let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
-                                    let arg_trimmed = trim_char_slice(arg);
-                                    arg_trimmed.is_empty()
-                                        || arg_trimmed
-                                            .iter()
-                                            .all(|&c| c.is_alphanumeric() || c == '_')
-                                });
-                                fn_valid && args_valid
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    };
-
-                    if is_assignment || is_fn_def {
-                        is_math_line = true;
-                        // LHS (Cyan)
-                        for col in 0..eq_pos {
-                            line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                        }
-                        // '=' (Bold Orange)
-                        line_styles[eq_pos] =
-                            Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                        // RHS expression up to '=>' (Teal Green)
-                        for col in (eq_pos + 1)..arrow_pos {
-                            line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
-                        }
-                        // '=>' (Bold Orange)
-                        for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
-                            line_styles[col] =
-                                Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                        }
-                        // The result after '=>' (Teal Green + Italic)
-                        for col in (arrow_pos + 2)..n {
-                            line_styles[col] =
-                                Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-                        }
-                        processed = true;
-                        has_main_assignment = true;
-                    }
-                }
-
-                if !processed {
-                    is_math_line = true;
-                    // Expression before '=>' (Cyan/light blue)
-                    for col in 0..arrow_pos {
-                        line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                    }
-                    // Operator '=>' in Bold Orange
-                    for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
-                        line_styles[col] =
-                            Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                    }
-                    // The result after '=>' (Teal Green + Italic)
-                    for col in (arrow_pos + 2)..n {
-                        line_styles[col] =
-                            Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-                    }
-                    processed = true;
-                }
-            } else if let Some(eq_pos) = eq_idx {
-                let lhs = &line[..eq_pos];
-                let lhs_trimmed = trim_char_slice(lhs);
-                let is_lhs_valid = !lhs_trimmed.is_empty()
-                    && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
-                let is_assignment = is_lhs_valid && {
-                    let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
-                    let not_comparison =
-                        eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
-                    not_equality && not_comparison
-                };
-                let is_fn_def = !is_assignment && {
-                    if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
-                        if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
-                            let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
-                            let args_slice = &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
-                            let fn_valid = !fn_name.is_empty()
-                                && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
-                            let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
-                                let arg_trimmed = trim_char_slice(arg);
-                                arg_trimmed.is_empty()
-                                    || arg_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_')
-                            });
-                            fn_valid && args_valid
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                };
-
-                if is_assignment || is_fn_def {
-                    is_math_line = true;
-                    // LHS (Cyan)
-                    for col in 0..eq_pos {
-                        line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                    }
-                    // '=' (Bold Orange)
-                    if eq_pos < n {
-                        line_styles[eq_pos] =
-                            Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                    }
-                    // RHS (Teal Green)
-                    for col in (eq_pos + 1)..n {
-                        line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
-                    }
-                    has_main_assignment = true;
-                    processed = true;
-                }
-            }
-
-            if !processed && in_block {
-                is_math_line = true;
-                for col in 0..n {
-                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                }
-            }
-
-            // B. Inline code blocks/math in backticks: `expression => result`
-            for r in &backtick_ranges {
-                let start_pos = *r.start();
-                let end_pos = *r.end();
-                // Backticks themselves (Muted Gray-Blue)
-                if start_pos < n {
-                    line_styles[start_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
-                }
-                if end_pos < n {
-                    line_styles[end_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
-                }
-
-                let inner = &line[start_pos + 1..end_pos];
-                if let Some(arrow_pos) = find_in_chars(inner, "=>") {
-                    let absolute_arrow = start_pos + 1 + arrow_pos;
-                    // Before => (Cyan)
-                    for col in (start_pos + 1)..absolute_arrow {
-                        if col < n {
-                            line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
-                        }
-                    }
-                    // => (Bold Orange)
-                    for col in absolute_arrow..std::cmp::min(absolute_arrow + 2, n) {
-                        line_styles[col] =
-                            Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
-                    }
-                    // After => (Italic Teal Green)
-                    for col in (absolute_arrow + 2)..end_pos {
-                        if col < n {
-                            line_styles[col] =
-                                Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
-                        }
-                    }
-                } else {
-                    // Entire inner content is Orange
-                    for col in (start_pos + 1)..end_pos {
-                        if col < n {
-                            line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)));
-                        }
-                    }
-                }
-            }
-
-            // C. Link Highlighting (Wiki Links, Markdown Links, Parentheses Links, Raw URLs)
-            let mut link_ranges = Vec::new();
-            let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
-
-            // C1. Outgoing Wiki Links: [[Note Name]]
-            let mut idx = 0;
-            while let Some(start_pos) = find_in_chars_from(line, "[[", idx) {
-                if let Some(end_pos) = find_in_chars_from(line, "]]", start_pos) {
-                    let absolute_end = end_pos + 1;
-                    for col in start_pos..=absolute_end {
-                        if col < n {
-                            line_styles[col] = Some(link_style);
-                        }
-                    }
-                    link_ranges.push(start_pos..=absolute_end);
-                    idx = absolute_end + 1;
-                } else {
-                    break;
-                }
-            }
-
-            // C2. Markdown Links: [Text](URL)
-            let mut m_pos = 0;
-            while m_pos < line.len() {
-                if line[m_pos] == '[' {
-                    let start_bracket = m_pos;
-                    let mut end_bracket = None;
-                    let mut idx = m_pos + 1;
-                    while idx < line.len() {
-                        if line[idx] == ']' {
-                            end_bracket = Some(idx);
-                            break;
-                        }
-                        idx += 1;
-                    }
-                    if let Some(close_b) = end_bracket {
-                        // Check if followed immediately by '('
-                        if close_b + 1 < line.len() && line[close_b + 1] == '(' {
-                            let start_paren = close_b + 1;
-                            let mut end_paren = None;
-                            let mut idx2 = start_paren + 1;
-                            while idx2 < line.len() {
-                                if line[idx2] == ')' {
-                                    end_paren = Some(idx2);
-                                    break;
-                                }
-                                idx2 += 1;
-                            }
-                            if let Some(close_p) = end_paren {
-                                for col in start_bracket..=close_p {
-                                    if col < n {
-                                        line_styles[col] = Some(link_style);
-                                    }
-                                }
-                                link_ranges.push(start_bracket..=close_p);
-                                m_pos = close_p + 1;
-                                continue;
-                            }
-                        }
-                    }
-                }
-                m_pos += 1;
-            }
-
-            // C3. Parentheses Links: [(Link)]
-            let mut p_pos = 0;
-            while p_pos < line.len() {
-                if p_pos + 1 < line.len() && line[p_pos] == '[' && line[p_pos + 1] == '(' {
-                    let start_pos = p_pos;
-                    let mut end_pos = None;
-                    let mut idx = p_pos + 2;
-                    while idx + 1 < line.len() {
-                        if line[idx] == ')' && line[idx + 1] == ']' {
-                            end_pos = Some(idx + 1);
-                            break;
-                        }
-                        idx += 1;
-                    }
-                    if let Some(absolute_end) = end_pos {
-                        for col in start_pos..=absolute_end {
-                            if col < n {
-                                line_styles[col] = Some(link_style);
-                            }
-                        }
-                        link_ranges.push(start_pos..=absolute_end);
-                        p_pos = absolute_end + 1;
-                        continue;
-                    }
-                }
-                p_pos += 1;
-            }
-
-            // C4. Raw HTTP/HTTPS URLs
-            let mut u_pos = 0;
-            while u_pos < line.len() {
-                if u_pos + 7 < line.len()
-                    && (line[u_pos..u_pos + 7] == ['h', 't', 't', 'p', ':', '/', '/']
-                        || (u_pos + 8 < line.len()
-                            && line[u_pos..u_pos + 8] == ['h', 't', 't', 'p', 's', ':', '/', '/']))
-                {
-                    let start_url = u_pos;
-                    let mut end_url = u_pos;
-                    while end_url < line.len() {
-                        let c = line[end_url];
-                        if c.is_whitespace() || c == ']' || c == ')' || c == '>' || c == '<' {
-                            break;
-                        }
-                        end_url += 1;
-                    }
-                    let mut actual_end = end_url;
-                    while actual_end > start_url
-                        && matches!(line[actual_end - 1], '.' | ',' | ';' | '?' | '!')
-                    {
-                        actual_end -= 1;
-                    }
-                    for col in start_url..actual_end {
-                        if col < n {
-                            line_styles[col] = Some(link_style);
-                        }
-                    }
-                    if actual_end > start_url {
-                        link_ranges.push(start_url..=actual_end - 1);
-                    }
-                    u_pos = end_url;
-                } else {
-                    u_pos += 1;
-                }
-            }
-
-            // D. Scan for units and highlight them
-            let tokens = tokenize_line_for_highlighting(line);
-
-            for i in 0..tokens.len() {
-                if let HighlightToken::Identifier { start, end, name } = &tokens[i] {
-                    // Check if this is a function call (followed by '(')
-                    let mut is_function = false;
-                    if i + 1 < tokens.len()
-                        && let HighlightToken::Symbol { ch: '(', .. } = tokens[i + 1]
-                    {
-                        is_function = true;
-                    }
-
-                    if is_function {
-                        let in_math_context = is_math_line
-                            || backtick_ranges
-                                .iter()
-                                .any(|r| *start >= *r.start() && *end <= *r.end());
-                        if in_math_context {
-                            let overlaps_link = link_ranges.iter().any(|r| {
-                                (*start >= *r.start() && *start <= *r.end())
-                                    || (*end >= *r.start() && *end <= *r.end())
-                            });
-                            if !overlaps_link {
-                                for col in *start..=*end {
-                                    if col < n {
-                                        line_styles[col] = Some(
-                                            Style::default().fg(Color::Rgb(122, 162, 247)).bold(),
-                                        ); // Blue #7aa2f7
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    let mut is_unit = false;
-                    if is_registered_unit(name) {
-                        is_unit = true;
-                    } else if i > 0
-                        && let HighlightToken::Number { .. } = tokens[i - 1]
-                    {
-                        is_unit = true;
-                    }
-
-                    if is_unit && defined_vars.contains(name) {
-                        let preceded_by_number = if i > 0 {
-                            matches!(tokens[i - 1], HighlightToken::Number { .. })
-                        } else {
-                            false
-                        };
-                        if !preceded_by_number {
-                            is_unit = false;
-                        }
-                    }
-
-                    if is_unit {
-                        // Only highlight unit if we are in a valid math context:
-                        // either the line is a math line, OR the token falls within backticks.
-                        let in_math_context = is_math_line
-                            || backtick_ranges
-                                .iter()
-                                .any(|r| start >= r.start() && end <= r.end());
-                        if in_math_context {
-                            // Check if it overlaps with any link range
-                            let overlaps_link = link_ranges.iter().any(|r| {
-                                (start >= r.start() && start <= r.end())
-                                    || (end >= r.start() && end <= r.end())
-                            });
-                            if !overlaps_link {
-                                for col in *start..=*end {
-                                    if col < n {
-                                        line_styles[col] =
-                                            Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if let HighlightToken::Number { start, end, val: _ } = &tokens[i] {
-                    let in_math_context = is_math_line
-                        || backtick_ranges
-                            .iter()
-                            .any(|r| *start >= *r.start() && *end <= *r.end());
-                    if in_math_context {
-                        let overlaps_link = link_ranges.iter().any(|r| {
-                            (start >= r.start() && start <= r.end())
-                                || (end >= r.start() && end <= r.end())
-                        });
-                        if !overlaps_link {
-                            for col in *start..=*end {
-                                if col < n {
-                                    let italic = line_styles[col]
-                                        .map(|s| {
-                                            s.add_modifier
-                                                .contains(ratatui::style::Modifier::ITALIC)
-                                        })
-                                        .unwrap_or(false);
-                                    let mut style = Style::default().fg(Color::Rgb(115, 218, 202)); // Teal #73daca
-                                    if italic {
-                                        style = style.italic();
-                                    }
-                                    line_styles[col] = Some(style);
-                                }
-                            }
-                        }
-                    }
-                } else if let HighlightToken::Symbol {
-                    start,
-                    end,
-                    ch: '%',
-                } = &tokens[i]
-                {
-                    let mut is_infix = false;
-                    if i + 1 < tokens.len() {
-                        match &tokens[i + 1] {
-                            HighlightToken::Number { .. }
-                            | HighlightToken::Identifier { .. }
-                            | HighlightToken::Symbol { ch: '(', .. }
-                            | HighlightToken::Symbol { ch: '[', .. } => {
-                                is_infix = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                    if !is_infix {
-                        let in_math_context = is_math_line
-                            || backtick_ranges
-                                .iter()
-                                .any(|r| *start >= *r.start() && *end <= *r.end());
-                        if in_math_context {
-                            let overlaps_link = link_ranges.iter().any(|r| {
-                                (*start >= *r.start() && *start <= *r.end())
-                                    || (*end >= *r.start() && *end <= *r.end())
-                            });
-                            if !overlaps_link {
-                                for col in *start..=*end {
-                                    if col < n {
-                                        line_styles[col] =
-                                            Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        let in_math_context = is_math_line
-                            || backtick_ranges
-                                .iter()
-                                .any(|r| *start >= *r.start() && *end <= *r.end());
-                        if in_math_context {
-                            let overlaps_link = link_ranges.iter().any(|r| {
-                                (*start >= *r.start() && *start <= *r.end())
-                                    || (*end >= *r.start() && *end <= *r.end())
-                            });
-                            if !overlaps_link {
-                                for col in *start..=*end {
-                                    if col < n {
-                                        let italic = line_styles[col]
-                                            .map(|s| {
-                                                s.add_modifier
-                                                    .contains(ratatui::style::Modifier::ITALIC)
-                                            })
-                                            .unwrap_or(false);
-                                        let mut style =
-                                            Style::default().fg(Color::Rgb(255, 158, 100));
-                                        if italic {
-                                            style = style.italic();
-                                        }
-                                        line_styles[col] = Some(style);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if let HighlightToken::In { start, end } = &tokens[i] {
-                    let in_math_context = is_math_line
-                        || backtick_ranges
-                            .iter()
-                            .any(|r| *start >= *r.start() && *end <= *r.end());
-                    if in_math_context {
-                        for col in *start..=*end {
-                            if col < n {
-                                let italic = line_styles[col]
-                                    .map(|s| {
-                                        s.add_modifier.contains(ratatui::style::Modifier::ITALIC)
-                                    })
-                                    .unwrap_or(false);
-                                let mut style =
-                                    Style::default().fg(Color::Rgb(255, 158, 100)).bold();
-                                if italic {
-                                    style = style.italic();
-                                }
-                                line_styles[col] = Some(style);
-                            }
-                        }
-                    }
-                } else if let HighlightToken::Symbol { start, end, ch } = &tokens[i] {
-                    // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >, (, ), {, }, ;, ,, [, ]
-                    let mut is_operator = matches!(
-                        ch,
-                        '+' | '-'
-                            | '*'
-                            | '/'
-                            | '^'
-                            | '&'
-                            | '|'
-                            | '!'
-                            | '='
-                            | '<'
-                            | '>'
-                            | '('
-                            | ')'
-                            | '{'
-                            | '}'
-                            | ','
-                            | ';'
-                            | '['
-                            | ']'
-                    );
-                    if *ch == '%' {
-                        // Only highlight '%' as an operator if it's infix (modulo)
-                        let mut is_infix = false;
-                        if i + 1 < tokens.len() {
-                            match &tokens[i + 1] {
-                                HighlightToken::Number { .. }
-                                | HighlightToken::Identifier { .. }
-                                | HighlightToken::Symbol { ch: '(', .. }
-                                | HighlightToken::Symbol { ch: '[', .. } => {
-                                    is_infix = true;
-                                }
-                                _ => {}
-                            }
-                        }
-                        if is_infix {
-                            is_operator = true;
-                        }
-                    }
-
-                    if is_operator {
-                        if *ch == '=' && has_main_assignment && eq_idx == Some(*start) {
-                            // Skip main assignment operator (already styled as Bold Orange)
-                            continue;
-                        }
-                        let in_math_context = is_math_line
-                            || backtick_ranges
-                                .iter()
-                                .any(|r| *start >= *r.start() && *end <= *r.end());
-                        if in_math_context {
-                            let overlaps_link = link_ranges.iter().any(|r| {
-                                (*start >= *r.start() && *start <= *r.end())
-                                    || (*end >= *r.start() && *end <= *r.end())
-                            });
-                            if !overlaps_link {
-                                for col in *start..=*end {
-                                    if col < n {
-                                        let italic = line_styles[col]
-                                            .map(|s| {
-                                                s.add_modifier
-                                                    .contains(ratatui::style::Modifier::ITALIC)
-                                            })
-                                            .unwrap_or(false);
-                                        let mut style =
-                                            Style::default().fg(Color::Rgb(255, 158, 100));
-                                        if italic {
-                                            style = style.italic();
-                                        }
-                                        line_styles[col] = Some(style);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let (arrow, math_info) =
+                section_a(line, n, &mut line_styles, &backtick_ranges, in_block);
+            arrow_idx = arrow;
+            section_b(line, n, &mut line_styles, &backtick_ranges);
+            let link_ranges = section_c(line, n, &mut line_styles);
+            section_d(
+                line,
+                n,
+                &mut line_styles,
+                &backtick_ranges,
+                &link_ranges,
+                &math_info,
+                &defined_vars,
+            );
 
             // E. Lists / Bullet points
             paint_list(line, &mut line_styles);
 
             // F/G/H. Inline emphasis (bold/italic/strikethrough); skipped on math lines.
-            if !is_math_line {
+            if !math_info.is_math {
                 paint_bold(line, &mut line_styles, &backtick_ranges);
                 paint_italic(line, &mut line_styles, &backtick_ranges);
                 paint_strike(line, &mut line_styles, &backtick_ranges);
@@ -1102,6 +501,640 @@ fn paint_selected_var(line: &[char], line_styles: &mut [Option<Style>], sv_chars
                                 .fg(Color::Rgb(224, 230, 242))
                                 .bold(),
                         );
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct MathLineInfo {
+    is_math: bool,
+    eq_idx: Option<usize>,
+    has_main_assignment: bool,
+}
+
+fn section_a(
+    line: &[char],
+    n: usize,
+    line_styles: &mut [Option<Style>],
+    backtick_ranges: &[RangeInclusive<usize>],
+    in_block: bool,
+) -> (Option<usize>, MathLineInfo) {
+    let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
+    let mut is_math_line = false;
+    let mut arrow_idx: Option<usize> = None;
+    let mut search_idx = 0;
+    while let Some(pos) = find_in_chars_from(line, "=>", search_idx) {
+        if !is_in_backticks(pos) {
+            arrow_idx = Some(pos);
+            break;
+        }
+        search_idx = pos + 2;
+    }
+
+    let mut eq_idx = None;
+    let mut has_main_assignment = false;
+    let mut search_idx = 0;
+    while let Some(pos) = find_in_chars_from(line, "=", search_idx) {
+        if !is_in_backticks(pos) && arrow_idx != Some(pos) {
+            eq_idx = Some(pos);
+            break;
+        }
+        search_idx = pos + 1;
+    }
+
+    let mut processed = false;
+    if let Some(arrow_pos) = arrow_idx {
+        if let Some(eq_pos) = eq_idx
+            && eq_pos < arrow_pos
+        {
+            let lhs = &line[..eq_pos];
+            let lhs_trimmed = trim_char_slice(lhs);
+            let is_lhs_valid = !lhs_trimmed.is_empty()
+                && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
+            let is_assignment = is_lhs_valid && {
+                let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
+                let not_comparison = eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
+                not_equality && not_comparison
+            };
+            let is_fn_def = !is_assignment && {
+                if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
+                    if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
+                        let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
+                        let args_slice = &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
+                        let fn_valid = !fn_name.is_empty()
+                            && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                        let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
+                            let arg_trimmed = trim_char_slice(arg);
+                            arg_trimmed.is_empty()
+                                || arg_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_')
+                        });
+                        fn_valid && args_valid
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if is_assignment || is_fn_def {
+                is_math_line = true;
+                // LHS (Cyan)
+                for col in 0..eq_pos {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+                }
+                // '=' (Bold Orange)
+                line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                // RHS expression up to '=>' (Teal Green)
+                for col in (eq_pos + 1)..arrow_pos {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
+                }
+                // '=>' (Bold Orange)
+                for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                }
+                // The result after '=>' (Teal Green + Italic)
+                for col in (arrow_pos + 2)..n {
+                    line_styles[col] =
+                        Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                }
+                processed = true;
+                has_main_assignment = true;
+            }
+        }
+
+        if !processed {
+            is_math_line = true;
+            // Expression before '=>' (Cyan/light blue)
+            for col in 0..arrow_pos {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+            }
+            // Operator '=>' in Bold Orange
+            for col in arrow_pos..std::cmp::min(arrow_pos + 2, n) {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+            }
+            // The result after '=>' (Teal Green + Italic)
+            for col in (arrow_pos + 2)..n {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+            }
+            processed = true;
+        }
+    } else if let Some(eq_pos) = eq_idx {
+        let lhs = &line[..eq_pos];
+        let lhs_trimmed = trim_char_slice(lhs);
+        let is_lhs_valid =
+            !lhs_trimmed.is_empty() && lhs_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_');
+        let is_assignment = is_lhs_valid && {
+            let not_equality = eq_pos + 1 >= n || line[eq_pos + 1] != '=';
+            let not_comparison = eq_pos == 0 || !matches!(line[eq_pos - 1], '!' | '<' | '>');
+            not_equality && not_comparison
+        };
+        let is_fn_def = !is_assignment && {
+            if lhs_trimmed.contains(&'(') && lhs_trimmed.last() == Some(&')') {
+                if let Some(lpar_pos) = lhs_trimmed.iter().position(|&c| c == '(') {
+                    let fn_name = trim_char_slice(&lhs_trimmed[..lpar_pos]);
+                    let args_slice = &lhs_trimmed[lpar_pos + 1..lhs_trimmed.len() - 1];
+                    let fn_valid = !fn_name.is_empty()
+                        && fn_name.iter().all(|&c| c.is_alphanumeric() || c == '_');
+                    let args_valid = args_slice.split(|&c| c == ',').all(|arg| {
+                        let arg_trimmed = trim_char_slice(arg);
+                        arg_trimmed.is_empty()
+                            || arg_trimmed.iter().all(|&c| c.is_alphanumeric() || c == '_')
+                    });
+                    fn_valid && args_valid
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        if is_assignment || is_fn_def {
+            is_math_line = true;
+            // LHS (Cyan)
+            for col in 0..eq_pos {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+            }
+            // '=' (Bold Orange)
+            if eq_pos < n {
+                line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+            }
+            // RHS (Teal Green)
+            for col in (eq_pos + 1)..n {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(115, 218, 202)));
+            }
+            has_main_assignment = true;
+            processed = true;
+        }
+    }
+
+    if !processed && in_block {
+        is_math_line = true;
+        for col in 0..n {
+            line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+        }
+    }
+    (
+        arrow_idx,
+        MathLineInfo {
+            is_math: is_math_line,
+            eq_idx,
+            has_main_assignment,
+        },
+    )
+}
+
+fn section_b(
+    line: &[char],
+    n: usize,
+    line_styles: &mut [Option<Style>],
+    backtick_ranges: &[RangeInclusive<usize>],
+) {
+    for r in backtick_ranges {
+        let start_pos = *r.start();
+        let end_pos = *r.end();
+        // Backticks themselves (Muted Gray-Blue)
+        if start_pos < n {
+            line_styles[start_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
+        }
+        if end_pos < n {
+            line_styles[end_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
+        }
+
+        let inner = &line[start_pos + 1..end_pos];
+        if let Some(arrow_pos) = find_in_chars(inner, "=>") {
+            let absolute_arrow = start_pos + 1 + arrow_pos;
+            // Before => (Cyan)
+            for col in (start_pos + 1)..absolute_arrow {
+                if col < n {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(125, 207, 255)));
+                }
+            }
+            // => (Bold Orange)
+            for col in absolute_arrow..std::cmp::min(absolute_arrow + 2, n) {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+            }
+            // After => (Italic Teal Green)
+            for col in (absolute_arrow + 2)..end_pos {
+                if col < n {
+                    line_styles[col] =
+                        Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                }
+            }
+        } else {
+            // Entire inner content is Orange
+            for col in (start_pos + 1)..end_pos {
+                if col < n {
+                    line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)));
+                }
+            }
+        }
+    }
+}
+
+fn section_c(
+    line: &[char],
+    n: usize,
+    line_styles: &mut [Option<Style>],
+) -> Vec<RangeInclusive<usize>> {
+    let mut link_ranges = Vec::new();
+    let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
+
+    // C1. Outgoing Wiki Links: [[Note Name]]
+    let mut idx = 0;
+    while let Some(start_pos) = find_in_chars_from(line, "[[", idx) {
+        if let Some(end_pos) = find_in_chars_from(line, "]]", start_pos) {
+            let absolute_end = end_pos + 1;
+            for col in start_pos..=absolute_end {
+                if col < n {
+                    line_styles[col] = Some(link_style);
+                }
+            }
+            link_ranges.push(start_pos..=absolute_end);
+            idx = absolute_end + 1;
+        } else {
+            break;
+        }
+    }
+
+    // C2. Markdown Links: [Text](URL)
+    let mut m_pos = 0;
+    while m_pos < line.len() {
+        if line[m_pos] == '[' {
+            let start_bracket = m_pos;
+            let mut end_bracket = None;
+            let mut idx = m_pos + 1;
+            while idx < line.len() {
+                if line[idx] == ']' {
+                    end_bracket = Some(idx);
+                    break;
+                }
+                idx += 1;
+            }
+            if let Some(close_b) = end_bracket {
+                // Check if followed immediately by '('
+                if close_b + 1 < line.len() && line[close_b + 1] == '(' {
+                    let start_paren = close_b + 1;
+                    let mut end_paren = None;
+                    let mut idx2 = start_paren + 1;
+                    while idx2 < line.len() {
+                        if line[idx2] == ')' {
+                            end_paren = Some(idx2);
+                            break;
+                        }
+                        idx2 += 1;
+                    }
+                    if let Some(close_p) = end_paren {
+                        for col in start_bracket..=close_p {
+                            if col < n {
+                                line_styles[col] = Some(link_style);
+                            }
+                        }
+                        link_ranges.push(start_bracket..=close_p);
+                        m_pos = close_p + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        m_pos += 1;
+    }
+
+    // C3. Parentheses Links: [(Link)]
+    let mut p_pos = 0;
+    while p_pos < line.len() {
+        if p_pos + 1 < line.len() && line[p_pos] == '[' && line[p_pos + 1] == '(' {
+            let start_pos = p_pos;
+            let mut end_pos = None;
+            let mut idx = p_pos + 2;
+            while idx + 1 < line.len() {
+                if line[idx] == ')' && line[idx + 1] == ']' {
+                    end_pos = Some(idx + 1);
+                    break;
+                }
+                idx += 1;
+            }
+            if let Some(absolute_end) = end_pos {
+                for col in start_pos..=absolute_end {
+                    if col < n {
+                        line_styles[col] = Some(link_style);
+                    }
+                }
+                link_ranges.push(start_pos..=absolute_end);
+                p_pos = absolute_end + 1;
+                continue;
+            }
+        }
+        p_pos += 1;
+    }
+
+    // C4. Raw HTTP/HTTPS URLs
+    let mut u_pos = 0;
+    while u_pos < line.len() {
+        if u_pos + 7 < line.len()
+            && (line[u_pos..u_pos + 7] == ['h', 't', 't', 'p', ':', '/', '/']
+                || (u_pos + 8 < line.len()
+                    && line[u_pos..u_pos + 8] == ['h', 't', 't', 'p', 's', ':', '/', '/']))
+        {
+            let start_url = u_pos;
+            let mut end_url = u_pos;
+            while end_url < line.len() {
+                let c = line[end_url];
+                if c.is_whitespace() || c == ']' || c == ')' || c == '>' || c == '<' {
+                    break;
+                }
+                end_url += 1;
+            }
+            let mut actual_end = end_url;
+            while actual_end > start_url
+                && matches!(line[actual_end - 1], '.' | ',' | ';' | '?' | '!')
+            {
+                actual_end -= 1;
+            }
+            for col in start_url..actual_end {
+                if col < n {
+                    line_styles[col] = Some(link_style);
+                }
+            }
+            if actual_end > start_url {
+                link_ranges.push(start_url..=actual_end - 1);
+            }
+            u_pos = end_url;
+        } else {
+            u_pos += 1;
+        }
+    }
+    link_ranges
+}
+
+fn section_d(
+    line: &[char],
+    n: usize,
+    line_styles: &mut [Option<Style>],
+    backtick_ranges: &[RangeInclusive<usize>],
+    link_ranges: &[RangeInclusive<usize>],
+    math: &MathLineInfo,
+    defined_vars: &HashSet<String>,
+) {
+    let tokens = tokenize_line_for_highlighting(line);
+
+    for i in 0..tokens.len() {
+        if let HighlightToken::Identifier { start, end, name } = &tokens[i] {
+            // Check if this is a function call (followed by '(')
+            let mut is_function = false;
+            if i + 1 < tokens.len()
+                && let HighlightToken::Symbol { ch: '(', .. } = tokens[i + 1]
+            {
+                is_function = true;
+            }
+
+            if is_function {
+                let in_math_context = math.is_math
+                    || backtick_ranges
+                        .iter()
+                        .any(|r| *start >= *r.start() && *end <= *r.end());
+                if in_math_context {
+                    let overlaps_link = link_ranges.iter().any(|r| {
+                        (*start >= *r.start() && *start <= *r.end())
+                            || (*end >= *r.start() && *end <= *r.end())
+                    });
+                    if !overlaps_link {
+                        for col in *start..=*end {
+                            if col < n {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(122, 162, 247)).bold()); // Blue #7aa2f7
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            let mut is_unit = false;
+            if is_registered_unit(name) {
+                is_unit = true;
+            } else if i > 0
+                && let HighlightToken::Number { .. } = tokens[i - 1]
+            {
+                is_unit = true;
+            }
+
+            if is_unit && defined_vars.contains(name) {
+                let preceded_by_number = if i > 0 {
+                    matches!(tokens[i - 1], HighlightToken::Number { .. })
+                } else {
+                    false
+                };
+                if !preceded_by_number {
+                    is_unit = false;
+                }
+            }
+
+            if is_unit {
+                // Only highlight unit if we are in a valid math context:
+                // either the line is a math line, OR the token falls within backticks.
+                let in_math_context = math.is_math
+                    || backtick_ranges
+                        .iter()
+                        .any(|r| start >= r.start() && end <= r.end());
+                if in_math_context {
+                    // Check if it overlaps with any link range
+                    let overlaps_link = link_ranges.iter().any(|r| {
+                        (start >= r.start() && start <= r.end())
+                            || (end >= r.start() && end <= r.end())
+                    });
+                    if !overlaps_link {
+                        for col in *start..=*end {
+                            if col < n {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let HighlightToken::Number { start, end, val: _ } = &tokens[i] {
+            let in_math_context = math.is_math
+                || backtick_ranges
+                    .iter()
+                    .any(|r| *start >= *r.start() && *end <= *r.end());
+            if in_math_context {
+                let overlaps_link = link_ranges.iter().any(|r| {
+                    (start >= r.start() && start <= r.end()) || (end >= r.start() && end <= r.end())
+                });
+                if !overlaps_link {
+                    for col in *start..=*end {
+                        if col < n {
+                            let italic = line_styles[col]
+                                .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
+                                .unwrap_or(false);
+                            let mut style = Style::default().fg(Color::Rgb(115, 218, 202)); // Teal #73daca
+                            if italic {
+                                style = style.italic();
+                            }
+                            line_styles[col] = Some(style);
+                        }
+                    }
+                }
+            }
+        } else if let HighlightToken::Symbol {
+            start,
+            end,
+            ch: '%',
+        } = &tokens[i]
+        {
+            let mut is_infix = false;
+            if i + 1 < tokens.len() {
+                match &tokens[i + 1] {
+                    HighlightToken::Number { .. }
+                    | HighlightToken::Identifier { .. }
+                    | HighlightToken::Symbol { ch: '(', .. }
+                    | HighlightToken::Symbol { ch: '[', .. } => {
+                        is_infix = true;
+                    }
+                    _ => {}
+                }
+            }
+            if !is_infix {
+                let in_math_context = math.is_math
+                    || backtick_ranges
+                        .iter()
+                        .any(|r| *start >= *r.start() && *end <= *r.end());
+                if in_math_context {
+                    let overlaps_link = link_ranges.iter().any(|r| {
+                        (*start >= *r.start() && *start <= *r.end())
+                            || (*end >= *r.start() && *end <= *r.end())
+                    });
+                    if !overlaps_link {
+                        for col in *start..=*end {
+                            if col < n {
+                                line_styles[col] =
+                                    Some(Style::default().fg(Color::Rgb(244, 143, 177))); // Rose / Pink #f48fb1
+                            }
+                        }
+                    }
+                }
+            } else {
+                let in_math_context = math.is_math
+                    || backtick_ranges
+                        .iter()
+                        .any(|r| *start >= *r.start() && *end <= *r.end());
+                if in_math_context {
+                    let overlaps_link = link_ranges.iter().any(|r| {
+                        (*start >= *r.start() && *start <= *r.end())
+                            || (*end >= *r.start() && *end <= *r.end())
+                    });
+                    if !overlaps_link {
+                        for col in *start..=*end {
+                            if col < n {
+                                let italic = line_styles[col]
+                                    .map(|s| {
+                                        s.add_modifier.contains(ratatui::style::Modifier::ITALIC)
+                                    })
+                                    .unwrap_or(false);
+                                let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                                if italic {
+                                    style = style.italic();
+                                }
+                                line_styles[col] = Some(style);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let HighlightToken::In { start, end } = &tokens[i] {
+            let in_math_context = math.is_math
+                || backtick_ranges
+                    .iter()
+                    .any(|r| *start >= *r.start() && *end <= *r.end());
+            if in_math_context {
+                for col in *start..=*end {
+                    if col < n {
+                        let italic = line_styles[col]
+                            .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
+                            .unwrap_or(false);
+                        let mut style = Style::default().fg(Color::Rgb(255, 158, 100)).bold();
+                        if italic {
+                            style = style.italic();
+                        }
+                        line_styles[col] = Some(style);
+                    }
+                }
+            }
+        } else if let HighlightToken::Symbol { start, end, ch } = &tokens[i] {
+            // Style operator symbols like +, -, *, /, ^, %, &, |, !, =, <, >, (, ), {, }, ;, ,, [, ]
+            let mut is_operator = matches!(
+                ch,
+                '+' | '-'
+                    | '*'
+                    | '/'
+                    | '^'
+                    | '&'
+                    | '|'
+                    | '!'
+                    | '='
+                    | '<'
+                    | '>'
+                    | '('
+                    | ')'
+                    | '{'
+                    | '}'
+                    | ','
+                    | ';'
+                    | '['
+                    | ']'
+            );
+            if *ch == '%' {
+                // Only highlight '%' as an operator if it's infix (modulo)
+                let mut is_infix = false;
+                if i + 1 < tokens.len() {
+                    match &tokens[i + 1] {
+                        HighlightToken::Number { .. }
+                        | HighlightToken::Identifier { .. }
+                        | HighlightToken::Symbol { ch: '(', .. }
+                        | HighlightToken::Symbol { ch: '[', .. } => {
+                            is_infix = true;
+                        }
+                        _ => {}
+                    }
+                }
+                if is_infix {
+                    is_operator = true;
+                }
+            }
+
+            if is_operator {
+                if *ch == '=' && math.has_main_assignment && math.eq_idx == Some(*start) {
+                    // Skip main assignment operator (already styled as Bold Orange)
+                    continue;
+                }
+                let in_math_context = math.is_math
+                    || backtick_ranges
+                        .iter()
+                        .any(|r| *start >= *r.start() && *end <= *r.end());
+                if in_math_context {
+                    let overlaps_link = link_ranges.iter().any(|r| {
+                        (*start >= *r.start() && *start <= *r.end())
+                            || (*end >= *r.start() && *end <= *r.end())
+                    });
+                    if !overlaps_link {
+                        for col in *start..=*end {
+                            if col < n {
+                                let italic = line_styles[col]
+                                    .map(|s| {
+                                        s.add_modifier.contains(ratatui::style::Modifier::ITALIC)
+                                    })
+                                    .unwrap_or(false);
+                                let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                                if italic {
+                                    style = style.italic();
+                                }
+                                line_styles[col] = Some(style);
+                            }
+                        }
                     }
                 }
             }
