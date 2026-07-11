@@ -8,7 +8,7 @@
 use crate::math::eval::complex::{is_complex, make_complex_qty, to_complex_parts};
 use crate::math::eval::{
     Context, eval_and_logic, eval_eq_logic, eval_gt_logic, eval_gte_logic, eval_lt_logic,
-    eval_lte_logic, eval_ne_logic, eval_or_logic,
+    eval_lte_logic, eval_ne_logic, eval_or_logic, matmul_impl, scale_list,
 };
 use crate::math::parser::{Op, Quantity};
 use crate::math::units::{are_compatible, combine_units_with_multiplier, convert_quantity};
@@ -77,6 +77,13 @@ pub(in crate::math::eval) fn eval_binary_op(
                 let (a, b) = to_complex_parts(&left_qty);
                 let (c, d) = to_complex_parts(&right_qty);
                 return Ok(make_complex_qty(a * c - b * d, a * d + b * c));
+            }
+            // Matrix / vector multiplication: list*list => matmul, scalar*list => scale.
+            match (left_qty.list.is_some(), right_qty.list.is_some()) {
+                (true, true) => return matmul_impl(&left_qty, &right_qty, ctx),
+                (true, false) => return scale_list(&left_qty, &right_qty, ctx),
+                (false, true) => return scale_list(&right_qty, &left_qty, ctx),
+                (false, false) => {}
             }
             let (unit, multiplier) = combine_units_with_multiplier(
                 left_qty.unit.as_deref(),

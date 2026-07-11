@@ -751,6 +751,30 @@ fn solve_rec(
     }
 }
 
+/// Multiply every (possibly nested) element of `list_qty` by the scalar `scalar`,
+/// combining units element-wise. Used to wire `scalar * matrix` / `matrix * scalar`.
+fn scale_list(list_qty: &Quantity, scalar: &Quantity, ctx: &Context) -> Result<Quantity, String> {
+    let elements = list_qty
+        .list
+        .as_ref()
+        .ok_or("scale_list expects a list/matrix")?;
+    let mut out = Vec::with_capacity(elements.len());
+    for el in elements {
+        if el.list.is_some() {
+            out.push(scale_list(el, scalar, ctx)?);
+        } else {
+            let (unit, multiplier) = combine_units_with_multiplier(
+                el.unit.as_deref(),
+                scalar.unit.as_deref(),
+                false,
+                &ctx.exchange_rates,
+            );
+            out.push(Quantity::scalar(el.value * scalar.value * multiplier, unit));
+        }
+    }
+    Ok(Quantity::list(out))
+}
+
 fn matmul_impl(q1: &Quantity, q2: &Quantity, ctx: &Context) -> Result<Quantity, String> {
     let el1 = q1
         .list
@@ -1652,6 +1676,33 @@ impl LineExt for crate::math::parser::Line {
 mod tests {
     use super::*;
     use crate::math::parser::{Line, parse_line};
+
+    #[test]
+    fn test_matrix_star_operator() {
+        let ev = |s: &str| -> String {
+            let mut ctx = Context::default();
+            format_quantity(&eval_expr(&parse_line(s).unwrap_expr(), &mut ctx).unwrap())
+        };
+        // matrix * matrix => matmul
+        assert_eq!(
+            ev("[[1, 2], [3, 4]] * [[5, 6], [7, 8]] =>"),
+            "[[19, 22], [43, 50]]"
+        );
+        // scalar * matrix and matrix * scalar => element-wise scale
+        assert_eq!(ev("2 * [[1, 2], [3, 4]] =>"), "[[2, 4], [6, 8]]");
+        assert_eq!(ev("[[1, 2], [3, 4]] * 3 =>"), "[[3, 6], [9, 12]]");
+        // vector * scalar
+        assert_eq!(ev("[1, 2, 3] * 10 =>"), "[10, 20, 30]");
+        // dimension mismatch is an error, not a silent scalar
+        let mut ctx = Context::default();
+        assert!(
+            eval_expr(
+                &parse_line("[[1, 2]] * [[1, 2]] =>").unwrap_expr(),
+                &mut ctx
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn test_scope_guard_no_leak_on_error() {
