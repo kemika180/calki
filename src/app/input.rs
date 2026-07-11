@@ -2,8 +2,8 @@
 //! body of its `if app.show_* { … }` arm; the gate and the loop `continue` stay
 //! in `run_app`. Mirrors the existing `handle_modal_key` (help modal) pattern.
 
-use crate::edtui::EditorMode;
 use crate::edtui::clipboard::ClipboardTrait;
+use crate::edtui::{EditorMode, RowIndex};
 use crate::{App, FocusedPanel, SystemClipboard, is_repeatable_motion};
 use crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::fs;
@@ -377,4 +377,290 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         }
     }
     app.update_highlights();
+}
+
+/// Control-flow signal returned by the global-key handler back to the run loop.
+pub(crate) enum Flow {
+    Continue,
+    Break,
+    Pass,
+}
+
+pub(crate) fn handle_global_keys(app: &mut App, key: KeyEvent, last_key_was_z: &mut bool) -> Flow {
+    // ZZ exit sequence for Vim users (Normal mode in Editor)
+    let is_z = app.focused_panel == FocusedPanel::Editor
+        && app.editor_state.mode == EditorMode::Normal
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+        && (key.code == KeyCode::Char('Z')
+            || (key.code == KeyCode::Char('z') && key.modifiers.contains(KeyModifiers::SHIFT)));
+
+    if is_z {
+        if *last_key_was_z {
+            return Flow::Break;
+        }
+        *last_key_was_z = true;
+        return Flow::Continue;
+    } else {
+        *last_key_was_z = false;
+    }
+
+    // Intercept character for Vim 'r' replacement
+    if app.replace_next_char {
+        app.replace_next_char = false;
+        if let KeyCode::Char(c) = key.code {
+            let row = app.editor_state.cursor.row;
+            let col = app.editor_state.cursor.col;
+            if let Some(line) = app.editor_state.lines.get_mut(RowIndex::new(row))
+                && col < line.len()
+            {
+                line[col] = c;
+                app.re_evaluate_calculations();
+                let _ = app.save_current_note();
+            }
+        }
+        app.update_highlights();
+        return Flow::Continue;
+    }
+
+    // Global help modal toggle (F1 works in any mode, ~ works only when not in insert mode)
+    let is_insert_mode =
+        app.focused_panel == FocusedPanel::Editor && app.editor_state.mode == EditorMode::Insert;
+
+    // Trigger 'r' replacement in Normal mode
+    if app.focused_panel == FocusedPanel::Editor
+        && app.editor_state.mode == EditorMode::Normal
+        && key.code == KeyCode::Char('r')
+        && key.modifiers.is_empty()
+    {
+        app.replace_next_char = true;
+        return Flow::Continue;
+    }
+    if key.code == KeyCode::F(1) {
+        app.show_help = !app.show_help;
+        if app.show_help {
+            app.help_tab_idx = 0;
+            app.help_scroll = 0;
+        }
+        return Flow::Continue;
+    }
+    // Global search toggle '/'
+    if key.code == KeyCode::Char('/') && !is_insert_mode && !app.search_active {
+        app.search_active = true;
+        app.search_query.clear();
+        app.show_search_results = false;
+        return Flow::Continue;
+    }
+    // Ctrl-s: Save current note explicitly
+    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        match app.save_current_note() {
+            Ok(()) => {
+                app.set_status_message("Saved current note".to_string());
+            }
+            Err(e) => {
+                app.set_status_message(format!("Save failed: {}", e));
+            }
+        }
+        app.update_highlights();
+        return Flow::Continue;
+    }
+    // Ctrl-e: Open Export Menu
+    if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.show_export_menu = true;
+        app.update_highlights();
+        return Flow::Continue;
+    }
+    // Global panel toggles
+    if key.code == KeyCode::F(2) {
+        app.left_panel_open = !app.left_panel_open;
+        if !app.left_panel_open && app.focused_panel == FocusedPanel::WikiMap {
+            app.focused_panel = FocusedPanel::Editor;
+        }
+        app.update_highlights();
+        return Flow::Continue;
+    }
+    if key.code == KeyCode::F(3) {
+        app.right_panel_open = !app.right_panel_open;
+        if !app.right_panel_open && app.focused_panel == FocusedPanel::Variables {
+            app.focused_panel = FocusedPanel::Editor;
+        }
+        app.update_highlights();
+        return Flow::Continue;
+    }
+    if key.code == KeyCode::F(4) {
+        app.config.word_wrap = !app.config.word_wrap;
+        let _ = app.config.save();
+        let status = if app.config.word_wrap {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        app.set_status_message(format!("Word wrapping {}", status));
+        app.update_highlights();
+        return Flow::Continue;
+    }
+
+    // Focus switching via Shift-H / Shift-L / Ctrl-h / Ctrl-l
+    let is_switch_left = (key.code == KeyCode::Char('h')
+        && key.modifiers.contains(KeyModifiers::CONTROL))
+        || ((key.code == KeyCode::Char('H')
+            || (key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::SHIFT)))
+            && (app.focused_panel != FocusedPanel::Editor
+                || app.editor_state.mode == EditorMode::Normal
+                || app.editor_state.mode == EditorMode::Visual));
+
+    let is_switch_right = (key.code == KeyCode::Char('l')
+        && key.modifiers.contains(KeyModifiers::CONTROL))
+        || ((key.code == KeyCode::Char('L')
+            || (key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::SHIFT)))
+            && (app.focused_panel != FocusedPanel::Editor
+                || app.editor_state.mode == EditorMode::Normal
+                || app.editor_state.mode == EditorMode::Visual));
+
+    if is_switch_left {
+        app.vim_multiplier = None;
+        match app.focused_panel {
+            FocusedPanel::Editor => {
+                if app.left_panel_open {
+                    app.focused_panel = FocusedPanel::WikiMap;
+                }
+            }
+            FocusedPanel::Variables => {
+                app.focused_panel = FocusedPanel::Editor;
+            }
+            FocusedPanel::WikiMap => {}
+        }
+        app.update_highlights();
+        return Flow::Continue;
+    }
+    if is_switch_right {
+        app.vim_multiplier = None;
+        match app.focused_panel {
+            FocusedPanel::Editor => {
+                if app.right_panel_open {
+                    app.focused_panel = FocusedPanel::Variables;
+                    app.selected_var_idx = 0;
+                }
+            }
+            FocusedPanel::WikiMap => {
+                app.focused_panel = FocusedPanel::Editor;
+            }
+            FocusedPanel::Variables => {}
+        }
+        app.update_highlights();
+        return Flow::Continue;
+    }
+    Flow::Pass
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::App;
+    use std::path::PathBuf;
+
+    /// Build a real `App` rooted at a throwaway wiki dir. Returns the app and the
+    /// dir so the caller can clean it up.
+    fn test_app(name: &str) -> (App, PathBuf) {
+        let root = std::env::current_dir().unwrap().join(name);
+        if root.exists() {
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        std::fs::create_dir_all(&root).unwrap();
+        let app = App::new(root.clone()).unwrap();
+        (app, root)
+    }
+
+    fn plain(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn global_f1_toggles_help_and_continues() {
+        let (mut app, root) = test_app("test_gk_f1");
+        let mut z = false;
+        assert!(!app.show_help);
+        let flow = handle_global_keys(&mut app, plain(KeyCode::F(1)), &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn global_slash_opens_search() {
+        let (mut app, root) = test_app("test_gk_slash");
+        app.focused_panel = FocusedPanel::Editor;
+        let mut z = false;
+        let flow = handle_global_keys(&mut app, plain(KeyCode::Char('/')), &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert!(app.search_active);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn global_f2_toggles_left_panel() {
+        let (mut app, root) = test_app("test_gk_f2");
+        let before = app.left_panel_open;
+        let mut z = false;
+        let flow = handle_global_keys(&mut app, plain(KeyCode::F(2)), &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert_eq!(app.left_panel_open, !before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn global_ctrl_e_opens_export_menu() {
+        let (mut app, root) = test_app("test_gk_ctrle");
+        let mut z = false;
+        let flow = handle_global_keys(&mut app, ctrl('e'), &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert!(app.show_export_menu);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn global_zz_first_arms_then_second_breaks() {
+        let (mut app, root) = test_app("test_gk_zz");
+        app.focused_panel = FocusedPanel::Editor;
+        app.editor_state.mode = EditorMode::Normal;
+        let z_key = KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::NONE);
+        let mut z = false;
+        // First Z: arms the sequence, continues.
+        let flow = handle_global_keys(&mut app, z_key, &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert!(z, "first Z should set last_key_was_z");
+        // Second Z: breaks the loop.
+        let flow = handle_global_keys(&mut app, z_key, &mut z);
+        assert!(matches!(flow, Flow::Break));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn global_ordinary_key_passes_through_and_resets_z() {
+        let (mut app, root) = test_app("test_gk_pass");
+        app.focused_panel = FocusedPanel::Editor;
+        app.editor_state.mode = EditorMode::Normal;
+        let mut z = true; // pretend a Z was pending
+        let flow = handle_global_keys(&mut app, plain(KeyCode::Char('j')), &mut z);
+        assert!(matches!(flow, Flow::Pass));
+        assert!(!z, "a non-Z key must reset the zz latch");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn global_shift_l_focuses_variables_when_open() {
+        let (mut app, root) = test_app("test_gk_shiftl");
+        app.focused_panel = FocusedPanel::Editor;
+        app.editor_state.mode = EditorMode::Normal;
+        app.right_panel_open = true;
+        let mut z = false;
+        let flow = handle_global_keys(&mut app, plain(KeyCode::Char('L')), &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert_eq!(app.focused_panel, FocusedPanel::Variables);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
