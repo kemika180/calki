@@ -4,25 +4,43 @@
 
 use crate::math::eval::{Context, eval_eq_logic, eval_expr, expr_to_string};
 use crate::math::parser::{Expr, Quantity};
+use std::collections::HashSet;
+
+/// RAII guard that snapshots the set of variable names on scope entry and, on
+/// drop, prunes any names introduced during the scope. Because the cleanup runs
+/// in `Drop`, block-locals are removed on every exit path — including an early
+/// return through `?` when evaluation errors mid-body — so they never leak into
+/// the surrounding context.
+struct ScopeGuard<'a> {
+    ctx: &'a mut Context,
+    original_keys: HashSet<String>,
+}
+
+impl<'a> ScopeGuard<'a> {
+    fn new(ctx: &'a mut Context) -> Self {
+        let original_keys = ctx.variables.keys().cloned().collect();
+        ScopeGuard { ctx, original_keys }
+    }
+}
+
+impl Drop for ScopeGuard<'_> {
+    fn drop(&mut self) {
+        self.ctx
+            .variables
+            .retain(|k, _| self.original_keys.contains(k));
+    }
+}
 
 pub(in crate::math::eval) fn eval_block(
     exprs: &[Expr],
     ctx: &mut Context,
 ) -> Result<Quantity, String> {
-    let original_keys: std::collections::HashSet<String> = ctx.variables.keys().cloned().collect();
+    let guard = ScopeGuard::new(ctx);
     let mut last_val = Quantity::scalar(0.0, None);
-    let mut result = Ok(());
     for expr in exprs {
-        match eval_expr(expr, ctx) {
-            Ok(val) => last_val = val,
-            Err(e) => {
-                result = Err(e);
-                break;
-            }
-        }
+        last_val = eval_expr(expr, guard.ctx)?;
     }
-    ctx.variables.retain(|k, _| original_keys.contains(k));
-    result.map(|_| last_val)
+    Ok(last_val)
 }
 
 pub(in crate::math::eval) fn eval_for(

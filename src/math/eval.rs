@@ -1654,6 +1654,56 @@ mod tests {
     use crate::math::parser::{Line, parse_line};
 
     #[test]
+    fn test_scope_guard_no_leak_on_error() {
+        // A block that errors mid-body must not leak the locals it defined
+        // before the error (the RAII ScopeGuard prunes them on the early return).
+        let block = Expr::Block(vec![
+            Expr::LocalAssign("leaky".to_string(), Box::new(Expr::Number(42.0))),
+            Expr::BinaryOp(
+                Op::Div,
+                Box::new(Expr::Number(1.0)),
+                Box::new(Expr::Number(0.0)),
+            ),
+        ]);
+        let mut ctx = Context::default();
+        let res = eval_expr(&block, &mut ctx);
+        assert!(res.is_err(), "expected block to error on 1/0");
+        assert!(
+            !ctx.variables.contains_key("leaky"),
+            "block-local leaked into context on the error path"
+        );
+
+        // A for-loop whose body errors mid-iteration must likewise leave neither
+        // the loop variable nor the body-locals behind.
+        let for_expr = Expr::For {
+            var: "i".to_string(),
+            iterable: Box::new(Expr::List(vec![Expr::Number(1.0), Expr::Number(2.0)])),
+            body: Box::new(Expr::Block(vec![
+                Expr::LocalAssign(
+                    "temp".to_string(),
+                    Box::new(Expr::Variable("i".to_string())),
+                ),
+                Expr::BinaryOp(
+                    Op::Div,
+                    Box::new(Expr::Number(1.0)),
+                    Box::new(Expr::Number(0.0)),
+                ),
+            ])),
+        };
+        let mut ctx = Context::default();
+        let res = eval_expr(&for_expr, &mut ctx);
+        assert!(res.is_err(), "expected loop body to error on 1/0");
+        assert!(
+            !ctx.variables.contains_key("temp"),
+            "loop body-local leaked into context on the error path"
+        );
+        assert!(
+            !ctx.variables.contains_key("i"),
+            "loop variable leaked into context on the error path"
+        );
+    }
+
+    #[test]
     fn test_eval_basic() {
         let mut ctx = Context::default();
         let e1 = parse_line("x = 10");
