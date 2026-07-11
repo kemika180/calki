@@ -1,7 +1,8 @@
 //! Trigonometric, hyperbolic, and exponential builtins. All pure over the
 //! evaluated arguments; complex arguments are handled via the shared helpers.
 
-use crate::math::eval::{check_built_in_args, is_complex, make_complex_qty, to_complex_parts};
+use crate::math::eval::check_built_in_args;
+use crate::math::eval::complex::{is_complex, make_complex_qty, to_complex_parts};
 use crate::math::parser::Quantity;
 
 pub(in crate::math::eval) fn sin(name: &str, args: &[Quantity]) -> Result<Quantity, String> {

@@ -2,9 +2,8 @@
 //! `mod`, `range`, and the `plot`/`sparkline` renderer. Only `modulo` reconciles
 //! units, so it alone takes the context.
 
-use crate::math::eval::{
-    Context, check_built_in_args, flatten_quantity, is_complex, make_complex_qty, to_complex_parts,
-};
+use crate::math::eval::complex::{is_complex, make_complex_qty, to_complex_parts};
+use crate::math::eval::{Context, check_built_in_args, flatten_quantity};
 use crate::math::parser::Quantity;
 use crate::math::units::{are_compatible, convert_quantity};
 
