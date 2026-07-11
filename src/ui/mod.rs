@@ -2,4 +2,5 @@
 
 pub mod help_text;
 pub mod modals;
+pub mod panels;
 pub mod status;
