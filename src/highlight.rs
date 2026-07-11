@@ -6,6 +6,7 @@
 //! follows in later commits.
 
 use ratatui::prelude::*;
+use std::ops::RangeInclusive;
 
 use crate::edtui;
 use crate::{
@@ -733,240 +734,19 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
                 }
             }
 
-            // E. Lists / Bullet points (style bullet or number in bold orange)
-            let trimmed_start = trim_start_slice(line);
-            let leading_spaces = line.len() - trimmed_start.len();
-            let rest = trimmed_start;
-            let mut list_marker_range = None;
-            if rest.starts_with(&['*', ' '])
-                || rest.starts_with(&['-', ' '])
-                || rest.starts_with(&['+', ' '])
-            {
-                list_marker_range = Some(leading_spaces..leading_spaces + 1);
-            } else {
-                let digit_count = rest.iter().take_while(|&&c| c.is_ascii_digit()).count();
-                if digit_count > 0
-                    && rest.get(digit_count) == Some(&'.')
-                    && rest.get(digit_count + 1) == Some(&' ')
-                {
-                    list_marker_range = Some(leading_spaces..leading_spaces + digit_count + 1);
-                }
-            }
-            if let Some(r) = list_marker_range {
-                for col in r {
-                    if col < n {
-                        line_styles[col] =
-                            Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()); // Bold Orange #ff9e64
-                    }
-                }
-            }
+            // E. Lists / Bullet points
+            paint_list(line, &mut line_styles);
 
-            // F. Bold Formatting: **text** or __text__
+            // F/G/H. Inline emphasis (bold/italic/strikethrough); skipped on math lines.
             if !is_math_line {
-                let is_in_backticks =
-                    |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
-
-                let mut b_pos = 0;
-                while let Some(start_pos) = find_in_chars_from(line, "**", b_pos) {
-                    if is_in_backticks(start_pos) {
-                        b_pos = start_pos + 1;
-                        continue;
-                    }
-                    if let Some(end_pos) = find_in_chars_from(line, "**", start_pos + 2) {
-                        if is_in_backticks(end_pos) {
-                            b_pos = start_pos + 1;
-                            continue;
-                        }
-                        for col in start_pos..=(end_pos + 1) {
-                            if col < n {
-                                let base = line_styles[col].unwrap_or_else(|| {
-                                    Style::default().fg(Color::Rgb(169, 177, 214))
-                                });
-                                line_styles[col] = Some(base.bold());
-                            }
-                        }
-                        b_pos = end_pos + 2;
-                    } else {
-                        break;
-                    }
-                }
-                let mut b_pos2 = 0;
-                while let Some(start_pos) = find_in_chars_from(line, "__", b_pos2) {
-                    if is_in_backticks(start_pos) {
-                        b_pos2 = start_pos + 1;
-                        continue;
-                    }
-                    if let Some(end_pos) = find_in_chars_from(line, "__", start_pos + 2) {
-                        if is_in_backticks(end_pos) {
-                            b_pos2 = start_pos + 1;
-                            continue;
-                        }
-                        for col in start_pos..=(end_pos + 1) {
-                            if col < n {
-                                let base = line_styles[col].unwrap_or_else(|| {
-                                    Style::default().fg(Color::Rgb(169, 177, 214))
-                                });
-                                line_styles[col] = Some(base.bold());
-                            }
-                        }
-                        b_pos2 = end_pos + 2;
-                    } else {
-                        break;
-                    }
-                }
-
-                // G. Italic Formatting: *text* or _text_
-                let mut i_pos = 0;
-                while i_pos < n {
-                    if line[i_pos] == '*' {
-                        if is_in_backticks(i_pos) {
-                            i_pos += 1;
-                            continue;
-                        }
-                        if i_pos + 1 < n && line[i_pos + 1] == '*' {
-                            i_pos += 2;
-                            continue;
-                        }
-                        let mut search = i_pos + 1;
-                        let mut found_end = None;
-                        while search < n {
-                            if line[search] == '*' {
-                                if is_in_backticks(search) {
-                                    search += 1;
-                                    continue;
-                                }
-                                if search + 1 < n && line[search + 1] == '*' {
-                                    search += 2;
-                                    continue;
-                                }
-                                found_end = Some(search);
-                                break;
-                            }
-                            search += 1;
-                        }
-                        if let Some(end_pos) = found_end {
-                            for col in i_pos..=end_pos {
-                                if col < n {
-                                    let base = line_styles[col].unwrap_or_else(|| {
-                                        Style::default().fg(Color::Rgb(169, 177, 214))
-                                    });
-                                    line_styles[col] = Some(base.italic());
-                                }
-                            }
-                            i_pos = end_pos + 1;
-                        } else {
-                            i_pos += 1;
-                        }
-                    } else {
-                        i_pos += 1;
-                    }
-                }
-                let mut i_pos2 = 0;
-                while i_pos2 < n {
-                    if line[i_pos2] == '_' {
-                        if is_in_backticks(i_pos2) {
-                            i_pos2 += 1;
-                            continue;
-                        }
-                        if i_pos2 + 1 < n && line[i_pos2 + 1] == '_' {
-                            i_pos2 += 2;
-                            continue;
-                        }
-                        let mut search = i_pos2 + 1;
-                        let mut found_end = None;
-                        while search < n {
-                            if line[search] == '_' {
-                                if is_in_backticks(search) {
-                                    search += 1;
-                                    continue;
-                                }
-                                if search + 1 < n && line[search + 1] == '_' {
-                                    search += 2;
-                                    continue;
-                                }
-                                found_end = Some(search);
-                                break;
-                            }
-                            search += 1;
-                        }
-                        if let Some(end_pos) = found_end {
-                            for col in i_pos2..=end_pos {
-                                if col < n {
-                                    let base = line_styles[col].unwrap_or_else(|| {
-                                        Style::default().fg(Color::Rgb(169, 177, 214))
-                                    });
-                                    line_styles[col] = Some(base.italic());
-                                }
-                            }
-                            i_pos2 = end_pos + 1;
-                        } else {
-                            i_pos2 += 1;
-                        }
-                    } else {
-                        i_pos2 += 1;
-                    }
-                }
-
-                // H. Strikethrough Formatting: ~~text~~
-                let mut s_pos = 0;
-                while let Some(start_pos) = find_in_chars_from(line, "~~", s_pos) {
-                    if is_in_backticks(start_pos) {
-                        s_pos = start_pos + 1;
-                        continue;
-                    }
-                    if let Some(end_pos) = find_in_chars_from(line, "~~", start_pos + 2) {
-                        if is_in_backticks(end_pos) {
-                            s_pos = start_pos + 1;
-                            continue;
-                        }
-                        for col in start_pos..=(end_pos + 1) {
-                            if col < n {
-                                let base = line_styles[col].unwrap_or_else(|| {
-                                    Style::default().fg(Color::Rgb(169, 177, 214))
-                                });
-                                line_styles[col] = Some(base.crossed_out());
-                            }
-                        }
-                        s_pos = end_pos + 2;
-                    } else {
-                        break;
-                    }
-                }
+                paint_bold(line, &mut line_styles, &backtick_ranges);
+                paint_italic(line, &mut line_styles, &backtick_ranges);
+                paint_strike(line, &mut line_styles, &backtick_ranges);
             }
         }
 
         // I. Selected Variable Highlight
-        if let Some(ref sv_chars) = sv_chars {
-            let sv_len = sv_chars.len();
-            let is_ident_char = |c: char| -> bool { c.is_alphanumeric() || c == '_' || c == '/' };
-            if n >= sv_len {
-                for start_idx in 0..=(n - sv_len) {
-                    if &line[start_idx..(start_idx + sv_len)] == sv_chars {
-                        // Check word boundaries
-                        let before_ok = if start_idx > 0 {
-                            !is_ident_char(line[start_idx - 1])
-                        } else {
-                            true
-                        };
-                        let after_ok = if start_idx + sv_len < n {
-                            !is_ident_char(line[start_idx + sv_len])
-                        } else {
-                            true
-                        };
-                        if before_ok && after_ok {
-                            for col in start_idx..(start_idx + sv_len) {
-                                line_styles[col] = Some(
-                                    Style::default()
-                                        .bg(Color::Rgb(167, 82, 142))
-                                        .fg(Color::Rgb(224, 230, 242))
-                                        .bold(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        paint_selected_var(line, &mut line_styles, sv_chars.as_deref());
 
         // Force anything after '=>' to be italic
         if let Some(arrow_pos) = arrow_idx {
@@ -1077,5 +857,254 @@ fn styles_to_highlights(
             end: edtui::Index2::new(row_idx, n - 1),
             style: s,
         });
+    }
+}
+
+fn paint_list(line: &[char], line_styles: &mut [Option<Style>]) {
+    let n = line.len();
+    let trimmed_start = trim_start_slice(line);
+    let leading_spaces = line.len() - trimmed_start.len();
+    let rest = trimmed_start;
+    let mut list_marker_range = None;
+    if rest.starts_with(&['*', ' '])
+        || rest.starts_with(&['-', ' '])
+        || rest.starts_with(&['+', ' '])
+    {
+        list_marker_range = Some(leading_spaces..leading_spaces + 1);
+    } else {
+        let digit_count = rest.iter().take_while(|&&c| c.is_ascii_digit()).count();
+        if digit_count > 0
+            && rest.get(digit_count) == Some(&'.')
+            && rest.get(digit_count + 1) == Some(&' ')
+        {
+            list_marker_range = Some(leading_spaces..leading_spaces + digit_count + 1);
+        }
+    }
+    if let Some(r) = list_marker_range {
+        for col in r {
+            if col < n {
+                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()); // Bold Orange #ff9e64
+            }
+        }
+    }
+}
+
+fn paint_bold(
+    line: &[char],
+    line_styles: &mut [Option<Style>],
+    backtick_ranges: &[RangeInclusive<usize>],
+) {
+    let n = line.len();
+    let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
+    let mut b_pos = 0;
+    while let Some(start_pos) = find_in_chars_from(line, "**", b_pos) {
+        if is_in_backticks(start_pos) {
+            b_pos = start_pos + 1;
+            continue;
+        }
+        if let Some(end_pos) = find_in_chars_from(line, "**", start_pos + 2) {
+            if is_in_backticks(end_pos) {
+                b_pos = start_pos + 1;
+                continue;
+            }
+            for col in start_pos..=(end_pos + 1) {
+                if col < n {
+                    let base = line_styles[col]
+                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    line_styles[col] = Some(base.bold());
+                }
+            }
+            b_pos = end_pos + 2;
+        } else {
+            break;
+        }
+    }
+    let mut b_pos2 = 0;
+    while let Some(start_pos) = find_in_chars_from(line, "__", b_pos2) {
+        if is_in_backticks(start_pos) {
+            b_pos2 = start_pos + 1;
+            continue;
+        }
+        if let Some(end_pos) = find_in_chars_from(line, "__", start_pos + 2) {
+            if is_in_backticks(end_pos) {
+                b_pos2 = start_pos + 1;
+                continue;
+            }
+            for col in start_pos..=(end_pos + 1) {
+                if col < n {
+                    let base = line_styles[col]
+                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    line_styles[col] = Some(base.bold());
+                }
+            }
+            b_pos2 = end_pos + 2;
+        } else {
+            break;
+        }
+    }
+}
+
+fn paint_italic(
+    line: &[char],
+    line_styles: &mut [Option<Style>],
+    backtick_ranges: &[RangeInclusive<usize>],
+) {
+    let n = line.len();
+    let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
+    let mut i_pos = 0;
+    while i_pos < n {
+        if line[i_pos] == '*' {
+            if is_in_backticks(i_pos) {
+                i_pos += 1;
+                continue;
+            }
+            if i_pos + 1 < n && line[i_pos + 1] == '*' {
+                i_pos += 2;
+                continue;
+            }
+            let mut search = i_pos + 1;
+            let mut found_end = None;
+            while search < n {
+                if line[search] == '*' {
+                    if is_in_backticks(search) {
+                        search += 1;
+                        continue;
+                    }
+                    if search + 1 < n && line[search + 1] == '*' {
+                        search += 2;
+                        continue;
+                    }
+                    found_end = Some(search);
+                    break;
+                }
+                search += 1;
+            }
+            if let Some(end_pos) = found_end {
+                for col in i_pos..=end_pos {
+                    if col < n {
+                        let base = line_styles[col]
+                            .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                        line_styles[col] = Some(base.italic());
+                    }
+                }
+                i_pos = end_pos + 1;
+            } else {
+                i_pos += 1;
+            }
+        } else {
+            i_pos += 1;
+        }
+    }
+    let mut i_pos2 = 0;
+    while i_pos2 < n {
+        if line[i_pos2] == '_' {
+            if is_in_backticks(i_pos2) {
+                i_pos2 += 1;
+                continue;
+            }
+            if i_pos2 + 1 < n && line[i_pos2 + 1] == '_' {
+                i_pos2 += 2;
+                continue;
+            }
+            let mut search = i_pos2 + 1;
+            let mut found_end = None;
+            while search < n {
+                if line[search] == '_' {
+                    if is_in_backticks(search) {
+                        search += 1;
+                        continue;
+                    }
+                    if search + 1 < n && line[search + 1] == '_' {
+                        search += 2;
+                        continue;
+                    }
+                    found_end = Some(search);
+                    break;
+                }
+                search += 1;
+            }
+            if let Some(end_pos) = found_end {
+                for col in i_pos2..=end_pos {
+                    if col < n {
+                        let base = line_styles[col]
+                            .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                        line_styles[col] = Some(base.italic());
+                    }
+                }
+                i_pos2 = end_pos + 1;
+            } else {
+                i_pos2 += 1;
+            }
+        } else {
+            i_pos2 += 1;
+        }
+    }
+}
+
+fn paint_strike(
+    line: &[char],
+    line_styles: &mut [Option<Style>],
+    backtick_ranges: &[RangeInclusive<usize>],
+) {
+    let n = line.len();
+    let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
+    let mut s_pos = 0;
+    while let Some(start_pos) = find_in_chars_from(line, "~~", s_pos) {
+        if is_in_backticks(start_pos) {
+            s_pos = start_pos + 1;
+            continue;
+        }
+        if let Some(end_pos) = find_in_chars_from(line, "~~", start_pos + 2) {
+            if is_in_backticks(end_pos) {
+                s_pos = start_pos + 1;
+                continue;
+            }
+            for col in start_pos..=(end_pos + 1) {
+                if col < n {
+                    let base = line_styles[col]
+                        .unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    line_styles[col] = Some(base.crossed_out());
+                }
+            }
+            s_pos = end_pos + 2;
+        } else {
+            break;
+        }
+    }
+}
+
+fn paint_selected_var(line: &[char], line_styles: &mut [Option<Style>], sv_chars: Option<&[char]>) {
+    let Some(sv_chars) = sv_chars else {
+        return;
+    };
+    let n = line.len();
+    let sv_len = sv_chars.len();
+    let is_ident_char = |c: char| -> bool { c.is_alphanumeric() || c == '_' || c == '/' };
+    if n >= sv_len {
+        for start_idx in 0..=(n - sv_len) {
+            if &line[start_idx..(start_idx + sv_len)] == sv_chars {
+                // Check word boundaries
+                let before_ok = if start_idx > 0 {
+                    !is_ident_char(line[start_idx - 1])
+                } else {
+                    true
+                };
+                let after_ok = if start_idx + sv_len < n {
+                    !is_ident_char(line[start_idx + sv_len])
+                } else {
+                    true
+                };
+                if before_ok && after_ok {
+                    for col in start_idx..(start_idx + sv_len) {
+                        line_styles[col] = Some(
+                            Style::default()
+                                .bg(Color::Rgb(167, 82, 142))
+                                .fg(Color::Rgb(224, 230, 242))
+                                .bold(),
+                        );
+                    }
+                }
+            }
+        }
     }
 }
