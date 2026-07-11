@@ -112,7 +112,7 @@ impl WikiManager {
         let trip_path = self.root_dir.join("trip-planning.md");
 
         if !home_path.exists() {
-            let onboarding_content = r#"# Welcome to calki! 🧮 📝
+            let onboarding_content = r#"# Welcome to calki!
 
 calki is a terminal-based Markdown note editor and interactive math sheet calculator with local wiki-style link navigation.
 
@@ -158,7 +158,7 @@ We've pre-generated a few demo notes to showcase different capabilities. Press *
 
             // Generate sample pages if they don't exist
             if !grocery_path.exists() {
-                let grocery_content = r#"# Grocery List 🛒
+                let grocery_content = r#"# Grocery List
 
 Planning this week's groceries and budgeting with tax and discounts.
 
@@ -187,7 +187,7 @@ Back to [[Home]].
             }
 
             if !savings_path.exists() {
-                let savings_content = r#"# Savings Plan 💰
+                let savings_content = r#"# Savings Plan
 
 Let's plan for a big purchase or retirement using financial compounding functions.
 
@@ -220,7 +220,7 @@ Back to [[Home]].
             }
 
             if !trip_path.exists() {
-                let trip_content = r#"# Trip Planning 🚗 ✈️
+                let trip_content = r#"# Trip Planning
 
 Calculating driving times, fuel costs, and speed conversions for a road trip.
 
@@ -245,8 +245,8 @@ driving_time in hours => 4.9231 hours
 metric_distance = distance to km
 metric_distance => 514.99 km
 
-metric_speed = speed_limit to km/h
-metric_speed => 104.6074 km/h
+metric_speed = speed_limit to km / hr
+metric_speed => 104.6074 km/hr
 
 Back to [[Home]].
 "#;
