@@ -3,9 +3,7 @@
 pub mod input;
 
 use crate::edtui::EditorMode;
-use crate::{
-    App, FocusedPanel, handle_modal_key, write_cursor_color_sequence, write_cursor_shape_sequence,
-};
+use crate::{App, FocusedPanel, write_cursor_color_sequence, write_cursor_shape_sequence};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::prelude::*;
 use std::time::Duration;
@@ -90,7 +88,7 @@ pub(crate) fn run_app<B: Backend + std::io::Write>(
                     }
 
                     // If help or function guide modal is open, process scrolling or close modal
-                    if handle_modal_key(app, key) {
+                    if crate::app::input::handle_modal_key(app, key) {
                         continue;
                     }
 
