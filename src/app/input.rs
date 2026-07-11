@@ -5,7 +5,7 @@
 use crate::edtui::EditorMode;
 use crate::edtui::clipboard::ClipboardTrait;
 use crate::{App, FocusedPanel, SystemClipboard, is_repeatable_motion};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::fs;
 
 pub(crate) fn handle_update_modal(app: &mut App, key: KeyEvent) {
@@ -299,6 +299,82 @@ pub(crate) fn handle_variables_key(app: &mut App, key: KeyEvent) {
             app.focused_panel = FocusedPanel::Editor;
         }
         _ => {}
+    }
+    app.update_highlights();
+}
+
+pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    app.vim_multiplier = None; // Reset multiplier on mouse action
+    if app.show_help {
+        app.show_help = false;
+    } else {
+        let col = mouse.column;
+        let row = mouse.row;
+        let is_click = mouse.kind == event::MouseEventKind::Down(event::MouseButton::Left);
+
+        // 1. Left Panel (Wiki Map)
+        if app.left_panel_open
+            && col >= app.left_area.x
+            && col < app.left_area.x + app.left_area.width
+            && row >= app.left_area.y
+            && row < app.left_area.y + app.left_area.height
+        {
+            if app.config.mouse_focus_on_hover || is_click {
+                app.focused_panel = FocusedPanel::WikiMap;
+            }
+            if is_click {
+                let click_row = row as i32 - app.left_area.y as i32 - 1;
+                if click_row >= 0 {
+                    let row_map = app.get_left_panel_row_map();
+                    if let Some(&idx) = row_map.get(&(click_row as usize)) {
+                        app.selected_link_idx = idx;
+                        let links = app.get_wiki_map_selectable_links();
+                        if idx < links.len() {
+                            let target_name = &links[idx];
+                            let target_path = app.wiki_mgr.link_to_path(target_name);
+                            let _ = app.save_current_note();
+                            app.history_stack.push(app.active_path.clone());
+                            let _ = app.load_note(target_path);
+                            app.focused_panel = FocusedPanel::Editor;
+                        }
+                    }
+                }
+            }
+        }
+        // 2. Right Panel (Variables Inspector)
+        else if app.right_panel_open
+            && col >= app.right_area.x
+            && col < app.right_area.x + app.right_area.width
+            && row >= app.right_area.y
+            && row < app.right_area.y + app.right_area.height
+        {
+            if app.config.mouse_focus_on_hover || is_click {
+                app.focused_panel = FocusedPanel::Variables;
+            }
+            if is_click {
+                let click_row = row as i32 - app.right_area.y as i32 - 1;
+                if click_row >= 0 && (click_row as usize) < app.variables_cache.len() {
+                    app.selected_var_idx = click_row as usize;
+                }
+            }
+        }
+        // 3. Middle Panel (Editor)
+        else if col >= app.editor_area.x
+            && col < app.editor_area.x + app.editor_area.width
+            && row >= app.editor_area.y
+            && row < app.editor_area.y + app.editor_area.height
+        {
+            if app.config.mouse_focus_on_hover || is_click {
+                app.focused_panel = FocusedPanel::Editor;
+            }
+            if app.focused_panel == FocusedPanel::Editor {
+                app.editor_event_handler
+                    .on_mouse_event(mouse, &mut app.editor_state);
+                if is_click && app.editor_state.mode == EditorMode::Normal {
+                    app.follow_link_under_cursor();
+                }
+            }
+        }
     }
     app.update_highlights();
 }
