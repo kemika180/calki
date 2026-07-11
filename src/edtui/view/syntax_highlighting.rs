@@ -4,7 +4,7 @@ use crate::edtui::syntect::{
     highlighting::{Theme, ThemeSet},
     parsing::{SyntaxReference, SyntaxSet},
 };
-use crate::edtui::view::syntax_higlighting::SyntaxHighlighterError::{
+use crate::edtui::view::syntax_highlighting::SyntaxHighlighterError::{
     ExtensionNotFound, ThemeNotFound,
 };
 use once_cell::sync::Lazy;

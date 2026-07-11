@@ -329,7 +329,7 @@ pub use state::{EditorState, highlight::Highlight, mode::EditorMode};
 pub use view::{EditorStatusLine, EditorView, LineNumbers, theme::EditorTheme};
 
 #[cfg(feature = "syntax-highlighting")]
-pub use view::syntax_higlighting::{
+pub use view::syntax_highlighting::{
     SYNTAX_SET, SyntaxHighlighter, SyntaxHighlighterError, THEME_SET,
 };
 

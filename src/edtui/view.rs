@@ -3,12 +3,12 @@ pub(crate) mod line_wrapper;
 mod render_line;
 pub mod status_line;
 #[cfg(feature = "syntax-highlighting")]
-pub mod syntax_higlighting;
+pub mod syntax_highlighting;
 pub mod theme;
 
 use render_line::RenderLine;
 #[cfg(feature = "syntax-highlighting")]
-use syntax_higlighting::SyntaxHighlighter;
+use syntax_highlighting::SyntaxHighlighter;
 
 use crate::edtui::{
     EditorMode, Index2,
