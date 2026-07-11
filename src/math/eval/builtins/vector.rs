@@ -1,4 +1,4 @@
-//! Vector and matrix builtins: `vdot`, `vadd`, `vsub`, `transpose`, `matmul`, `len`.
+//! Vector and matrix builtins: `vdot`, `vadd`, `vsub`, `transpose`, `matmul`, `det`, `len`.
 //! `vadd`/`vsub`/`matmul` defer to the shared quantity arithmetic; `vdot` and the
 //! reconciliation paths need the context's exchange rates.
 
@@ -149,4 +149,81 @@ pub(in crate::math::eval) fn len(name: &str, args: &[Quantity]) -> Result<Quanti
     } else {
         Err("Function 'len' expects a list/vector argument".to_string())
     }
+}
+
+/// Extract a square, dimensionless `n x n` matrix of raw values from a Quantity,
+/// validating shape and rejecting units. Shared by `det` and `inv`.
+fn to_square_matrix(qty: &Quantity, name: &str) -> Result<Vec<Vec<f64>>, String> {
+    let rows = qty
+        .list
+        .as_ref()
+        .ok_or_else(|| format!("{}() expects a matrix", name))?;
+    if rows.is_empty() {
+        return Err(format!("{}() expects a non-empty matrix", name));
+    }
+    let n = rows.len();
+    let mut mat = Vec::with_capacity(n);
+    for row in rows {
+        let cells = row
+            .list
+            .as_ref()
+            .ok_or_else(|| format!("{}() expects a 2D matrix", name))?;
+        if cells.len() != n {
+            return Err(format!(
+                "{}() expects a square matrix (found a {}x{} shape)",
+                name,
+                n,
+                cells.len()
+            ));
+        }
+        let mut r = Vec::with_capacity(n);
+        for cell in cells {
+            if cell.list.is_some() {
+                return Err(format!("{}() expects a 2D matrix of numbers", name));
+            }
+            if cell.unit.is_some() {
+                return Err(format!("{}() requires a dimensionless matrix", name));
+            }
+            r.push(cell.value);
+        }
+        mat.push(r);
+    }
+    Ok(mat)
+}
+
+/// Determinant of a square matrix via Gaussian elimination with partial pivoting.
+fn determinant(mut m: Vec<Vec<f64>>) -> f64 {
+    let n = m.len();
+    let mut det = 1.0;
+    for i in 0..n {
+        let mut pivot = i;
+        for r in (i + 1)..n {
+            if m[r][i].abs() > m[pivot][i].abs() {
+                pivot = r;
+            }
+        }
+        if m[pivot][i] == 0.0 {
+            return 0.0;
+        }
+        if pivot != i {
+            m.swap(i, pivot);
+            det = -det;
+        }
+        // The pivot row is not modified while eliminating rows below it.
+        let pivot_row = m[i].clone();
+        det *= pivot_row[i];
+        for row in m.iter_mut().skip(i + 1) {
+            let factor = row[i] / pivot_row[i];
+            for (c, &pv) in pivot_row.iter().enumerate().skip(i) {
+                row[c] -= factor * pv;
+            }
+        }
+    }
+    det
+}
+
+pub(in crate::math::eval) fn det(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    check_built_in_args(name, args, 1)?;
+    let m = to_square_matrix(&args[0], "det")?;
+    Ok(Quantity::scalar(determinant(m), None))
 }

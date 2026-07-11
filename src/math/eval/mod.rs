@@ -1300,6 +1300,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "vsub" => builtins::vector::vsub(name, &arg_vals, ctx),
                 "transpose" => builtins::vector::transpose(name, &arg_vals),
                 "matmul" => builtins::vector::matmul(name, &arg_vals, ctx),
+                "det" => builtins::vector::det(name, &arg_vals),
                 "if" => builtins::logic::if_(name, &arg_vals),
                 "and" => builtins::logic::and(&arg_vals),
                 "or" => builtins::logic::or(&arg_vals),
@@ -1698,6 +1699,29 @@ mod tests {
         assert!(
             eval_expr(
                 &parse_line("[[1, 2]] * [[1, 2]] =>").unwrap_expr(),
+                &mut ctx
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_matrix_determinant() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        assert!((ev("det([[1, 2], [3, 4]]) =>") - (-2.0)).abs() < 1e-9);
+        assert!((ev("det([[2, 0], [0, 3]]) =>") - 6.0).abs() < 1e-9);
+        assert!((ev("det([[6, 1, 1], [4, -2, 5], [2, 8, 7]]) =>") - (-306.0)).abs() < 1e-9);
+        assert!(ev("det([[1, 2], [2, 4]]) =>").abs() < 1e-9); // singular => 0
+        // non-square is an error
+        let mut ctx = Context::default();
+        assert!(
+            eval_expr(
+                &parse_line("det([[1, 2, 3], [4, 5, 6]]) =>").unwrap_expr(),
                 &mut ctx
             )
             .is_err()
