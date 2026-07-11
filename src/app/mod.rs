@@ -10,6 +10,25 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::prelude::*;
 use std::time::Duration;
 
+/// Emit the terminal cursor shape + color escape sequences for the editor mode.
+fn emit_cursor_style<W: std::io::Write>(writer: &mut W, mode: EditorMode) {
+    let shape_num = match mode {
+        EditorMode::Normal => 1, // Blinking Block
+        EditorMode::Insert => 5, // Blinking Bar
+        EditorMode::Visual => 2, // Steady Block
+        EditorMode::Search => 1, // Blinking Block
+    };
+    let _ = write_cursor_shape_sequence(writer, shape_num);
+
+    let cursor_color = match mode {
+        EditorMode::Normal => "#7aa2f7", // Blue
+        EditorMode::Insert => "#9ece6a", // Green
+        EditorMode::Visual => "#bb9af7", // Purple
+        EditorMode::Search => "#ff9e64", // Orange
+    };
+    let _ = write_cursor_color_sequence(writer, cursor_color);
+}
+
 pub(crate) fn run_app<B: Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -32,21 +51,7 @@ pub(crate) fn run_app<B: Backend + std::io::Write>(
             .draw(|f| crate::ui::ui(f, app))
             .map_err(|e| e.to_string())?;
 
-        let shape_num = match app.editor_state.mode {
-            EditorMode::Normal => 1, // Blinking Block
-            EditorMode::Insert => 5, // Blinking Bar
-            EditorMode::Visual => 2, // Steady Block
-            EditorMode::Search => 1, // Blinking Block
-        };
-        let _ = write_cursor_shape_sequence(terminal.backend_mut(), shape_num);
-
-        let cursor_color = match app.editor_state.mode {
-            EditorMode::Normal => "#7aa2f7", // Blue
-            EditorMode::Insert => "#9ece6a", // Green
-            EditorMode::Visual => "#bb9af7", // Purple
-            EditorMode::Search => "#ff9e64", // Orange
-        };
-        let _ = write_cursor_color_sequence(terminal.backend_mut(), cursor_color);
+        emit_cursor_style(terminal.backend_mut(), app.editor_state.mode);
 
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
