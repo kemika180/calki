@@ -15,7 +15,9 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
   ![Grocery List Budgeting](grocery-list.png)
 
 * **Inline Math Evaluation**: Run calculations right inside your sentences using backticks: `` `10m * 5m =>` ``.
+* **Powerful Calculation Engine**: Far beyond basic arithmetic — trigonometry, statistics (`mean`, `median`, `stddev`, `variance`), vectors and **matrices** (`[[1, 2], [3, 4]]` with `*`, `transpose`, `det`, `inv`), complex numbers, symbolic differentiation (`diff`) and equation solving (`solve`), higher-order list operations (`map`, `filter`, `reduce`, `zip`), `for`/`while` loops and conditionals, financial functions (`pmt`, `fv`, `pv`), hex/binary literals, and inline `sparkline`s.
 * **Dimensional & Currency Analysis**: Supports physical units (length, speed, data size, temperature, time) and live-updated currency conversion (fetched via a background thread to prevent startup latency).
+* **Export**: Compile the current note to HTML, or the entire wiki to a single Markdown document (`Ctrl-e`).
 
   ![Trip Planning & Speed Conversion](trip-planning.png)
 
@@ -113,6 +115,15 @@ If you prefer to compile directly from the git repository:
 | --- | --- |
 | `F1` | Toggle the unified Help & Math Function Guide |
 
+### Global Actions
+| Key | Action |
+| --- | --- |
+| `/` | Search the entire wiki for a keyword |
+| `Ctrl-s` | Save the current note |
+| `Ctrl-e` | Open the Export menu (HTML / Markdown) |
+| `F4` | Toggle editor word wrapping |
+| `Ctrl-q` or `ZZ` | Save and quit |
+
 ### Wiki Navigation (Normal Mode)
 | Key | Action |
 | --- | --- |
@@ -123,6 +134,7 @@ If you prefer to compile directly from the git repository:
 | Key (Mode) | Action |
 | --- | --- |
 | `t` (Normal) | Toggle todo item checkbox `[ ]` <=> `[x]` / Convert plain list bullet to todo checkbox |
+| `Ctrl-d` (Normal) | Delete the current wiki note (with confirmation) |
 | `Enter` (Visual) | Wrap the highlighted selection in a `[[Wiki Link]]` |
 
 ---
@@ -137,6 +149,7 @@ The `config.json` file supports customization of the following options:
 * `mouse_focus_on_hover` (boolean, default: `true`): If `true`, panel focus changes automatically when hovering the mouse pointer. If `false`, mouse click is required to focus a panel.
 * `expand_variables_on_select` (boolean, default: `false`): If `true`, the variables panel will dynamically expand to show full variable names/values when it is selected/focused.
 * `line_numbers` (string, default: `"None"`): Line numbering mode inside the editor. Supported options are `"None"`, `"Absolute"`, and `"Relative"`.
+* `word_wrap` (boolean, default: `false`): Wrap long lines in the editor instead of scrolling horizontally. Toggle live with `F4`.
 
 Example configuration file (`~/.config/calki/config.json`):
 
@@ -145,7 +158,8 @@ Example configuration file (`~/.config/calki/config.json`):
   "scrolloff": 5,
   "mouse_focus_on_hover": true,
   "expand_variables_on_select": false,
-  "line_numbers": "None"
+  "line_numbers": "None",
+  "word_wrap": false
 }
 ```
 
