@@ -15,8 +15,10 @@ pub fn evaluate_sheet(
 ) -> (String, Vec<(String, String)>) {
     units::clear_custom_units();
 
-    let mut ctx = eval::Context::default();
-    ctx.exchange_rates = exchange_rates.clone();
+    let mut ctx = eval::Context {
+        exchange_rates: exchange_rates.clone(),
+        ..Default::default()
+    };
 
     let mut updated_lines = Vec::new();
     let mut vars_inspector = Vec::new();

@@ -53,8 +53,7 @@ impl LineWrapper {
 
                     current_width = 0;
                     last_space_idx = None;
-                    for j in 0..current_line.len() {
-                        let c = current_line[j];
+                    for (j, &c) in current_line.iter().enumerate() {
                         current_width += char_width(c, tab_width);
                         if c == ' ' {
                             last_space_idx = Some(j);
@@ -133,8 +132,7 @@ impl LineWrapper {
 
                     current_width = 0;
                     last_space_idx = None;
-                    for j in 0..current_line.len() {
-                        let (c, _) = current_line[j];
+                    for (j, &(c, _)) in current_line.iter().enumerate() {
                         current_width += char_width(c, tab_width);
                         if c == ' ' {
                             last_space_idx = Some(j);

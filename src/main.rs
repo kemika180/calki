@@ -1856,8 +1856,7 @@ fn estimate_line_height(line: &[char], max_width: usize, tab_width: usize) -> us
                 chunk_len = 0;
                 // recalculate width of characters after space
                 let backtrack_start = i - characters_in_next_line;
-                for idx in backtrack_start..=i {
-                    let c = line[idx];
+                for &c in &line[backtrack_start..=i] {
                     let c_w = if c == '\t' {
                         tab_width
                     } else {

@@ -110,7 +110,6 @@ pub(in crate::math::eval) fn transpose(name: &str, args: &[Quantity]) -> Result<
         Ok(Quantity::list(new_rows))
     } else if all_lists {
         // 2D list -> 2D list
-        let num_rows = elements.len();
         let first_row_len = elements[0].list.as_ref().unwrap().len();
         for row in elements {
             let row_el = row.list.as_ref().unwrap();
@@ -121,8 +120,8 @@ pub(in crate::math::eval) fn transpose(name: &str, args: &[Quantity]) -> Result<
         let mut transposed_rows = Vec::new();
         for col_idx in 0..first_row_len {
             let mut new_row = Vec::new();
-            for row_idx in 0..num_rows {
-                let cell = &elements[row_idx].list.as_ref().unwrap()[col_idx];
+            for row in elements {
+                let cell = &row.list.as_ref().unwrap()[col_idx];
                 new_row.push(cell.clone());
             }
             transposed_rows.push(Quantity::list(new_row));
