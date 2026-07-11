@@ -68,66 +68,17 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
         let line = line.as_ref();
         let n = line.len();
         let mut line_styles: Vec<Option<Style>> = vec![None; n];
-        let mut is_special_line = false;
         let mut arrow_idx: Option<usize> = None;
 
-        // 1. Markdown Headers (lines starting with '#' followed by space or more '#')
-        if line.first() == Some(&'#') {
-            let header_len = line.iter().take_while(|&&c| c == '#').count();
-            if line.get(header_len) == Some(&' ') || line.len() == header_len {
-                let header_style = match header_len {
-                    1 => Style::default().fg(Color::Rgb(187, 154, 247)).bold(), // Purple
-                    2 => Style::default().fg(Color::Rgb(125, 207, 255)).bold(), // Cyan
-                    3 => Style::default().fg(Color::Rgb(122, 162, 247)).bold(), // Blue
-                    4 => Style::default().fg(Color::Rgb(115, 218, 202)).bold(), // Teal
-                    5 => Style::default().fg(Color::Rgb(158, 206, 106)).bold(), // Green
-                    _ => Style::default().fg(Color::Rgb(255, 158, 100)).bold(), // Orange for H6+
-                };
-                for col in 0..n {
-                    line_styles[col] = Some(header_style);
-                }
-                is_special_line = true;
-            }
+        let mut is_special_line = paint_header(line, &mut line_styles);
+        if !is_special_line {
+            is_special_line = paint_blockquote(line, &mut line_styles);
         }
-
-        // 1b. Blockquotes (lines starting with '>')
-        let trimmed_start = trim_start_slice(line);
-        if !is_special_line && trimmed_start.first() == Some(&'>') {
-            let start_col = line.len() - trimmed_start.len();
-            let quote_style = Style::default().fg(Color::Rgb(158, 206, 106)).italic(); // Italic Green #9ece6a
-            for col in start_col..n {
-                line_styles[col] = Some(quote_style);
-            }
-            is_special_line = true;
+        if !is_special_line {
+            is_special_line = paint_hr(line, &mut line_styles);
         }
-
-        // 1c. Horizontal Rule
-        let trimmed = trim_char_slice(line);
-        if !is_special_line
-            && (trimmed == ['-', '-', '-']
-                || trimmed == ['*', '*', '*']
-                || trimmed == ['_', '_', '_'])
-            && line.len() >= 3
-        {
-            let hr_style = Style::default().fg(Color::Rgb(86, 95, 137)).dim(); // Muted Gray dim
-            for col in 0..n {
-                line_styles[col] = Some(hr_style);
-            }
-            is_special_line = true;
-        }
-
-        // 3. Comments
-        if !is_special_line
-            && trimmed_start.len() >= 2
-            && trimmed_start[0] == '/'
-            && trimmed_start[1] == '/'
-        {
-            let start_col = line.len() - trimmed_start.len();
-            let comment_style = Style::default().fg(Color::Rgb(86, 95, 137)).italic(); // Muted Gray-Blue
-            for col in start_col..n {
-                line_styles[col] = Some(comment_style);
-            }
-            is_special_line = true;
+        if !is_special_line {
+            is_special_line = paint_comment(line, &mut line_styles);
         }
 
         let mut line_braces = 0;
@@ -1033,36 +984,98 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
             brace_level = std::cmp::max(0, brace_level + line_braces);
         }
 
-        // Convert the style array to edtui::Highlight ranges
-        let mut start_col = None;
-        let mut current_style = None;
-
-        for col in 0..n {
-            let style = line_styles[col];
-            if style != current_style {
-                if let (Some(start), Some(s)) = (start_col, current_style) {
-                    highlights.push(edtui::Highlight {
-                        start: edtui::Index2::new(row_idx, start),
-                        end: edtui::Index2::new(row_idx, col - 1),
-                        style: s,
-                    });
-                }
-                if style.is_some() {
-                    start_col = Some(col);
-                } else {
-                    start_col = None;
-                }
-                current_style = style;
-            }
-        }
-        if let (Some(start), Some(s)) = (start_col, current_style) {
-            highlights.push(edtui::Highlight {
-                start: edtui::Index2::new(row_idx, start),
-                end: edtui::Index2::new(row_idx, n - 1),
-                style: s,
-            });
-        }
+        styles_to_highlights(&line_styles, row_idx, &mut highlights);
     }
 
     highlights
+}
+
+fn paint_header(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+    if line.first() == Some(&'#') {
+        let header_len = line.iter().take_while(|&&c| c == '#').count();
+        if line.get(header_len) == Some(&' ') || line.len() == header_len {
+            let header_style = match header_len {
+                1 => Style::default().fg(Color::Rgb(187, 154, 247)).bold(), // Purple
+                2 => Style::default().fg(Color::Rgb(125, 207, 255)).bold(), // Cyan
+                3 => Style::default().fg(Color::Rgb(122, 162, 247)).bold(), // Blue
+                4 => Style::default().fg(Color::Rgb(115, 218, 202)).bold(), // Teal
+                5 => Style::default().fg(Color::Rgb(158, 206, 106)).bold(), // Green
+                _ => Style::default().fg(Color::Rgb(255, 158, 100)).bold(), // Orange for H6+
+            };
+            line_styles.fill(Some(header_style));
+            return true;
+        }
+    }
+    false
+}
+
+fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+    let trimmed_start = trim_start_slice(line);
+    if trimmed_start.first() == Some(&'>') {
+        let start_col = line.len() - trimmed_start.len();
+        let quote_style = Style::default().fg(Color::Rgb(158, 206, 106)).italic(); // Italic Green #9ece6a
+        line_styles[start_col..].fill(Some(quote_style));
+        return true;
+    }
+    false
+}
+
+fn paint_hr(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+    let trimmed = trim_char_slice(line);
+    if (trimmed == ['-', '-', '-'] || trimmed == ['*', '*', '*'] || trimmed == ['_', '_', '_'])
+        && line.len() >= 3
+    {
+        let hr_style = Style::default().fg(Color::Rgb(86, 95, 137)).dim(); // Muted Gray dim
+        line_styles.fill(Some(hr_style));
+        return true;
+    }
+    false
+}
+
+fn paint_comment(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+    let trimmed_start = trim_start_slice(line);
+    if trimmed_start.len() >= 2 && trimmed_start[0] == '/' && trimmed_start[1] == '/' {
+        let start_col = line.len() - trimmed_start.len();
+        let comment_style = Style::default().fg(Color::Rgb(86, 95, 137)).italic(); // Muted Gray-Blue
+        line_styles[start_col..].fill(Some(comment_style));
+        return true;
+    }
+    false
+}
+
+/// Collapse a per-column style buffer into contiguous `edtui::Highlight` ranges
+/// for `row_idx`, pushing them onto `highlights`.
+fn styles_to_highlights(
+    line_styles: &[Option<Style>],
+    row_idx: usize,
+    highlights: &mut Vec<edtui::Highlight>,
+) {
+    let n = line_styles.len();
+    let mut start_col = None;
+    let mut current_style = None;
+
+    for (col, &style) in line_styles.iter().enumerate() {
+        if style != current_style {
+            if let (Some(start), Some(s)) = (start_col, current_style) {
+                highlights.push(edtui::Highlight {
+                    start: edtui::Index2::new(row_idx, start),
+                    end: edtui::Index2::new(row_idx, col - 1),
+                    style: s,
+                });
+            }
+            if style.is_some() {
+                start_col = Some(col);
+            } else {
+                start_col = None;
+            }
+            current_style = style;
+        }
+    }
+    if let (Some(start), Some(s)) = (start_col, current_style) {
+        highlights.push(edtui::Highlight {
+            start: edtui::Index2::new(row_idx, start),
+            end: edtui::Index2::new(row_idx, n - 1),
+            style: s,
+        });
+    }
 }
