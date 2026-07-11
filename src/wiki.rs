@@ -3,6 +3,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Whether a `[[...]]` span's content is a numeric matrix literal (e.g. `[[1,2],[3,4]]`)
+/// rather than a wiki-link note name. Matrices contain nested brackets or are
+/// comma-separated numbers; note names contain letters.
+fn looks_like_matrix(content: &str) -> bool {
+    let t = content.trim();
+    if t.contains('[') || t.contains(']') {
+        return true;
+    }
+    t.contains(',')
+        && t.chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | ',' | ' ' | 'e' | 'E'))
+}
+
 pub struct WikiManager {
     root_dir: PathBuf,
     registry: RefCell<HashMap<String, Vec<String>>>,
@@ -316,12 +329,17 @@ Back to [[Home]].
 
     // Parses a specific file for outgoing wiki links: [[Link Name]] without registry side-effects
     fn parse_outgoing_links(file_path: &Path) -> Vec<String> {
-        let mut links = Vec::new();
         let content = match fs::read_to_string(file_path) {
             Ok(txt) => txt,
-            Err(_) => return links,
+            Err(_) => return Vec::new(),
         };
+        Self::extract_links_from_str(&content)
+    }
 
+    // Extracts `[[Link Name]]` wiki links from text, skipping matrix literals like
+    // `[[1, 2], [3, 4]]` which share the `[[...]]` syntax but are math, not links.
+    fn extract_links_from_str(content: &str) -> Vec<String> {
+        let mut links = Vec::new();
         let mut chars = content.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == '[' && chars.peek() == Some(&'[') {
@@ -338,7 +356,10 @@ Back to [[Home]].
                 }
                 if closed {
                     let cleaned = link_name.trim().to_string();
-                    if !cleaned.is_empty() && !links.contains(&cleaned) {
+                    if !cleaned.is_empty()
+                        && !looks_like_matrix(&cleaned)
+                        && !links.contains(&cleaned)
+                    {
                         links.push(cleaned);
                     }
                 }
@@ -404,6 +425,33 @@ impl OsStrExt for Option<&std::ffi::OsStr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extract_links_skips_matrices() {
+        let content = "See [[My Note]] and [[Grocery List]].\n\
+                       [[1, 2], [3, 4]] * [[5, 6], [7, 8]] =>\n\
+                       2 * [[1, 2]] =>\n\
+                       Back to [[Home]].";
+        let links = WikiManager::extract_links_from_str(content);
+        assert_eq!(
+            links,
+            vec![
+                "My Note".to_string(),
+                "Grocery List".to_string(),
+                "Home".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_looks_like_matrix() {
+        assert!(looks_like_matrix("1, 2], [3, 4")); // nested-bracket content
+        assert!(looks_like_matrix("1, 2")); // comma-separated numbers
+        assert!(looks_like_matrix(" -1.5, 2e3 ")); // sci/negative
+        assert!(!looks_like_matrix("My Note")); // note name
+        assert!(!looks_like_matrix("Chapter 1")); // has letters
+        assert!(!looks_like_matrix("Home")); // plain
+    }
 
     #[test]
     fn test_path_resolutions() {
