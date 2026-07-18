@@ -293,8 +293,6 @@ pub fn seed_builtin_themes() {
 }
 
 /// Every available theme name: embedded built-ins ∪ `.toml` files on disk, sorted.
-// Consumed by the `:theme` command (next commit); allow until then.
-#[allow(dead_code)]
 pub fn list_themes() -> Vec<String> {
     let mut names: std::collections::BTreeSet<String> =
         BUILTIN_THEMES.iter().map(|(n, _)| n.to_string()).collect();

@@ -292,6 +292,10 @@ struct App {
     search_results: Vec<String>,
     show_search_results: bool,
 
+    // Ex-style command line (`:theme <name>` …)
+    command_active: bool,
+    command_query: String,
+
     // Status Message / Toast
     status_message: Option<(String, std::time::Instant)>,
 
@@ -542,6 +546,8 @@ impl App {
             search_active: false,
             search_results: Vec::new(),
             show_search_results: false,
+            command_active: false,
+            command_query: String::new(),
             status_message: None,
             update_receiver,
             update_available: None,

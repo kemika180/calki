@@ -10,6 +10,7 @@ use ratatui::prelude::*;
 
 pub(crate) fn ui(f: &mut Frame, app: &mut App) {
     let show_bottom_bar = app.search_active
+        || app.command_active
         || if let Some((_, inst)) = &app.status_message {
             inst.elapsed() < std::time::Duration::from_secs(5)
         } else {

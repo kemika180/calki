@@ -40,6 +40,15 @@ pub(crate) fn render_status_line(
                 ),
                 Span::styled("█", Style::default().fg(app.palette.config_key).bold()), // cursor
             ])
+        } else if app.command_active {
+            Line::from(vec![
+                Span::styled(" : ", Style::default().fg(app.palette.help_section).bold()),
+                Span::styled(
+                    &app.command_query,
+                    Style::default().fg(app.palette.config_key),
+                ),
+                Span::styled("█", Style::default().fg(app.palette.config_key).bold()), // cursor
+            ])
         } else {
             Line::from("")
         };

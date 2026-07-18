@@ -80,6 +80,71 @@ pub(crate) fn handle_search(app: &mut App, key: KeyEvent) {
     app.update_highlights();
 }
 
+pub(crate) fn handle_command(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.command_active = false;
+        }
+        KeyCode::Enter => {
+            app.command_active = false;
+            let cmd = std::mem::take(&mut app.command_query);
+            dispatch_command(app, &cmd);
+        }
+        KeyCode::Backspace => {
+            app.command_query.pop();
+        }
+        KeyCode::Char(c) => {
+            app.command_query.push(c);
+        }
+        _ => {}
+    }
+    app.update_highlights();
+}
+
+/// Parse and run an ex-style command line (the text typed after `:`).
+pub(crate) fn dispatch_command(app: &mut App, input: &str) {
+    let input = input.trim();
+    let (cmd, arg) = match input.split_once(char::is_whitespace) {
+        Some((c, a)) => (c, a.trim()),
+        None => (input, ""),
+    };
+    match cmd {
+        "" => {}
+        "theme" => apply_theme_command(app, arg),
+        other => app.set_status_message(format!("unknown command: {other}")),
+    }
+}
+
+/// `:theme` — no arg lists available themes; an arg switches to that theme,
+/// persists it to config, and re-renders live.
+fn apply_theme_command(app: &mut App, name: &str) {
+    if name.is_empty() {
+        let themes = crate::theme::list_themes().join(", ");
+        app.set_status_message(format!("themes: {themes}"));
+        return;
+    }
+    if !crate::theme::list_themes().iter().any(|t| t == name) {
+        app.set_status_message(format!("unknown theme '{name}'"));
+        return;
+    }
+    match crate::theme::load_palette(name) {
+        Ok((palette, problems)) => {
+            app.palette = palette;
+            app.config.theme = name.to_string();
+            let _ = app.config.save();
+            if problems.is_empty() {
+                app.set_status_message(format!("theme: {name}"));
+            } else {
+                app.set_status_message(format!(
+                    "theme: {name} (ignored unknown roles: {})",
+                    problems.join(", ")
+                ));
+            }
+        }
+        Err(e) => app.set_status_message(format!("theme error: {e}")),
+    }
+}
+
 pub(crate) fn handle_delete_confirm(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -449,6 +514,16 @@ pub(crate) fn handle_global_keys(app: &mut App, key: KeyEvent, last_key_was_z: &
         app.search_active = true;
         app.search_query.clear();
         app.show_search_results = false;
+        return Flow::Continue;
+    }
+    // Ex-style command line ':'
+    if key.code == KeyCode::Char(':')
+        && !is_insert_mode
+        && !app.search_active
+        && !app.command_active
+    {
+        app.command_active = true;
+        app.command_query.clear();
         return Flow::Continue;
     }
     // Ctrl-s: Save current note explicitly
@@ -932,5 +1007,65 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
+    fn global_colon_opens_command_line() {
+        let (mut app, root) = test_app("test_gk_colon");
+        let mut z = false;
+        assert!(!app.command_active);
+        let flow = handle_global_keys(&mut app, plain(KeyCode::Char(':')), &mut z);
+        assert!(matches!(flow, Flow::Continue));
+        assert!(app.command_active);
+        assert!(app.command_query.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn command_theme_switches_palette_and_persists() {
+        let (mut app, root) = test_app("test_cmd_theme_ok");
+        assert_eq!(app.palette, crate::theme::tokyo_night_night());
+        dispatch_command(&mut app, "theme dracula");
+        assert_ne!(app.palette, crate::theme::tokyo_night_night());
+        assert_eq!(app.config.theme, "dracula");
+        assert_eq!(
+            app.palette,
+            crate::theme::load_palette("dracula").unwrap().0
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn command_theme_unknown_leaves_palette_unchanged() {
+        let (mut app, root) = test_app("test_cmd_theme_bad");
+        dispatch_command(&mut app, "theme not-a-real-theme");
+        assert_eq!(app.palette, crate::theme::tokyo_night_night());
+        assert_eq!(app.config.theme, "tokyo-night");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn command_unknown_reports_error() {
+        let (mut app, root) = test_app("test_cmd_unknown");
+        dispatch_command(&mut app, "frobnicate");
+        assert_eq!(app.palette, crate::theme::tokyo_night_night());
+        let (msg, _) = app.status_message.as_ref().unwrap();
+        assert!(msg.contains("unknown command"), "got: {msg}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn command_handle_enter_dispatches_and_closes() {
+        let (mut app, root) = test_app("test_cmd_enter");
+        app.command_active = true;
+        app.command_query = "theme kemika-purple".to_string();
+        handle_command(&mut app, plain(KeyCode::Enter));
+        assert!(!app.command_active);
+        assert_eq!(app.config.theme, "kemika-purple");
+        assert_eq!(
+            app.palette,
+            crate::theme::load_palette("kemika-purple").unwrap().0
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

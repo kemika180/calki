@@ -81,6 +81,11 @@ pub(crate) fn run_app<B: Backend + std::io::Write>(
                         continue;
                     }
 
+                    if app.command_active {
+                        crate::app::input::handle_command(app, key);
+                        continue;
+                    }
+
                     // If delete confirmation is open
                     if app.show_delete_confirm {
                         crate::app::input::handle_delete_confirm(app, key);
