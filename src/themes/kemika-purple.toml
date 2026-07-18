@@ -22,34 +22,34 @@ h1 = "#cbb2ff"
 h2 = "#b899f0"
 h3 = "#9f7fd8"
 h4 = "#c98bd6"
-h5 = "#8fd6b0"
-h6 = "#e0a15f"
+h5 = "#7cd6c9"
+h6 = "#ff79c6"
 
 [markdown]
 link = "#cbb2ff"
-blockquote = "#8fd6b0"
+blockquote = "#7cd6c9"
 hr = "#3a3350"
 comment = "#6b6480"
-list_marker = "#e0a15f"
+list_marker = "#ff79c6"
 
 [math]
 math_lhs = "#cbb2ff"
-math_operator = "#e0a15f"
-math_number = "#8fd6b0"
-math_result = "#8fd6b0"
+math_operator = "#ff79c6"
+math_number = "#7cd6c9"
+math_result = "#7cd6c9"
 math_unit = "#b53580"
 math_fn = "#9f7fd8"
 
 [help]
 config_key = "#cbb2ff"
-keybind_label = "#8fd6b0"
-help_section = "#e0a15f"
+keybind_label = "#7cd6c9"
+help_section = "#ff79c6"
 
 [cursor]
 cursor_normal = "#cbb2ff"
-cursor_insert = "#8fd6b0"
+cursor_insert = "#7cd6c9"
 cursor_visual = "#b53580"
-cursor_search = "#e0a15f"
+cursor_search = "#ff79c6"
 
 [editor]
 editor_bg = "#0f0f15"
