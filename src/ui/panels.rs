@@ -7,15 +7,7 @@ use crate::{App, FocusedPanel, estimate_line_height};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem};
 
-pub(crate) fn render_wiki_map(
-    f: &mut Frame,
-    app: &App,
-    area: Rect,
-    bg_color: Color,
-    text_fg_color: Color,
-    border_focused_color: Color,
-    border_dim_color: Color,
-) {
+pub(crate) fn render_wiki_map(f: &mut Frame, app: &App, area: Rect) {
     let is_focused = app.focused_panel == FocusedPanel::WikiMap;
     let border_type = if is_focused {
         BorderType::Double
@@ -23,70 +15,70 @@ pub(crate) fn render_wiki_map(
         BorderType::Plain
     };
     let border_color = if is_focused {
-        border_focused_color
+        app.palette.border_focused
     } else {
-        border_dim_color
+        app.palette.border_dim
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color))
-        .bg(bg_color)
+        .bg(app.palette.bg)
         .title(Span::styled(
             " Wiki Map ",
-            Style::default().fg(text_fg_color).bold(),
+            Style::default().fg(app.palette.fg).bold(),
         ));
 
     let mut list_items = Vec::new();
-    list_items.push(
-        ListItem::new("◀ Backlinks")
-            .bold()
-            .fg(Color::Rgb(122, 162, 247)),
-    ); // Royal Blue #7aa2f7
+    list_items.push(ListItem::new("◀ Backlinks").bold().fg(app.palette.h3)); // Royal Blue #7aa2f7
 
     let mut current_link_idx = 0;
     for link in &app.backlinks {
         let is_selected = is_focused && current_link_idx == app.selected_link_idx;
         let style = if is_selected {
             Style::default()
-                .bg(Color::Rgb(59, 66, 97))
-                .fg(Color::Rgb(125, 207, 255))
+                .bg(app.palette.panel_sel_bg)
+                .fg(app.palette.border_focused)
                 .bold()
         } else {
-            Style::default().fg(text_fg_color)
+            Style::default().fg(app.palette.fg)
         };
         let prefix = if is_selected { " ▶ " } else { " - " };
         list_items.push(ListItem::new(format!("{}{}", prefix, link)).style(style));
         current_link_idx += 1;
     }
     if app.backlinks.is_empty() {
-        list_items.push(ListItem::new("  (none)").fg(border_dim_color).italic());
+        list_items.push(
+            ListItem::new("  (none)")
+                .fg(app.palette.border_dim)
+                .italic(),
+        );
     }
 
     list_items.push(ListItem::new("")); // Spacer
 
-    list_items.push(
-        ListItem::new("▶ Outgoing")
-            .bold()
-            .fg(Color::Rgb(122, 162, 247)),
-    ); // Royal Blue #7aa2f7
+    list_items.push(ListItem::new("▶ Outgoing").bold().fg(app.palette.h3)); // Royal Blue #7aa2f7
     for link in &app.outgoing {
         let is_selected = is_focused && current_link_idx == app.selected_link_idx;
         let style = if is_selected {
             Style::default()
-                .bg(Color::Rgb(59, 66, 97))
-                .fg(Color::Rgb(125, 207, 255))
+                .bg(app.palette.panel_sel_bg)
+                .fg(app.palette.border_focused)
                 .bold()
         } else {
-            Style::default().fg(text_fg_color)
+            Style::default().fg(app.palette.fg)
         };
         let prefix = if is_selected { " ▶ " } else { " - " };
         list_items.push(ListItem::new(format!("{}{}", prefix, link)).style(style));
         current_link_idx += 1;
     }
     if app.outgoing.is_empty() {
-        list_items.push(ListItem::new("  (none)").fg(border_dim_color).italic());
+        list_items.push(
+            ListItem::new("  (none)")
+                .fg(app.palette.border_dim)
+                .italic(),
+        );
     }
 
     if app.show_search_results {
@@ -94,17 +86,17 @@ pub(crate) fn render_wiki_map(
         list_items.push(
             ListItem::new("🔍 Search Results")
                 .bold()
-                .fg(Color::Rgb(255, 158, 100)),
+                .fg(app.palette.help_section),
         ); // Orange
         for link in &app.search_results {
             let is_selected = is_focused && current_link_idx == app.selected_link_idx;
             let style = if is_selected {
                 Style::default()
-                    .bg(Color::Rgb(59, 66, 97))
-                    .fg(Color::Rgb(125, 207, 255))
+                    .bg(app.palette.panel_sel_bg)
+                    .fg(app.palette.border_focused)
                     .bold()
             } else {
-                Style::default().fg(text_fg_color)
+                Style::default().fg(app.palette.fg)
             };
             let prefix = if is_selected { " ▶ " } else { " - " };
             list_items.push(ListItem::new(format!("{}{}", prefix, link)).style(style));
@@ -113,7 +105,7 @@ pub(crate) fn render_wiki_map(
         if app.search_results.is_empty() {
             list_items.push(
                 ListItem::new("  (no matches)")
-                    .fg(border_dim_color)
+                    .fg(app.palette.border_dim)
                     .italic(),
             );
         }
@@ -123,15 +115,7 @@ pub(crate) fn render_wiki_map(
     f.render_widget(list, area);
 }
 
-pub(crate) fn render_variables(
-    f: &mut Frame,
-    app: &App,
-    area: Rect,
-    bg_color: Color,
-    text_fg_color: Color,
-    border_focused_color: Color,
-    border_dim_color: Color,
-) {
+pub(crate) fn render_variables(f: &mut Frame, app: &App, area: Rect) {
     let is_focused = app.focused_panel == FocusedPanel::Variables;
     let border_type = if is_focused {
         BorderType::Double
@@ -139,19 +123,19 @@ pub(crate) fn render_variables(
         BorderType::Plain
     };
     let border_color = if is_focused {
-        border_focused_color
+        app.palette.border_focused
     } else {
-        border_dim_color
+        app.palette.border_dim
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color))
-        .bg(bg_color)
+        .bg(app.palette.bg)
         .title(Span::styled(
             " Variables ",
-            Style::default().fg(text_fg_color).bold(),
+            Style::default().fg(app.palette.fg).bold(),
         ));
 
     let mut list_items = Vec::new();
@@ -159,22 +143,22 @@ pub(crate) fn render_variables(
         let is_selected = is_focused && idx == app.selected_var_idx;
         let is_error = val.contains("[Error");
         let val_style = if is_error {
-            Style::default().fg(Color::Rgb(247, 118, 142)).bold() // Red #f7768e
+            Style::default().fg(app.palette.error).bold()
         } else {
-            Style::default().fg(Color::Rgb(115, 218, 202)) // Teal #73daca
+            Style::default().fg(app.palette.math_number)
         };
 
         let prefix = if is_selected { "▶ " } else { "  " };
         let prefix_style = if is_selected {
-            Style::default().fg(Color::Rgb(125, 207, 255)).bold()
+            Style::default().fg(app.palette.config_key).bold()
         } else {
             Style::default()
         };
 
         let name_style = if is_selected {
-            Style::default().fg(Color::Rgb(125, 207, 255)).bold()
+            Style::default().fg(app.palette.config_key).bold()
         } else {
-            Style::default().fg(text_fg_color).bold()
+            Style::default().fg(app.palette.fg).bold()
         };
 
         let item_line = Line::from(vec![
@@ -185,14 +169,14 @@ pub(crate) fn render_variables(
 
         let mut item = ListItem::new(item_line);
         if is_selected {
-            item = item.style(Style::default().bg(Color::Rgb(59, 66, 97)));
+            item = item.style(Style::default().bg(app.palette.panel_sel_bg));
         }
         list_items.push(item);
     }
     if app.variables_cache.is_empty() {
         list_items.push(
             ListItem::new("  (no bindings)")
-                .fg(border_dim_color)
+                .fg(app.palette.border_dim)
                 .italic(),
         );
     }
@@ -201,15 +185,7 @@ pub(crate) fn render_variables(
     f.render_widget(list, area);
 }
 
-pub(crate) fn render_editor(
-    f: &mut Frame,
-    app: &mut App,
-    editor_area: Rect,
-    bg_color: Color,
-    text_fg_color: Color,
-    border_focused_color: Color,
-    border_dim_color: Color,
-) {
+pub(crate) fn render_editor(f: &mut Frame, app: &mut App, editor_area: Rect) {
     let is_focused = app.focused_panel == FocusedPanel::Editor;
     let border_type = if is_focused {
         BorderType::Double
@@ -217,9 +193,9 @@ pub(crate) fn render_editor(
         BorderType::Plain
     };
     let border_color = if is_focused {
-        border_focused_color
+        app.palette.border_focused
     } else {
-        border_dim_color
+        app.palette.border_dim
     };
 
     let mode_str = match app.editor_state.mode {
@@ -229,22 +205,22 @@ pub(crate) fn render_editor(
         EditorMode::Search => "SEARCH",
     };
     let mode_color = match app.editor_state.mode {
-        EditorMode::Normal => Color::Rgb(122, 162, 247), // Blue
-        EditorMode::Insert => Color::Rgb(158, 206, 106), // Green
-        EditorMode::Visual => Color::Rgb(187, 154, 247), // Purple
-        EditorMode::Search => Color::Rgb(255, 158, 100), // Orange
+        EditorMode::Normal => app.palette.cursor_normal,
+        EditorMode::Insert => app.palette.cursor_insert,
+        EditorMode::Visual => app.palette.cursor_visual,
+        EditorMode::Search => app.palette.cursor_search,
     };
     let note_title = app.wiki_mgr.path_to_title(&app.active_path);
     let title_top = Line::from(vec![
-        Span::styled(" calki: ", Style::default().fg(text_fg_color).bold()),
-        Span::styled(note_title, Style::default().fg(text_fg_color).bold()),
+        Span::styled(" calki: ", Style::default().fg(app.palette.fg).bold()),
+        Span::styled(note_title, Style::default().fg(app.palette.fg).bold()),
         Span::styled(" ", Style::default()),
     ]);
 
     let title_bottom_left = Line::from(vec![
-        Span::styled(" [", Style::default().fg(text_fg_color)),
+        Span::styled(" [", Style::default().fg(app.palette.fg)),
         Span::styled(mode_str, Style::default().fg(mode_color).bold()),
-        Span::styled("] ", Style::default().fg(text_fg_color)),
+        Span::styled("] ", Style::default().fg(app.palette.fg)),
     ]);
 
     let total_lines = app.editor_state.lines.len();
@@ -261,12 +237,12 @@ pub(crate) fn render_editor(
                 app.editor_state.cursor.row + 1,
                 app.editor_state.cursor.col + 1
             ),
-            Style::default().fg(text_fg_color),
+            Style::default().fg(app.palette.fg),
         ),
         Span::styled(border_char.repeat(3), Style::default().fg(border_color)),
         Span::styled(
             format!(" {:>3}% ", scroll_pct),
-            Style::default().fg(text_fg_color),
+            Style::default().fg(app.palette.fg),
         ),
     ])
     .right_aligned();
@@ -275,7 +251,7 @@ pub(crate) fn render_editor(
         .borders(Borders::ALL)
         .border_type(border_type)
         .border_style(Style::default().fg(border_color))
-        .bg(bg_color)
+        .bg(app.palette.bg)
         .title(title_top)
         .title_bottom(title_bottom_left)
         .title_bottom(title_bottom_right);
@@ -286,10 +262,20 @@ pub(crate) fn render_editor(
     let editor_theme = edtui::EditorTheme::default()
         .hide_status_line()
         .hide_cursor()
+        .base(
+            Style::default()
+                .bg(app.palette.editor_bg)
+                .fg(app.palette.editor_fg),
+        )
+        .line_numbers_style(
+            Style::default()
+                .bg(app.palette.editor_bg)
+                .fg(app.palette.line_number),
+        )
         .selection_style(
             Style::default()
-                .bg(Color::Rgb(167, 82, 142))
-                .fg(Color::Rgb(224, 230, 242)),
+                .bg(app.palette.selection_bg)
+                .fg(app.palette.selection_fg),
         );
     let viewport_height = inner_editor_area.height as usize;
     let scrolloff = std::cmp::min(app.config.scrolloff, viewport_height / 2);

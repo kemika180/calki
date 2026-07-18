@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::edtui;
+use crate::theme::Palette;
 use crate::{
     HighlightToken, find_in_chars, find_in_chars_from, is_registered_unit,
     tokenize_line_for_highlighting, trim_char_slice, trim_start_slice,
@@ -18,6 +19,7 @@ use crate::{
 pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
     lines_vecs: &[T],
     selected_var: Option<&str>,
+    palette: &Palette,
 ) -> Vec<edtui::Highlight> {
     let mut highlights = Vec::new();
     let mut brace_level = 0;
@@ -72,15 +74,15 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
         let mut line_styles: Vec<Option<Style>> = vec![None; n];
         let mut arrow_idx: Option<usize> = None;
 
-        let mut is_special_line = paint_header(line, &mut line_styles);
+        let mut is_special_line = paint_header(line, &mut line_styles, palette);
         if !is_special_line {
-            is_special_line = paint_blockquote(line, &mut line_styles);
+            is_special_line = paint_blockquote(line, &mut line_styles, palette);
         }
         if !is_special_line {
-            is_special_line = paint_hr(line, &mut line_styles);
+            is_special_line = paint_hr(line, &mut line_styles, palette);
         }
         if !is_special_line {
-            is_special_line = paint_comment(line, &mut line_styles);
+            is_special_line = paint_comment(line, &mut line_styles, palette);
         }
 
         let mut line_braces = 0;
@@ -118,34 +120,40 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
                 }
             }
 
-            let (arrow, math_info) =
-                section_a(line, n, &mut line_styles, &backtick_ranges, in_block);
-            arrow_idx = arrow;
-            section_b(line, n, &mut line_styles, &backtick_ranges);
-            let link_ranges = section_c(line, n, &mut line_styles);
-            section_d(
+            let (arrow, math_info) = section_a(
                 line,
                 n,
+                &mut line_styles,
+                &backtick_ranges,
+                in_block,
+                palette,
+            );
+            arrow_idx = arrow;
+            section_b(line, n, &mut line_styles, &backtick_ranges, palette);
+            let link_ranges = section_c(line, n, &mut line_styles, palette);
+            section_d(
+                line,
                 &mut line_styles,
                 &backtick_ranges,
                 &link_ranges,
                 &math_info,
                 &defined_vars,
+                palette,
             );
 
             // E. Lists / Bullet points
-            paint_list(line, &mut line_styles);
+            paint_list(line, &mut line_styles, palette);
 
             // F/G/H. Inline emphasis (bold/italic/strikethrough); skipped on math lines.
             if !math_info.is_math {
-                paint_bold(line, &mut line_styles, &backtick_ranges);
-                paint_italic(line, &mut line_styles, &backtick_ranges);
-                paint_strike(line, &mut line_styles, &backtick_ranges);
+                paint_bold(line, &mut line_styles, &backtick_ranges, palette);
+                paint_italic(line, &mut line_styles, &backtick_ranges, palette);
+                paint_strike(line, &mut line_styles, &backtick_ranges, palette);
             }
         }
 
         // I. Selected Variable Highlight
-        paint_selected_var(line, &mut line_styles, sv_chars.as_deref());
+        paint_selected_var(line, &mut line_styles, sv_chars.as_deref(), palette);
 
         // Force anything after '=>' to be italic
         if let Some(arrow_pos) = arrow_idx {
@@ -153,7 +161,7 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
                 if let Some(s) = *slot {
                     *slot = Some(s.italic());
                 } else {
-                    *slot = Some(Style::default().fg(Color::Rgb(115, 218, 202)).italic());
+                    *slot = Some(Style::default().fg(palette.math_result).italic());
                 }
             }
         }
@@ -168,17 +176,17 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
     highlights
 }
 
-fn paint_header(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+fn paint_header(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
     if line.first() == Some(&'#') {
         let header_len = line.iter().take_while(|&&c| c == '#').count();
         if line.get(header_len) == Some(&' ') || line.len() == header_len {
             let header_style = match header_len {
-                1 => Style::default().fg(Color::Rgb(187, 154, 247)).bold(), // Purple
-                2 => Style::default().fg(Color::Rgb(125, 207, 255)).bold(), // Cyan
-                3 => Style::default().fg(Color::Rgb(122, 162, 247)).bold(), // Blue
-                4 => Style::default().fg(Color::Rgb(115, 218, 202)).bold(), // Teal
-                5 => Style::default().fg(Color::Rgb(158, 206, 106)).bold(), // Green
-                _ => Style::default().fg(Color::Rgb(255, 158, 100)).bold(), // Orange for H6+
+                1 => Style::default().fg(palette.h1).bold(),
+                2 => Style::default().fg(palette.h2).bold(),
+                3 => Style::default().fg(palette.h3).bold(),
+                4 => Style::default().fg(palette.h4).bold(),
+                5 => Style::default().fg(palette.h5).bold(),
+                _ => Style::default().fg(palette.h6).bold(), // H6+
             };
             line_styles.fill(Some(header_style));
             return true;
@@ -187,34 +195,34 @@ fn paint_header(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
     false
 }
 
-fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
     let trimmed_start = trim_start_slice(line);
     if trimmed_start.first() == Some(&'>') {
         let start_col = line.len() - trimmed_start.len();
-        let quote_style = Style::default().fg(Color::Rgb(158, 206, 106)).italic(); // Italic Green #9ece6a
+        let quote_style = Style::default().fg(palette.blockquote).italic();
         line_styles[start_col..].fill(Some(quote_style));
         return true;
     }
     false
 }
 
-fn paint_hr(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+fn paint_hr(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
     let trimmed = trim_char_slice(line);
     if (trimmed == ['-', '-', '-'] || trimmed == ['*', '*', '*'] || trimmed == ['_', '_', '_'])
         && line.len() >= 3
     {
-        let hr_style = Style::default().fg(Color::Rgb(86, 95, 137)).dim(); // Muted Gray dim
+        let hr_style = Style::default().fg(palette.hr).dim();
         line_styles.fill(Some(hr_style));
         return true;
     }
     false
 }
 
-fn paint_comment(line: &[char], line_styles: &mut [Option<Style>]) -> bool {
+fn paint_comment(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
     let trimmed_start = trim_start_slice(line);
     if trimmed_start.len() >= 2 && trimmed_start[0] == '/' && trimmed_start[1] == '/' {
         let start_col = line.len() - trimmed_start.len();
-        let comment_style = Style::default().fg(Color::Rgb(86, 95, 137)).italic(); // Muted Gray-Blue
+        let comment_style = Style::default().fg(palette.comment).italic();
         line_styles[start_col..].fill(Some(comment_style));
         return true;
     }
@@ -258,7 +266,7 @@ fn styles_to_highlights(
     }
 }
 
-fn paint_list(line: &[char], line_styles: &mut [Option<Style>]) {
+fn paint_list(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) {
     let n = line.len();
     let trimmed_start = trim_start_slice(line);
     let leading_spaces = line.len() - trimmed_start.len();
@@ -281,7 +289,7 @@ fn paint_list(line: &[char], line_styles: &mut [Option<Style>]) {
     if let Some(r) = list_marker_range {
         for col in r {
             if col < n {
-                line_styles[col] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()); // Bold Orange #ff9e64
+                line_styles[col] = Some(Style::default().fg(palette.list_marker).bold());
             }
         }
     }
@@ -291,6 +299,7 @@ fn paint_bold(
     line: &[char],
     line_styles: &mut [Option<Style>],
     backtick_ranges: &[RangeInclusive<usize>],
+    palette: &Palette,
 ) {
     let n = line.len();
     let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
@@ -306,7 +315,7 @@ fn paint_bold(
                 continue;
             }
             for slot in &mut line_styles[start_pos.min(n)..(end_pos + 2).min(n)] {
-                let base = slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                let base = slot.unwrap_or_else(|| Style::default().fg(palette.fg));
                 *slot = Some(base.bold());
             }
             b_pos = end_pos + 2;
@@ -326,7 +335,7 @@ fn paint_bold(
                 continue;
             }
             for slot in &mut line_styles[start_pos.min(n)..(end_pos + 2).min(n)] {
-                let base = slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                let base = slot.unwrap_or_else(|| Style::default().fg(palette.fg));
                 *slot = Some(base.bold());
             }
             b_pos2 = end_pos + 2;
@@ -340,6 +349,7 @@ fn paint_italic(
     line: &[char],
     line_styles: &mut [Option<Style>],
     backtick_ranges: &[RangeInclusive<usize>],
+    palette: &Palette,
 ) {
     let n = line.len();
     let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
@@ -373,8 +383,7 @@ fn paint_italic(
             }
             if let Some(end_pos) = found_end {
                 for slot in &mut line_styles[i_pos.min(n)..(end_pos + 1).min(n)] {
-                    let base =
-                        slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    let base = slot.unwrap_or_else(|| Style::default().fg(palette.fg));
                     *slot = Some(base.italic());
                 }
                 i_pos = end_pos + 1;
@@ -415,8 +424,7 @@ fn paint_italic(
             }
             if let Some(end_pos) = found_end {
                 for slot in &mut line_styles[i_pos2.min(n)..(end_pos + 1).min(n)] {
-                    let base =
-                        slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                    let base = slot.unwrap_or_else(|| Style::default().fg(palette.fg));
                     *slot = Some(base.italic());
                 }
                 i_pos2 = end_pos + 1;
@@ -433,6 +441,7 @@ fn paint_strike(
     line: &[char],
     line_styles: &mut [Option<Style>],
     backtick_ranges: &[RangeInclusive<usize>],
+    palette: &Palette,
 ) {
     let n = line.len();
     let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
@@ -448,7 +457,7 @@ fn paint_strike(
                 continue;
             }
             for slot in &mut line_styles[start_pos.min(n)..(end_pos + 2).min(n)] {
-                let base = slot.unwrap_or_else(|| Style::default().fg(Color::Rgb(169, 177, 214)));
+                let base = slot.unwrap_or_else(|| Style::default().fg(palette.fg));
                 *slot = Some(base.crossed_out());
             }
             s_pos = end_pos + 2;
@@ -458,7 +467,12 @@ fn paint_strike(
     }
 }
 
-fn paint_selected_var(line: &[char], line_styles: &mut [Option<Style>], sv_chars: Option<&[char]>) {
+fn paint_selected_var(
+    line: &[char],
+    line_styles: &mut [Option<Style>],
+    sv_chars: Option<&[char]>,
+    palette: &Palette,
+) {
     let Some(sv_chars) = sv_chars else {
         return;
     };
@@ -482,8 +496,8 @@ fn paint_selected_var(line: &[char], line_styles: &mut [Option<Style>], sv_chars
                 if before_ok && after_ok {
                     line_styles[start_idx..(start_idx + sv_len)].fill(Some(
                         Style::default()
-                            .bg(Color::Rgb(167, 82, 142))
-                            .fg(Color::Rgb(224, 230, 242))
+                            .bg(palette.selection_bg)
+                            .fg(palette.selection_fg)
                             .bold(),
                     ));
                 }
@@ -504,6 +518,7 @@ fn section_a(
     line_styles: &mut [Option<Style>],
     backtick_ranges: &[RangeInclusive<usize>],
     in_block: bool,
+    palette: &Palette,
 ) -> (Option<usize>, MathLineInfo) {
     let is_in_backticks = |col: usize| -> bool { backtick_ranges.iter().any(|r| r.contains(&col)) };
     let mut is_math_line = false;
@@ -566,19 +581,18 @@ fn section_a(
             if is_assignment || is_fn_def {
                 is_math_line = true;
                 // LHS (Cyan)
-                line_styles[0..eq_pos].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
+                line_styles[0..eq_pos].fill(Some(Style::default().fg(palette.math_lhs)));
                 // '=' (Bold Orange)
-                line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                line_styles[eq_pos] = Some(Style::default().fg(palette.math_operator).bold());
                 // RHS expression up to '=>' (Teal Green)
                 line_styles[(eq_pos + 1)..arrow_pos]
-                    .fill(Some(Style::default().fg(Color::Rgb(115, 218, 202))));
+                    .fill(Some(Style::default().fg(palette.math_result)));
                 // '=>' (Bold Orange)
                 line_styles[arrow_pos..std::cmp::min(arrow_pos + 2, n)]
-                    .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
+                    .fill(Some(Style::default().fg(palette.math_operator).bold()));
                 // The result after '=>' (Teal Green + Italic)
-                line_styles[(arrow_pos + 2)..n].fill(Some(
-                    Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
-                ));
+                line_styles[(arrow_pos + 2)..n]
+                    .fill(Some(Style::default().fg(palette.math_result).italic()));
                 processed = true;
                 has_main_assignment = true;
             }
@@ -587,14 +601,13 @@ fn section_a(
         if !processed {
             is_math_line = true;
             // Expression before '=>' (Cyan/light blue)
-            line_styles[0..arrow_pos].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
+            line_styles[0..arrow_pos].fill(Some(Style::default().fg(palette.math_lhs)));
             // Operator '=>' in Bold Orange
             line_styles[arrow_pos..std::cmp::min(arrow_pos + 2, n)]
-                .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
+                .fill(Some(Style::default().fg(palette.math_operator).bold()));
             // The result after '=>' (Teal Green + Italic)
-            line_styles[(arrow_pos + 2)..n].fill(Some(
-                Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
-            ));
+            line_styles[(arrow_pos + 2)..n]
+                .fill(Some(Style::default().fg(palette.math_result).italic()));
             processed = true;
         }
     } else if let Some(eq_pos) = eq_idx {
@@ -631,13 +644,13 @@ fn section_a(
         if is_assignment || is_fn_def {
             is_math_line = true;
             // LHS (Cyan)
-            line_styles[0..eq_pos].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
+            line_styles[0..eq_pos].fill(Some(Style::default().fg(palette.math_lhs)));
             // '=' (Bold Orange)
             if eq_pos < n {
-                line_styles[eq_pos] = Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold());
+                line_styles[eq_pos] = Some(Style::default().fg(palette.math_operator).bold());
             }
             // RHS (Teal Green)
-            line_styles[(eq_pos + 1)..n].fill(Some(Style::default().fg(Color::Rgb(115, 218, 202))));
+            line_styles[(eq_pos + 1)..n].fill(Some(Style::default().fg(palette.math_result)));
             has_main_assignment = true;
             processed = true;
         }
@@ -645,7 +658,7 @@ fn section_a(
 
     if !processed && in_block {
         is_math_line = true;
-        line_styles[0..n].fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
+        line_styles[0..n].fill(Some(Style::default().fg(palette.math_lhs)));
     }
     (
         arrow_idx,
@@ -662,16 +675,17 @@ fn section_b(
     n: usize,
     line_styles: &mut [Option<Style>],
     backtick_ranges: &[RangeInclusive<usize>],
+    palette: &Palette,
 ) {
     for r in backtick_ranges {
         let start_pos = *r.start();
         let end_pos = *r.end();
         // Backticks themselves (Muted Gray-Blue)
         if start_pos < n {
-            line_styles[start_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
+            line_styles[start_pos] = Some(Style::default().fg(palette.fg_muted));
         }
         if end_pos < n {
-            line_styles[end_pos] = Some(Style::default().fg(Color::Rgb(86, 95, 137)));
+            line_styles[end_pos] = Some(Style::default().fg(palette.fg_muted));
         }
 
         let inner = &line[start_pos + 1..end_pos];
@@ -679,19 +693,18 @@ fn section_b(
             let absolute_arrow = start_pos + 1 + arrow_pos;
             // Before => (Cyan)
             line_styles[(start_pos + 1).min(n)..absolute_arrow.min(n)]
-                .fill(Some(Style::default().fg(Color::Rgb(125, 207, 255))));
+                .fill(Some(Style::default().fg(palette.math_lhs)));
             // => (Bold Orange)
             line_styles[absolute_arrow..std::cmp::min(absolute_arrow + 2, n)]
-                .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100)).bold()));
+                .fill(Some(Style::default().fg(palette.math_operator).bold()));
             // After => (Italic Teal Green)
             let after = end_pos.min(n);
-            line_styles[(absolute_arrow + 2).min(after)..after].fill(Some(
-                Style::default().fg(Color::Rgb(115, 218, 202)).italic(),
-            ));
+            line_styles[(absolute_arrow + 2).min(after)..after]
+                .fill(Some(Style::default().fg(palette.math_result).italic()));
         } else {
             // Entire inner content is Orange
             line_styles[(start_pos + 1).min(n)..end_pos.min(n)]
-                .fill(Some(Style::default().fg(Color::Rgb(255, 158, 100))));
+                .fill(Some(Style::default().fg(palette.math_operator)));
         }
     }
 }
@@ -712,9 +725,10 @@ fn section_c(
     line: &[char],
     n: usize,
     line_styles: &mut [Option<Style>],
+    palette: &Palette,
 ) -> Vec<RangeInclusive<usize>> {
     let mut link_ranges = Vec::new();
-    let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
+    let link_style = Style::default().fg(palette.link).underlined();
 
     // C1. Outgoing Wiki Links: [[Note Name]] — but not matrix literals like [[1,2],[3,4]].
     let mut idx = 0;
@@ -832,13 +846,14 @@ fn section_c(
 
 fn section_d(
     line: &[char],
-    n: usize,
     line_styles: &mut [Option<Style>],
     backtick_ranges: &[RangeInclusive<usize>],
     link_ranges: &[RangeInclusive<usize>],
     math: &MathLineInfo,
     defined_vars: &HashSet<String>,
+    palette: &Palette,
 ) {
+    let n = line.len();
     let tokens = tokenize_line_for_highlighting(line);
 
     for i in 0..tokens.len() {
@@ -864,7 +879,7 @@ fn section_d(
                     if !overlaps_link {
                         // Blue #7aa2f7
                         line_styles[(*start).min(n)..(*end + 1).min(n)]
-                            .fill(Some(Style::default().fg(Color::Rgb(122, 162, 247)).bold()));
+                            .fill(Some(Style::default().fg(palette.math_fn).bold()));
                     }
                 }
                 continue;
@@ -906,7 +921,7 @@ fn section_d(
                     if !overlaps_link {
                         // Rose / Pink #f48fb1
                         line_styles[(*start).min(n)..(*end + 1).min(n)]
-                            .fill(Some(Style::default().fg(Color::Rgb(244, 143, 177))));
+                            .fill(Some(Style::default().fg(palette.math_unit)));
                     }
                 }
             }
@@ -924,7 +939,7 @@ fn section_d(
                         let italic = slot
                             .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
                             .unwrap_or(false);
-                        let mut style = Style::default().fg(Color::Rgb(115, 218, 202)); // Teal #73daca
+                        let mut style = Style::default().fg(palette.math_number);
                         if italic {
                             style = style.italic();
                         }
@@ -963,7 +978,7 @@ fn section_d(
                     if !overlaps_link {
                         // Rose / Pink #f48fb1
                         line_styles[(*start).min(n)..(*end + 1).min(n)]
-                            .fill(Some(Style::default().fg(Color::Rgb(244, 143, 177))));
+                            .fill(Some(Style::default().fg(palette.math_unit)));
                     }
                 }
             } else {
@@ -981,7 +996,7 @@ fn section_d(
                             let italic = slot
                                 .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
                                 .unwrap_or(false);
-                            let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                            let mut style = Style::default().fg(palette.math_operator);
                             if italic {
                                 style = style.italic();
                             }
@@ -1000,7 +1015,7 @@ fn section_d(
                     let italic = slot
                         .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
                         .unwrap_or(false);
-                    let mut style = Style::default().fg(Color::Rgb(255, 158, 100)).bold();
+                    let mut style = Style::default().fg(palette.math_operator).bold();
                     if italic {
                         style = style.italic();
                     }
@@ -1068,7 +1083,7 @@ fn section_d(
                             let italic = slot
                                 .map(|s| s.add_modifier.contains(ratatui::style::Modifier::ITALIC))
                                 .unwrap_or(false);
-                            let mut style = Style::default().fg(Color::Rgb(255, 158, 100));
+                            let mut style = Style::default().fg(palette.math_operator);
                             if italic {
                                 style = style.italic();
                             }

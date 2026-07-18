@@ -62,47 +62,17 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
     app.editor_area = editor_area;
     app.right_area = right_area;
 
-    // Tokyo Night Palette mappings
-    let bg_color = Color::Rgb(26, 27, 38);
-    let border_focused_color = Color::Rgb(125, 207, 255); // Cyan #7dcfff
-    let border_dim_color = Color::Rgb(86, 95, 137); // Muted Gray #565f89
-    let text_fg_color = Color::Rgb(169, 177, 214); // Soft Gray #a9b1d6
-
     // RENDER 1: Left Panel (Wiki Map)
     if app.left_panel_open {
-        crate::ui::panels::render_wiki_map(
-            f,
-            app,
-            left_area,
-            bg_color,
-            text_fg_color,
-            border_focused_color,
-            border_dim_color,
-        );
+        crate::ui::panels::render_wiki_map(f, app, left_area);
     }
 
     // RENDER 2: Middle Panel (Editor)
-    crate::ui::panels::render_editor(
-        f,
-        app,
-        editor_area,
-        bg_color,
-        text_fg_color,
-        border_focused_color,
-        border_dim_color,
-    );
+    crate::ui::panels::render_editor(f, app, editor_area);
 
     // RENDER 3: Right Panel (Variables Inspector)
     if app.right_panel_open {
-        crate::ui::panels::render_variables(
-            f,
-            app,
-            right_area,
-            bg_color,
-            text_fg_color,
-            border_focused_color,
-            border_dim_color,
-        );
+        crate::ui::panels::render_variables(f, app, right_area);
     }
 
     // Unified Help popup modal with tabs (opened via F1, ?, ~)
@@ -110,13 +80,13 @@ pub(crate) fn ui(f: &mut Frame, app: &mut App) {
         crate::ui::modals::render_help(f, app);
     }
     if app.show_delete_confirm {
-        crate::ui::modals::render_delete_confirm(f, app, text_fg_color);
+        crate::ui::modals::render_delete_confirm(f, app);
     }
     if app.show_update_modal {
-        crate::ui::modals::render_update_modal(f, app, text_fg_color);
+        crate::ui::modals::render_update_modal(f, app);
     }
     if app.show_export_menu {
-        crate::ui::modals::render_export_menu(f, text_fg_color);
+        crate::ui::modals::render_export_menu(f, app);
     }
 
     crate::ui::status::render_status_line(f, app, status_area, show_bottom_bar);

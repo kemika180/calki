@@ -10,11 +10,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(Color::Rgb(255, 158, 100))) // Orange border
-        .bg(Color::Rgb(22, 22, 30))
+        .border_style(Style::default().fg(app.palette.help_section)) // Orange border
+        .bg(app.palette.surface)
         .title(Span::styled(
             " calki Quick Reference & Help ",
-            Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
+            Style::default().fg(app.palette.config_key).bold(),
         ));
 
     // We construct the tab headers row:
@@ -35,18 +35,18 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App) {
         if i > 0 {
             header_spans.push(Span::styled(
                 "   ",
-                Style::default().fg(Color::Rgb(86, 95, 137)),
+                Style::default().fg(app.palette.fg_muted),
             ));
         }
         if i == app.help_tab_idx {
             header_spans.push(Span::styled(
                 format!("▶\u{a0}{}\u{a0}◀", title),
-                Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
+                Style::default().fg(app.palette.config_key).bold(),
             ));
         } else {
             header_spans.push(Span::styled(
                 format!("\u{a0}{}\u{a0}", title),
-                Style::default().fg(Color::Rgb(86, 95, 137)),
+                Style::default().fg(app.palette.fg_muted),
             ));
         }
     }
@@ -55,13 +55,13 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App) {
     // Help text content based on active tab:
     let mut help_text = vec![tab_row, Line::from("")];
 
-    let mut content = crate::ui::help_text::help_content(app.help_tab_idx);
+    let mut content = crate::ui::help_text::help_content(app.help_tab_idx, &app.palette);
 
     help_text.append(&mut content);
     help_text.push(Line::from(""));
     help_text.push(Line::from(vec![Span::styled(
         " Press h/l (Left/Right) to switch tabs  •  Press any other key to close ",
-        Style::default().fg(Color::Rgb(255, 158, 100)).italic(),
+        Style::default().fg(app.palette.help_section).italic(),
     )]));
 
     let max_scroll = if help_text.len() > area.height as usize {
@@ -81,16 +81,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App) {
     f.render_widget(paragraph, area);
 }
 
-pub(crate) fn render_delete_confirm(f: &mut Frame, app: &App, text_fg_color: Color) {
+pub(crate) fn render_delete_confirm(f: &mut Frame, app: &App) {
     let area = centered_rect(60, 25, f.area());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(Color::Rgb(247, 118, 142))) // Red border for danger
-        .bg(Color::Rgb(22, 22, 30))
+        .border_style(Style::default().fg(app.palette.error)) // Red border for danger
+        .bg(app.palette.surface)
         .title(Span::styled(
             " Delete Wiki Page ",
-            Style::default().fg(Color::Rgb(247, 118, 142)).bold(),
+            Style::default().fg(app.palette.error).bold(),
         ));
 
     let text = vec![
@@ -98,13 +98,13 @@ pub(crate) fn render_delete_confirm(f: &mut Frame, app: &App, text_fg_color: Col
         Line::from(vec![
             Span::styled(
                 " Are you sure you want to delete ",
-                Style::default().fg(text_fg_color),
+                Style::default().fg(app.palette.fg),
             ),
             Span::styled(
                 format!("\"{}\"", app.delete_target_name),
-                Style::default().bold().fg(Color::Rgb(125, 207, 255)),
+                Style::default().bold().fg(app.palette.config_key),
             ),
-            Span::styled("?", Style::default().fg(text_fg_color)),
+            Span::styled("?", Style::default().fg(app.palette.fg)),
         ])
         .centered(),
         Line::from(" This will permanently remove the file from your disk. ").centered(),
@@ -112,14 +112,14 @@ pub(crate) fn render_delete_confirm(f: &mut Frame, app: &App, text_fg_color: Col
         Line::from(vec![
             Span::styled(
                 "  [y] ",
-                Style::default().fg(Color::Rgb(158, 206, 106)).bold(),
+                Style::default().fg(app.palette.keybind_label).bold(),
             ),
-            Span::styled("Yes, delete it  ", Style::default().fg(text_fg_color)),
+            Span::styled("Yes, delete it  ", Style::default().fg(app.palette.fg)),
             Span::styled(
                 "  [any other key] ",
-                Style::default().fg(Color::Rgb(255, 158, 100)).bold(),
+                Style::default().fg(app.palette.help_section).bold(),
             ),
-            Span::styled("Cancel  ", Style::default().fg(text_fg_color)),
+            Span::styled("Cancel  ", Style::default().fg(app.palette.fg)),
         ])
         .centered(),
     ];
@@ -129,38 +129,35 @@ pub(crate) fn render_delete_confirm(f: &mut Frame, app: &App, text_fg_color: Col
     f.render_widget(paragraph, area);
 }
 
-pub(crate) fn render_update_modal(f: &mut Frame, app: &App, text_fg_color: Color) {
+pub(crate) fn render_update_modal(f: &mut Frame, app: &App) {
     let area = centered_rect(65, 30, f.area());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(Color::Rgb(125, 207, 255))) // Cyan border for info
-        .bg(Color::Rgb(22, 22, 30))
+        .border_style(Style::default().fg(app.palette.border_focused)) // info border
+        .bg(app.palette.surface)
         .title(Span::styled(
             " Update Available ",
-            Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
+            Style::default().fg(app.palette.config_key).bold(),
         ));
 
     let version_span = if let Some(ref version) = app.update_available {
         Span::styled(
             format!(" (v{}) is available on crates.io!", version),
-            Style::default().fg(text_fg_color),
+            Style::default().fg(app.palette.fg),
         )
     } else {
         Span::styled(
             " is available on crates.io!",
-            Style::default().fg(text_fg_color),
+            Style::default().fg(app.palette.fg),
         )
     };
 
     let text = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled(" A new version of ", Style::default().fg(text_fg_color)),
-            Span::styled(
-                "calki",
-                Style::default().bold().fg(Color::Rgb(187, 154, 247)),
-            ),
+            Span::styled(" A new version of ", Style::default().fg(app.palette.fg)),
+            Span::styled("calki", Style::default().bold().fg(app.palette.link)),
             version_span,
         ])
         .centered(),
@@ -168,14 +165,14 @@ pub(crate) fn render_update_modal(f: &mut Frame, app: &App, text_fg_color: Color
         Line::from(vec![
             Span::styled(
                 "  [i] ",
-                Style::default().fg(Color::Rgb(158, 206, 106)).bold(),
+                Style::default().fg(app.palette.keybind_label).bold(),
             ),
-            Span::styled("Ignore this update  ", Style::default().fg(text_fg_color)),
+            Span::styled("Ignore this update  ", Style::default().fg(app.palette.fg)),
             Span::styled(
                 "  [any other key] ",
-                Style::default().fg(Color::Rgb(255, 158, 100)).bold(),
+                Style::default().fg(app.palette.help_section).bold(),
             ),
-            Span::styled("Dismiss  ", Style::default().fg(text_fg_color)),
+            Span::styled("Dismiss  ", Style::default().fg(app.palette.fg)),
         ])
         .centered(),
     ];
@@ -185,45 +182,39 @@ pub(crate) fn render_update_modal(f: &mut Frame, app: &App, text_fg_color: Color
     f.render_widget(paragraph, area);
 }
 
-pub(crate) fn render_export_menu(f: &mut Frame, text_fg_color: Color) {
+pub(crate) fn render_export_menu(f: &mut Frame, app: &App) {
     let area = centered_rect(65, 30, f.area());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
-        .border_style(Style::default().fg(Color::Rgb(187, 154, 247))) // Purple border for export
-        .bg(Color::Rgb(22, 22, 30))
+        .border_style(Style::default().fg(app.palette.link)) // Purple border for export
+        .bg(app.palette.surface)
         .title(Span::styled(
             " Export Menu ",
-            Style::default().fg(Color::Rgb(187, 154, 247)).bold(),
+            Style::default().fg(app.palette.link).bold(),
         ));
 
     let text = vec![
         Line::from(""),
         Line::from(vec![Span::styled(
             " Choose an export option:",
-            Style::default().fg(text_fg_color),
+            Style::default().fg(app.palette.fg),
         )])
         .centered(),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "  [1] ",
-                Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
-            ),
+            Span::styled("  [1] ", Style::default().fg(app.palette.config_key).bold()),
             Span::styled(
                 "Export current note to HTML",
-                Style::default().fg(text_fg_color),
+                Style::default().fg(app.palette.fg),
             ),
         ])
         .centered(),
         Line::from(vec![
-            Span::styled(
-                "  [2] ",
-                Style::default().fg(Color::Rgb(125, 207, 255)).bold(),
-            ),
+            Span::styled("  [2] ", Style::default().fg(app.palette.config_key).bold()),
             Span::styled(
                 "Compile entire wiki to Markdown",
-                Style::default().fg(text_fg_color),
+                Style::default().fg(app.palette.fg),
             ),
         ])
         .centered(),
@@ -231,9 +222,9 @@ pub(crate) fn render_export_menu(f: &mut Frame, text_fg_color: Color) {
         Line::from(vec![
             Span::styled(
                 "  [Esc] ",
-                Style::default().fg(Color::Rgb(255, 158, 100)).bold(),
+                Style::default().fg(app.palette.help_section).bold(),
             ),
-            Span::styled("Cancel", Style::default().fg(text_fg_color)),
+            Span::styled("Cancel", Style::default().fg(app.palette.fg)),
         ])
         .centered(),
     ];

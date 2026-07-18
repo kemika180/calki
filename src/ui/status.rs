@@ -13,7 +13,7 @@ pub(crate) fn render_status_line(
     show_bottom_bar: bool,
 ) {
     if show_bottom_bar {
-        let status_bg = Color::Rgb(22, 22, 30);
+        let status_bg = app.palette.surface;
         let status_block = Block::default().bg(status_bg);
 
         let status_line = if let Some((msg, inst)) = &app.status_message {
@@ -21,9 +21,9 @@ pub(crate) fn render_status_line(
                 Line::from(vec![
                     Span::styled(
                         " ✔  ",
-                        Style::default().fg(Color::Rgb(158, 206, 106)).bold(),
+                        Style::default().fg(app.palette.keybind_label).bold(),
                     ),
-                    Span::styled(msg, Style::default().fg(Color::Rgb(158, 206, 106))),
+                    Span::styled(msg, Style::default().fg(app.palette.keybind_label)),
                 ])
             } else {
                 Line::from("")
@@ -32,13 +32,13 @@ pub(crate) fn render_status_line(
             Line::from(vec![
                 Span::styled(
                     " 🔍 Search: ",
-                    Style::default().fg(Color::Rgb(255, 158, 100)).bold(),
+                    Style::default().fg(app.palette.help_section).bold(),
                 ),
                 Span::styled(
                     &app.search_query,
-                    Style::default().fg(Color::Rgb(125, 207, 255)),
+                    Style::default().fg(app.palette.config_key),
                 ),
-                Span::styled("█", Style::default().fg(Color::Rgb(125, 207, 255)).bold()), // cursor
+                Span::styled("█", Style::default().fg(app.palette.config_key).bold()), // cursor
             ])
         } else {
             Line::from("")

@@ -2,6 +2,7 @@ mod app;
 mod currency;
 mod highlight;
 mod math;
+mod theme;
 mod ui;
 mod wiki;
 
@@ -281,6 +282,7 @@ struct App {
     replace_next_char: bool,
     vim_multiplier: Option<usize>,
     config: AppConfig,
+    palette: crate::theme::Palette,
 
     // Global Wiki Search
     search_query: String,
@@ -532,6 +534,7 @@ impl App {
             replace_next_char: false,
             vim_multiplier: None,
             config,
+            palette: crate::theme::tokyo_night_night(),
             search_query: String::new(),
             search_active: false,
             search_results: Vec::new(),
@@ -650,7 +653,7 @@ impl App {
             };
 
         self.editor_state.highlights =
-            crate::highlight::compute_syntax_highlights(&vecs, selected_var);
+            crate::highlight::compute_syntax_highlights(&vecs, selected_var, &self.palette);
     }
 
     // Saves current editor state to the active note file
@@ -2689,7 +2692,11 @@ mod main_tests {
             "599584916 m/s in c => 2 c".chars().collect::<Vec<char>>(),
         ];
 
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, None);
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
 
         let pink = Color::Rgb(244, 143, 177);
         let unit_highlights: Vec<&edtui::Highlight> = highlights
@@ -3097,7 +3104,11 @@ mod main_tests {
                 .collect::<Vec<char>>(),
         ];
 
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, None);
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
 
         // Heading Level 1: Purple
         assert_eq!(
@@ -3227,7 +3238,11 @@ mod main_tests {
             "    sum;".chars().collect::<Vec<char>>(),
             "} => 55".chars().collect::<Vec<char>>(),
         ];
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, None);
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
 
         let purple = Color::Rgb(187, 154, 247);
         let blue = Color::Rgb(122, 162, 247);
@@ -3355,7 +3370,11 @@ mod main_tests {
             "total = price * 2".chars().collect::<Vec<char>>(),
         ];
 
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, Some("price"));
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            Some("price"),
+            &crate::theme::tokyo_night_night(),
+        );
 
         // In row 0, "price" at col 0..=4 should be highlighted with the selected variable style: bg(167, 82, 142), fg(224, 230, 242), bold.
         let hl_r0 = highlights
@@ -3392,7 +3411,11 @@ mod main_tests {
             "z = 5 m".chars().collect::<Vec<char>>(),
         ];
 
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, None);
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
 
         let pink = Color::Rgb(244, 143, 177);
 
@@ -3421,14 +3444,22 @@ mod main_tests {
         let link_style = Style::default().fg(Color::Rgb(187, 154, 247)).underlined();
         // A matrix literal must NOT be painted as a wiki link.
         let lines = vec!["[[1, 2], [3, 4]] =>".chars().collect::<Vec<char>>()];
-        let hl = crate::highlight::compute_syntax_highlights(&lines, None);
+        let hl = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
         assert!(
             hl.iter().all(|h| h.style != link_style),
             "matrix literal was highlighted as a wiki link"
         );
         // A genuine wiki link IS still painted.
         let lines2 = vec!["See [[My Note]] here".chars().collect::<Vec<char>>()];
-        let hl2 = crate::highlight::compute_syntax_highlights(&lines2, None);
+        let hl2 = crate::highlight::compute_syntax_highlights(
+            &lines2,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
         assert!(
             hl2.iter().any(|h| h.style == link_style),
             "genuine wiki link was not highlighted"
@@ -3442,7 +3473,11 @@ mod main_tests {
             "mod_val = 10 % 3".chars().collect::<Vec<char>>(),
         ];
 
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, None);
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
 
         let pink = Color::Rgb(244, 143, 177);
 
@@ -3471,7 +3506,11 @@ mod main_tests {
                 .collect::<Vec<char>>(),
         ];
 
-        let highlights = crate::highlight::compute_syntax_highlights(&lines, None);
+        let highlights = crate::highlight::compute_syntax_highlights(
+            &lines,
+            None,
+            &crate::theme::tokyo_night_night(),
+        );
 
         let has_italic_text = highlights
             .iter()
