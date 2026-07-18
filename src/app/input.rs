@@ -110,6 +110,8 @@ pub(crate) fn dispatch_command(app: &mut App, input: &str) {
     };
     match cmd {
         "" => {}
+        // Vim-style quit aliases; calki auto-saves, so all three just exit.
+        "q" | "q!" | "wq" => app.should_quit = true,
         "theme" => apply_theme_command(app, arg),
         other => app.set_status_message(format!("unknown command: {other}")),
     }
@@ -1052,6 +1054,17 @@ mod tests {
         let (msg, _) = app.status_message.as_ref().unwrap();
         assert!(msg.contains("unknown command"), "got: {msg}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn command_quit_aliases_set_should_quit() {
+        for cmd in ["q", "q!", "wq"] {
+            let (mut app, root) = test_app(&format!("test_cmd_{}", cmd.replace('!', "bang")));
+            assert!(!app.should_quit);
+            dispatch_command(&mut app, cmd);
+            assert!(app.should_quit, "`:{cmd}` should request quit");
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 
     #[test]

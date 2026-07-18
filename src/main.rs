@@ -295,6 +295,7 @@ struct App {
     // Ex-style command line (`:theme <name>` …)
     command_active: bool,
     command_query: String,
+    should_quit: bool,
 
     // Status Message / Toast
     status_message: Option<(String, std::time::Instant)>,
@@ -548,6 +549,7 @@ impl App {
             show_search_results: false,
             command_active: false,
             command_query: String::new(),
+            should_quit: false,
             status_message: None,
             update_receiver,
             update_available: None,

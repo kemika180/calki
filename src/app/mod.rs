@@ -83,6 +83,9 @@ pub(crate) fn run_app<B: Backend + std::io::Write>(
 
                     if app.command_active {
                         crate::app::input::handle_command(app, key);
+                        if app.should_quit {
+                            break;
+                        }
                         continue;
                     }
 
