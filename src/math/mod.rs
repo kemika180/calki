@@ -418,6 +418,40 @@ p2 = 1.5 bar =>
     }
 
     #[test]
+    fn test_constant_units_do_not_shadow_builtin_units() {
+        // Regression: `Context::default()` registers physical constants that carry a
+        // unit (h = Planck, g = grav. accel.) and used to register them as custom units,
+        // shadowing the built-in `h` = hour / `g` = gram. That broke compound-unit
+        // resolution in the convert path — `X to km/h` splits to `km` `h`, and `h`
+        // resolved to Planck's constant instead of hours, yielding an "incompatible unit"
+        // error. The guard now keeps the built-in units intact.
+        let rates = HashMap::new();
+
+        let speed_sheet = r#"
+speed = 65 mph
+speed to km/h =>
+"#;
+        let (speed_output, _) = evaluate_sheet(speed_sheet, &rates);
+        assert!(
+            speed_output.contains("speed to km/h => 104.6074 km/h"),
+            "Actual output:\n{}",
+            speed_output
+        );
+
+        // Sibling collision: `g` = grav. accel. constant used to shadow `g` = gram.
+        let mass_sheet = r#"
+mass = 1 kg
+mass to g =>
+"#;
+        let (mass_output, _) = evaluate_sheet(mass_sheet, &rates);
+        assert!(
+            mass_output.contains("mass to g => 1000 g"),
+            "Actual output:\n{}",
+            mass_output
+        );
+    }
+
+    #[test]
     fn test_multiline_functions_and_switch() {
         let rates = HashMap::new();
 

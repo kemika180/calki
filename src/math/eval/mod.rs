@@ -1104,7 +1104,15 @@ impl Default for Context {
                     unit: unit.map(|u| u.to_string()),
                 },
             );
-            if let Some(unit_str) = unit {
+            // Register the constant's unit only if the name isn't already a built-in
+            // unit abbreviation. Otherwise a constant like `h` (Planck) or `g` (grav.
+            // accel.) shadows the built-in `h`=hour / `g`=gram, which breaks compound
+            // unit resolution in the convert path (e.g. `X to km/h` splits to `km` `h`
+            // and resolves `h` to Planck's constant). The value stays available as a
+            // variable above.
+            if let Some(unit_str) = unit
+                && crate::math::units::get_exact_unit_info(name).is_none()
+            {
                 let _ = crate::math::units::register_custom_unit(name, value, unit_str);
             }
         }
