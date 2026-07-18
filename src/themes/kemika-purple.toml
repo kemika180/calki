@@ -1,0 +1,60 @@
+# calki theme — kemika-purple (personal). Purple-forward, from the kobo_tui palette:
+# primary #5c3b8a, accent #cbb2ff, pink #b53580, bg #0f0f15, surface #141320, fg #e2e2e9.
+# Syntax roles hand-picked. Omitted roles inherit Tokyo Night.
+
+name = "kemika-purple"
+
+[surfaces]
+bg = "#0f0f15"
+surface = "#141320"
+panel_sel_bg = "#2a2440"
+border_focused = "#cbb2ff"
+border_dim = "#5c3b8a"
+selection_bg = "#5c3b8a"
+selection_fg = "#e2e2e9"
+
+[text]
+fg = "#e2e2e9"
+fg_muted = "#6b6480"
+
+[headings]
+h1 = "#cbb2ff"
+h2 = "#b899f0"
+h3 = "#9f7fd8"
+h4 = "#c98bd6"
+h5 = "#8fd6b0"
+h6 = "#e0a15f"
+
+[markdown]
+link = "#cbb2ff"
+blockquote = "#8fd6b0"
+hr = "#3a3350"
+comment = "#6b6480"
+list_marker = "#e0a15f"
+
+[math]
+math_lhs = "#cbb2ff"
+math_operator = "#e0a15f"
+math_number = "#8fd6b0"
+math_result = "#8fd6b0"
+math_unit = "#b53580"
+math_fn = "#9f7fd8"
+
+[help]
+config_key = "#cbb2ff"
+keybind_label = "#8fd6b0"
+help_section = "#e0a15f"
+
+[cursor]
+cursor_normal = "#cbb2ff"
+cursor_insert = "#8fd6b0"
+cursor_visual = "#b53580"
+cursor_search = "#e0a15f"
+
+[editor]
+editor_bg = "#0f0f15"
+editor_fg = "#e2e2e9"
+line_number = "#3a3350"
+
+[status]
+error = "#ff6b81"

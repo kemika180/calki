@@ -1,0 +1,64 @@
+# calki theme — Tokyo Night (Night). This is the default and the canonical
+# reference: it lists every role. Copy this file to
+# ~/.config/calki/themes/<your-theme>.toml and edit the colors.
+#
+# Colors are "#rrggbb" hex. Any role you omit inherits the Tokyo Night value,
+# so a custom theme only needs to list what it changes. Roles are grouped into
+# tables purely for readability — a role name is unique across all tables.
+
+name = "tokyo-night"
+
+[surfaces]
+bg = "#1a1b26"             # main panel background
+surface = "#16161e"        # modals, status bar
+panel_sel_bg = "#3b4261"   # selected list row background
+border_focused = "#7dcfff" # focused panel border
+border_dim = "#565f89"     # unfocused panel border
+selection_bg = "#a7528e"   # editor visual selection background
+selection_fg = "#e0e6f2"   # editor visual selection text
+
+[text]
+fg = "#a9b1d6"             # body text
+fg_muted = "#565f89"       # dim text, code delimiters
+
+[headings]
+h1 = "#bb9af7"
+h2 = "#7dcfff"
+h3 = "#7aa2f7"
+h4 = "#73daca"
+h5 = "#9ece6a"
+h6 = "#ff9e64"
+
+[markdown]
+link = "#bb9af7"           # [[wiki links]] (underlined)
+blockquote = "#9ece6a"
+hr = "#565f89"
+comment = "#565f89"
+list_marker = "#ff9e64"
+
+[math]
+math_lhs = "#7dcfff"       # left-hand side of an assignment
+math_operator = "#ff9e64"  # = => + - * / etc.
+math_number = "#73daca"
+math_result = "#73daca"    # value after =>
+math_unit = "#f48fb1"      # km, USD, hr …
+math_fn = "#7aa2f7"        # function-call names
+
+[help]
+config_key = "#7dcfff"     # config keys / commands in help + modals
+keybind_label = "#9ece6a"  # keybinding labels
+help_section = "#ff9e64"   # section headers, modal borders
+
+[cursor]
+cursor_normal = "#7aa2f7"
+cursor_insert = "#9ece6a"
+cursor_visual = "#bb9af7"
+cursor_search = "#ff9e64"
+
+[editor]
+editor_bg = "#000000"      # editor pane background
+editor_fg = "#ffffff"      # editor default text
+line_number = "#646464"
+
+[status]
+error = "#f7768e"

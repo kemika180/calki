@@ -1,0 +1,59 @@
+# calki theme — Catppuccin Mocha (https://catppuccin.com).
+# Omitted roles inherit Tokyo Night. See tokyo-night.toml for the full role list.
+
+name = "catppuccin-mocha"
+
+[surfaces]
+bg = "#1e1e2e"
+surface = "#181825"
+panel_sel_bg = "#313244"
+border_focused = "#89b4fa"
+border_dim = "#6c7086"
+selection_bg = "#45475a"
+selection_fg = "#cdd6f4"
+
+[text]
+fg = "#cdd6f4"
+fg_muted = "#6c7086"
+
+[headings]
+h1 = "#cba6f7"
+h2 = "#89dceb"
+h3 = "#89b4fa"
+h4 = "#94e2d5"
+h5 = "#a6e3a1"
+h6 = "#fab387"
+
+[markdown]
+link = "#89b4fa"
+blockquote = "#a6e3a1"
+hr = "#6c7086"
+comment = "#6c7086"
+list_marker = "#fab387"
+
+[math]
+math_lhs = "#89dceb"
+math_operator = "#f38ba8"
+math_number = "#94e2d5"
+math_result = "#94e2d5"
+math_unit = "#f5c2e7"
+math_fn = "#89b4fa"
+
+[help]
+config_key = "#89dceb"
+keybind_label = "#a6e3a1"
+help_section = "#fab387"
+
+[cursor]
+cursor_normal = "#89b4fa"
+cursor_insert = "#a6e3a1"
+cursor_visual = "#cba6f7"
+cursor_search = "#fab387"
+
+[editor]
+editor_bg = "#1e1e2e"
+editor_fg = "#cdd6f4"
+line_number = "#6c7086"
+
+[status]
+error = "#f38ba8"

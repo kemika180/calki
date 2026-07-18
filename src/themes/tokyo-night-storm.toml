@@ -1,0 +1,59 @@
+# calki theme — Tokyo Night (Storm). Lighter backgrounds than Night, same accents.
+# Omitted roles inherit Tokyo Night. See tokyo-night.toml for the full role list.
+
+name = "tokyo-night-storm"
+
+[surfaces]
+bg = "#24283b"
+surface = "#1f2335"
+panel_sel_bg = "#414868"
+border_focused = "#7dcfff"
+border_dim = "#565f89"
+selection_bg = "#a7528e"
+selection_fg = "#c0caf5"
+
+[text]
+fg = "#c0caf5"
+fg_muted = "#565f89"
+
+[headings]
+h1 = "#bb9af7"
+h2 = "#7dcfff"
+h3 = "#7aa2f7"
+h4 = "#1abc9c"
+h5 = "#9ece6a"
+h6 = "#ff9e64"
+
+[markdown]
+link = "#bb9af7"
+blockquote = "#9ece6a"
+hr = "#565f89"
+comment = "#565f89"
+list_marker = "#ff9e64"
+
+[math]
+math_lhs = "#7dcfff"
+math_operator = "#ff9e64"
+math_number = "#1abc9c"
+math_result = "#1abc9c"
+math_unit = "#f48fb1"
+math_fn = "#7aa2f7"
+
+[help]
+config_key = "#7dcfff"
+keybind_label = "#9ece6a"
+help_section = "#ff9e64"
+
+[cursor]
+cursor_normal = "#7aa2f7"
+cursor_insert = "#9ece6a"
+cursor_visual = "#bb9af7"
+cursor_search = "#ff9e64"
+
+[editor]
+editor_bg = "#24283b"
+editor_fg = "#c0caf5"
+line_number = "#414868"
+
+[status]
+error = "#f7768e"

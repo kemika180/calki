@@ -1,0 +1,59 @@
+# calki theme — Dracula (https://draculatheme.com).
+# Omitted roles inherit Tokyo Night. See tokyo-night.toml for the full role list.
+
+name = "dracula"
+
+[surfaces]
+bg = "#282a36"
+surface = "#21222c"
+panel_sel_bg = "#44475a"
+border_focused = "#bd93f9"
+border_dim = "#6272a4"
+selection_bg = "#44475a"
+selection_fg = "#f8f8f2"
+
+[text]
+fg = "#f8f8f2"
+fg_muted = "#6272a4"
+
+[headings]
+h1 = "#bd93f9"
+h2 = "#8be9fd"
+h3 = "#ff79c6"
+h4 = "#50fa7b"
+h5 = "#f1fa8c"
+h6 = "#ffb86c"
+
+[markdown]
+link = "#bd93f9"
+blockquote = "#6272a4"
+hr = "#6272a4"
+comment = "#6272a4"
+list_marker = "#ffb86c"
+
+[math]
+math_lhs = "#8be9fd"
+math_operator = "#ff79c6"
+math_number = "#bd93f9"
+math_result = "#50fa7b"
+math_unit = "#ffb86c"
+math_fn = "#50fa7b"
+
+[help]
+config_key = "#8be9fd"
+keybind_label = "#50fa7b"
+help_section = "#ffb86c"
+
+[cursor]
+cursor_normal = "#bd93f9"
+cursor_insert = "#50fa7b"
+cursor_visual = "#ff79c6"
+cursor_search = "#ffb86c"
+
+[editor]
+editor_bg = "#282a36"
+editor_fg = "#f8f8f2"
+line_number = "#6272a4"
+
+[status]
+error = "#ff5555"

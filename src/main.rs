@@ -185,6 +185,7 @@ struct AppConfig {
     ignored_update_hash: Option<String>,
     line_numbers: String,
     word_wrap: bool,
+    theme: String,
 }
 
 impl Default for AppConfig {
@@ -196,6 +197,7 @@ impl Default for AppConfig {
             ignored_update_hash: None,
             line_numbers: "None".to_string(),
             word_wrap: true,
+            theme: "tokyo-night".to_string(),
         }
     }
 }
@@ -498,6 +500,7 @@ impl App {
 
         let config = AppConfig::load();
         let _ = config.save();
+        crate::theme::seed_builtin_themes();
 
         let update_receiver = check_for_updates();
 
@@ -533,8 +536,8 @@ impl App {
             right_area: Rect::default(),
             replace_next_char: false,
             vim_multiplier: None,
+            palette: crate::theme::load_palette_or_default(&config.theme),
             config,
-            palette: crate::theme::tokyo_night_night(),
             search_query: String::new(),
             search_active: false,
             search_results: Vec::new(),
@@ -3562,6 +3565,7 @@ mod main_tests {
             ignored_update_hash: Some("test_hash_val".to_string()),
             line_numbers: "Absolute".to_string(),
             word_wrap: false,
+            theme: "dracula".to_string(),
         };
         let serialized = serde_json::to_string_pretty(&custom_config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&serialized).unwrap();
