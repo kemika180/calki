@@ -114,6 +114,41 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
             Line::from(""),
             Line::from(vec![Span::styled(
+                "── Command Line ( : ) ──",
+                Style::default().bold().fg(palette.help_section),
+            )]),
+            Line::from(vec![
+                Span::styled(
+                    " :                      ",
+                    Style::default().fg(palette.keybind_label).bold(),
+                ),
+                Span::styled(
+                    "Open the ex-command line (Enter runs, Esc cancels)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " :theme <name>          ",
+                    Style::default().fg(palette.keybind_label).bold(),
+                ),
+                Span::styled(
+                    "Switch color theme live and persist it (:theme alone lists all)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " :q  :q!  :wq           ",
+                    Style::default().fg(palette.keybind_label).bold(),
+                ),
+                Span::styled(
+                    "Quit (calki auto-saves, so all three simply exit)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
                 "── Editor & Wiki Note Operations ──",
                 Style::default().bold().fg(palette.help_section),
             )]),
@@ -260,6 +295,26 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
                 ),
                 Span::styled(
                     "Line numbers display mode: 'None', 'Absolute', 'Relative' (default: 'None')",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " word_wrap                 ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Soft-wrap long editor lines (default: true; toggle live with F4)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " theme                     ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Color theme name (default: 'tokyo-night'); files in ~/.config/calki/themes/",
                     Style::default().fg(palette.fg),
                 ),
             ]),
@@ -447,11 +502,21 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
             Line::from(vec![
                 Span::styled(
-                    " solve(eq, x)           ",
+                    " solve(eq, x[, guess]) ",
                     Style::default().fg(palette.config_key).bold(),
                 ),
                 Span::styled(
-                    "Solve linear equation eq for x (e.g. solve(2*x + 5 == 15, x) => 5)",
+                    "Solve eq for x: algebraic inversion, symbolic rearrange, or Newton-Raphson",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "                        ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "e.g. solve(2*x+5 == 15, x) => 5; solve(x == c+2, c) => x - 2; solve(cos(x) == x, x, 1)",
                     Style::default().fg(palette.fg),
                 ),
             ]),
@@ -622,6 +687,16 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
                 ),
                 Span::styled(
                     "Inverse of a square matrix (via Gauss-Jordan)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " linsolve(A, b)         ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Solve the linear system A x = b for the vector x",
                     Style::default().fg(palette.fg),
                 ),
             ]),
