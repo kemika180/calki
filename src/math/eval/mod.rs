@@ -751,6 +751,94 @@ fn solve_rec(
     }
 }
 
+/// Symbolic counterpart to [`solve_equation`]. Instead of evaluating the
+/// non-target side to a number and applying inverse *quantity* ops, it applies
+/// the inverse ops as AST nodes, producing a formula for the target variable in
+/// terms of the still-free variables. Used when the equation cannot be resolved
+/// to a concrete value because other variables are unbound — so the user sees
+/// the rearrangement (`c = x - 2`) rather than a failure.
+fn solve_symbolic(expr: &Expr, var_name: &str) -> Result<Quantity, String> {
+    let formula = match expr {
+        Expr::BinaryOp(Op::Eq, left, right) => {
+            let left_has = expr_contains_var(left, var_name);
+            let right_has = expr_contains_var(right, var_name);
+            if left_has && !right_has {
+                solve_rec_symbolic(left, (**right).clone(), var_name)?
+            } else if right_has && !left_has {
+                solve_rec_symbolic(right, (**left).clone(), var_name)?
+            } else if !left_has && !right_has {
+                return Err("Equation does not contain the variable to solve for".to_string());
+            } else {
+                return Err("Variable appears on both sides of the equation, which is not supported by the simple solver".to_string());
+            }
+        }
+        // A bare expression is rearranged as `expr == 0`.
+        _ => solve_rec_symbolic(expr, Expr::Number(0.0), var_name)?,
+    };
+    let simplified = simplify(&formula);
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: 1.0,
+        unit: Some(format!("formula:{}", expr_to_string(&simplified))),
+    })
+}
+
+/// Structural mirror of [`solve_rec`] that peels operators off `expr`, applying
+/// each inverse op to `target` as a new AST node instead of a numeric value.
+fn solve_rec_symbolic(expr: &Expr, target: Expr, var_name: &str) -> Result<Expr, String> {
+    match expr {
+        Expr::Variable(name) if name == var_name => Ok(target),
+        Expr::BinaryOp(op, left, right) => {
+            let left_has = expr_contains_var(left, var_name);
+            let right_has = expr_contains_var(right, var_name);
+            if left_has && !right_has {
+                let next_target = match op {
+                    Op::Add => Expr::BinaryOp(Op::Sub, Box::new(target), right.clone()),
+                    Op::Sub => Expr::BinaryOp(Op::Add, Box::new(target), right.clone()),
+                    Op::Mul => Expr::BinaryOp(Op::Div, Box::new(target), right.clone()),
+                    Op::Div => Expr::BinaryOp(Op::Mul, Box::new(target), right.clone()),
+                    Op::Pow => Expr::BinaryOp(
+                        Op::Pow,
+                        Box::new(target),
+                        Box::new(Expr::BinaryOp(
+                            Op::Div,
+                            Box::new(Expr::Number(1.0)),
+                            right.clone(),
+                        )),
+                    ),
+                    _ => {
+                        return Err(format!(
+                            "Unsupported operator '{:?}' in equation solving",
+                            op
+                        ));
+                    }
+                };
+                solve_rec_symbolic(left, next_target, var_name)
+            } else if right_has && !left_has {
+                let next_target = match op {
+                    Op::Add => Expr::BinaryOp(Op::Sub, Box::new(target), left.clone()),
+                    Op::Sub => Expr::BinaryOp(Op::Sub, left.clone(), Box::new(target)),
+                    Op::Mul => Expr::BinaryOp(Op::Div, Box::new(target), left.clone()),
+                    Op::Div => Expr::BinaryOp(Op::Div, left.clone(), Box::new(target)),
+                    _ => {
+                        return Err(format!(
+                            "Unsupported operator '{:?}' in equation solving",
+                            op
+                        ));
+                    }
+                };
+                solve_rec_symbolic(right, next_target, var_name)
+            } else if !left_has && !right_has {
+                Err("Sub-expression does not contain the variable".to_string())
+            } else {
+                Err("Variable appears on both sides of a sub-expression".to_string())
+            }
+        }
+        _ => Err("Equation is too complex or non-algebraic".to_string()),
+    }
+}
+
 /// Multiply every (possibly nested) element of `list_qty` by the scalar `scalar`,
 /// combining units element-wise. Used to wire `scalar * matrix` / `matrix * scalar`.
 fn scale_list(list_qty: &Quantity, scalar: &Quantity, ctx: &Context) -> Result<Quantity, String> {
@@ -2259,6 +2347,26 @@ res_j =>
             "Actual output: {}",
             output_complex
         );
+    }
+
+    #[test]
+    fn test_solve_symbolic_rearrange() {
+        let rates = HashMap::new();
+
+        // Other variable unbound -> rearrange to a formula instead of failing.
+        let s1 = "sol = solve(x == c + 2, c)\nsol =>\n";
+        let out1 = crate::math::evaluate_sheet(s1, &rates).0;
+        assert!(out1.contains("sol => x - 2"), "Actual: {}", out1);
+
+        // Multi-variable rearrange (solve for x in y = m*x + b).
+        let s2 = "sol = solve(y == m * x + b, x)\nsol =>\n";
+        let out2 = crate::math::evaluate_sheet(s2, &rates).0;
+        assert!(out2.contains("sol => (y - b) / m"), "Actual: {}", out2);
+
+        // All others bound -> numeric result preserved (no regression).
+        let s3 = "x = 5\nsol = solve(x == c + 2, c)\nsol =>\n";
+        let out3 = crate::math::evaluate_sheet(s3, &rates).0;
+        assert!(out3.contains("sol => 3"), "Actual: {}", out3);
     }
 
     #[test]

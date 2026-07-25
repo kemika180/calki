@@ -6,7 +6,7 @@
 
 use crate::math::eval::{
     Context, differentiate, eval_expr, expr_to_string, find_all_variables_in_expr,
-    find_variable_in_expr, simplify, solve_equation,
+    find_variable_in_expr, simplify, solve_equation, solve_symbolic,
 };
 use crate::math::parser::{Expr, Quantity};
 
@@ -22,6 +22,15 @@ pub(in crate::math::eval) fn solve(args: &[Expr], ctx: &mut Context) -> Result<Q
             return Err("Second argument to 'solve' must be a variable name".to_string());
         }
     };
+    // When another variable in the equation is still unbound, the numeric solver
+    // cannot resolve to a value — instead rearrange symbolically and show the
+    // formula (e.g. `solve(x == c + 2, c)` => `x - 2`).
+    let has_unbound_other = find_all_variables_in_expr(solve_expr)
+        .iter()
+        .any(|v| v != &var_name && !ctx.variables.contains_key(v));
+    if has_unbound_other {
+        return solve_symbolic(solve_expr, &var_name);
+    }
     solve_equation(solve_expr, &var_name, ctx)
 }
 
