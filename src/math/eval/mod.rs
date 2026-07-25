@@ -2370,6 +2370,46 @@ res_j =>
     }
 
     #[test]
+    fn test_solve_newton_raphson() {
+        let mut ctx = Context::default();
+
+        // Variable on both sides -> symbolic fails, Newton finds the fixed point.
+        let e = parse_line("solve(cos(x) == x, x) =>").unwrap_expr();
+        let r = eval_expr(&e, &mut ctx).unwrap();
+        assert!(
+            (r.value - 0.739085).abs() < 1e-4,
+            "cos(x)==x root: {}",
+            r.value
+        );
+
+        // Variable inside a function, with an explicit initial guess (3-arg form).
+        let e = parse_line("solve(sin(x) == 0.5, x, 0.3) =>").unwrap_expr();
+        let r = eval_expr(&e, &mut ctx).unwrap();
+        assert!(
+            (r.value - std::f64::consts::FRAC_PI_6).abs() < 1e-4,
+            "sin(x)==0.5 root: {}",
+            r.value
+        );
+
+        // sqrt is not symbolically differentiable -> exercises the finite-difference path.
+        let e = parse_line("solve(sqrt(x) == 3, x, 4) =>").unwrap_expr();
+        let r = eval_expr(&e, &mut ctx).unwrap();
+        assert!((r.value - 9.0).abs() < 1e-4, "sqrt(x)==3 root: {}", r.value);
+
+        // Existing symbolic/numeric paths still win when applicable (no Newton).
+        let e = parse_line("solve(2 * x + 5 == 15, x) =>").unwrap_expr();
+        let r = eval_expr(&e, &mut ctx).unwrap();
+        assert!((r.value - 5.0).abs() < 1e-9, "linear solve: {}", r.value);
+
+        // No real root -> reports non-convergence rather than a bogus value.
+        let e = parse_line("solve(exp(x) == -1, x) =>").unwrap_expr();
+        assert!(
+            eval_expr(&e, &mut ctx).is_err(),
+            "exp(x)==-1 should not converge"
+        );
+    }
+
+    #[test]
     fn test_hex_and_bin_support() {
         let mut ctx = Context::default();
 

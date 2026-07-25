@@ -8,11 +8,11 @@ use crate::math::eval::{
     Context, differentiate, eval_expr, expr_to_string, find_all_variables_in_expr,
     find_variable_in_expr, simplify, solve_equation, solve_symbolic,
 };
-use crate::math::parser::{Expr, Quantity};
+use crate::math::parser::{Expr, Op, Quantity};
 
 pub(in crate::math::eval) fn solve(args: &[Expr], ctx: &mut Context) -> Result<Quantity, String> {
-    if args.len() != 2 {
-        return Err("Built-in function 'solve' expects 2 arguments".to_string());
+    if args.len() != 2 && args.len() != 3 {
+        return Err("Built-in function 'solve' expects 2 or 3 arguments".to_string());
     }
     let solve_expr = &args[0];
     let var_expr = &args[1];
@@ -22,6 +22,12 @@ pub(in crate::math::eval) fn solve(args: &[Expr], ctx: &mut Context) -> Result<Q
             return Err("Second argument to 'solve' must be a variable name".to_string());
         }
     };
+    // Optional third argument: initial guess for the numeric solver.
+    let guess = match args.get(2) {
+        Some(g) => Some(eval_expr(g, ctx)?.value),
+        None => None,
+    };
+
     // When another variable in the equation is still unbound, the numeric solver
     // cannot resolve to a value — instead rearrange symbolically and show the
     // formula (e.g. `solve(x == c + 2, c)` => `x - 2`).
@@ -31,7 +37,99 @@ pub(in crate::math::eval) fn solve(args: &[Expr], ctx: &mut Context) -> Result<Q
     if has_unbound_other {
         return solve_symbolic(solve_expr, &var_name);
     }
-    solve_equation(solve_expr, &var_name, ctx)
+
+    // Fully determined: try symbolic algebraic inversion first, then fall back to
+    // numeric Newton-Raphson for equations it can't invert (variable inside a
+    // function, or appearing more than once).
+    match solve_equation(solve_expr, &var_name, ctx) {
+        Ok(q) => Ok(q),
+        Err(sym_err) => {
+            let contains_var = find_all_variables_in_expr(solve_expr)
+                .iter()
+                .any(|v| v == &var_name);
+            if !contains_var {
+                return Err(sym_err);
+            }
+            solve_numeric(solve_expr, &var_name, guess.unwrap_or(1.0), ctx)
+        }
+    }
+}
+
+/// Numeric root-finder (Newton-Raphson) used when symbolic inversion fails but
+/// the equation is fully determined. Operates on the residual `f(x) = left -
+/// right` (or `f(x) = expr` for a bare expression), using the symbolic
+/// derivative when `differentiate` supports it and a central finite difference
+/// otherwise.
+fn solve_numeric(
+    expr: &Expr,
+    var_name: &str,
+    guess: f64,
+    ctx: &mut Context,
+) -> Result<Quantity, String> {
+    let residual = match expr {
+        Expr::BinaryOp(Op::Eq, left, right) => Expr::BinaryOp(Op::Sub, left.clone(), right.clone()),
+        _ => expr.clone(),
+    };
+    let deriv = differentiate(&residual, var_name)
+        .ok()
+        .map(|d| simplify(&d));
+
+    const MAX_ITER: usize = 100;
+    const TOL: f64 = 1e-10;
+    const MIN_SLOPE: f64 = 1e-14;
+
+    let mut x = guess;
+    for _ in 0..MAX_ITER {
+        let fx = sample(&residual, var_name, x, ctx)?;
+        if fx.abs() < TOL {
+            return Ok(Quantity::scalar(x, None));
+        }
+        let dfx = match &deriv {
+            Some(d) => sample(d, var_name, x, ctx)?,
+            None => {
+                let h = 1e-6 * x.abs().max(1.0);
+                let f_hi = sample(&residual, var_name, x + h, ctx)?;
+                let f_lo = sample(&residual, var_name, x - h, ctx)?;
+                (f_hi - f_lo) / (2.0 * h)
+            }
+        };
+        if dfx.abs() < MIN_SLOPE {
+            return Err(format!(
+                "solve: derivative near zero at x = {}; try a different initial guess",
+                x
+            ));
+        }
+        let next = x - fx / dfx;
+        if !next.is_finite() {
+            return Err("solve: numeric iteration diverged".to_string());
+        }
+        if (next - x).abs() < TOL {
+            return Ok(Quantity::scalar(next, None));
+        }
+        x = next;
+    }
+    Err(format!(
+        "solve: did not converge within {} iterations; try providing an initial guess",
+        MAX_ITER
+    ))
+}
+
+/// Bind `var_name = x`, evaluate `expr` to a scalar, then restore the prior
+/// binding. The insert/eval/restore pattern used throughout this module.
+fn sample(expr: &Expr, var_name: &str, x: f64, ctx: &mut Context) -> Result<f64, String> {
+    let prev = ctx
+        .variables
+        .insert(var_name.to_string(), Quantity::scalar(x, None));
+    let result = eval_expr(expr, ctx);
+    match prev {
+        Some(p) => {
+            ctx.variables.insert(var_name.to_string(), p);
+        }
+        None => {
+            ctx.variables.remove(var_name);
+        }
+    }
+    result.map(|q| q.value)
 }
 
 pub(in crate::math::eval) fn diff(
