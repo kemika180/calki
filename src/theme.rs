@@ -294,6 +294,9 @@ pub fn seed_builtin_themes() {
 
 /// Every available theme name: embedded built-ins ∪ `.toml` files on disk, sorted.
 pub fn list_themes() -> Vec<String> {
+    // `mut` is used only by the `#[cfg(not(test))]` disk-scan below; test builds
+    // exclude it and would otherwise warn `unused_mut`.
+    #[cfg_attr(test, allow(unused_mut))]
     let mut names: std::collections::BTreeSet<String> =
         BUILTIN_THEMES.iter().map(|(n, _)| n.to_string()).collect();
     #[cfg(not(test))]
