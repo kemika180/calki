@@ -1,4 +1,5 @@
-//! Vector and matrix builtins: `vdot`, `vadd`, `vsub`, `transpose`, `matmul`, `det`, `inv`, `len`.
+//! Vector and matrix builtins: `vdot`, `vadd`, `vsub`, `transpose`, `matmul`, `det`, `inv`,
+//! `linsolve`, `len`.
 //! `vadd`/`vsub`/`matmul` defer to the shared quantity arithmetic; `vdot` and the
 //! reconciliation paths need the context's exchange rates.
 
@@ -279,4 +280,84 @@ pub(in crate::math::eval) fn inv(name: &str, args: &[Quantity]) -> Result<Quanti
         .map(|r| Quantity::list(r.into_iter().map(|v| Quantity::scalar(v, None)).collect()))
         .collect();
     Ok(Quantity::list(rows))
+}
+
+/// Extract a flat, dimensionless length-`n` vector of raw values. The `b`-side
+/// counterpart to [`to_square_matrix`], shared by `linsolve`.
+fn to_vector(qty: &Quantity, name: &str, n: usize) -> Result<Vec<f64>, String> {
+    let elems = qty
+        .list
+        .as_ref()
+        .ok_or_else(|| format!("{}() expects a vector as its second argument", name))?;
+    if elems.len() != n {
+        return Err(format!(
+            "{}() vector length {} does not match the {}x{} matrix",
+            name,
+            elems.len(),
+            n,
+            n
+        ));
+    }
+    let mut v = Vec::with_capacity(n);
+    for cell in elems {
+        if cell.list.is_some() {
+            return Err(format!("{}() expects a flat vector of numbers", name));
+        }
+        if cell.unit.is_some() {
+            return Err(format!("{}() requires a dimensionless system", name));
+        }
+        v.push(cell.value);
+    }
+    Ok(v)
+}
+
+/// Solve the linear system `A x = b` by Gaussian elimination with partial
+/// pivoting followed by back-substitution. `a` is `n x n`; `b` has length `n`.
+fn solve_linear(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Result<Vec<f64>, String> {
+    let n = a.len();
+    for i in 0..n {
+        let mut pivot = i;
+        for r in (i + 1)..n {
+            if a[r][i].abs() > a[pivot][i].abs() {
+                pivot = r;
+            }
+        }
+        if a[pivot][i].abs() < 1e-12 {
+            return Err("linsolve() matrix is singular (no unique solution)".to_string());
+        }
+        if pivot != i {
+            a.swap(i, pivot);
+            b.swap(i, pivot);
+        }
+        // Eliminate column i from every row below the pivot.
+        let pivot_row = a[i].clone();
+        let pivot_b = b[i];
+        for r in (i + 1)..n {
+            let factor = a[r][i] / pivot_row[i];
+            for (c, &pv) in pivot_row.iter().enumerate().skip(i) {
+                a[r][c] -= factor * pv;
+            }
+            b[r] -= factor * pivot_b;
+        }
+    }
+    // Back-substitution: solve for each unknown from the bottom row up.
+    let mut x = vec![0.0; n];
+    for i in (0..n).rev() {
+        let mut sum = b[i];
+        for (c, xc) in x.iter().enumerate().skip(i + 1) {
+            sum -= a[i][c] * xc;
+        }
+        x[i] = sum / a[i][i];
+    }
+    Ok(x)
+}
+
+pub(in crate::math::eval) fn linsolve(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    check_built_in_args(name, args, 2)?;
+    let a = to_square_matrix(&args[0], "linsolve")?;
+    let b = to_vector(&args[1], "linsolve", a.len())?;
+    let x = solve_linear(a, b)?;
+    Ok(Quantity::list(
+        x.into_iter().map(|v| Quantity::scalar(v, None)).collect(),
+    ))
 }

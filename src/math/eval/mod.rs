@@ -1398,6 +1398,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "matmul" => builtins::vector::matmul(name, &arg_vals, ctx),
                 "det" => builtins::vector::det(name, &arg_vals),
                 "inv" => builtins::vector::inv(name, &arg_vals),
+                "linsolve" => builtins::vector::linsolve(name, &arg_vals),
                 "if" => builtins::logic::if_(name, &arg_vals),
                 "and" => builtins::logic::and(&arg_vals),
                 "or" => builtins::logic::or(&arg_vals),
@@ -1865,6 +1866,46 @@ mod tests {
         assert!(
             eval_expr(
                 &parse_line("inv([[1, 2, 3], [4, 5, 6]]) =>").unwrap_expr(),
+                &mut ctx
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_linear_system_solver() {
+        let eval_q = |s: &str| -> Quantity {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx).unwrap()
+        };
+        let vals = |q: &Quantity| -> Vec<f64> {
+            q.list.as_ref().unwrap().iter().map(|c| c.value).collect()
+        };
+        // 2x1 + x2 = 3 ; x1 + 3x2 = 5  ->  x = [0.8, 1.4]
+        let x = vals(&eval_q("linsolve([[2, 1], [1, 3]], [3, 5]) =>"));
+        for (got, exp) in x.iter().zip([0.8, 1.4].iter()) {
+            assert!((got - exp).abs() < 1e-9, "2x2 got {got}, expected {exp}");
+        }
+        // Classic 3x3 with solution [2, 3, -1].
+        let x3 = vals(&eval_q(
+            "linsolve([[2, 1, -1], [-3, -1, 2], [-2, 1, 2]], [8, -11, -3]) =>",
+        ));
+        for (got, exp) in x3.iter().zip([2.0, 3.0, -1.0].iter()) {
+            assert!((got - exp).abs() < 1e-9, "3x3 got {got}, expected {exp}");
+        }
+        // Singular matrix -> error (no unique solution).
+        let mut ctx = Context::default();
+        assert!(
+            eval_expr(
+                &parse_line("linsolve([[1, 2], [2, 4]], [1, 2]) =>").unwrap_expr(),
+                &mut ctx
+            )
+            .is_err()
+        );
+        // Right-hand side length mismatch -> error.
+        assert!(
+            eval_expr(
+                &parse_line("linsolve([[1, 2], [3, 4]], [1, 2, 3]) =>").unwrap_expr(),
                 &mut ctx
             )
             .is_err()
