@@ -15,7 +15,7 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
   ![Grocery List Budgeting](grocery-list.png)
 
 * **Inline Math Evaluation**: Run calculations right inside your sentences using backticks: `` `10m * 5m =>` ``.
-* **Powerful Calculation Engine**: Far beyond basic arithmetic — trigonometry, statistics (`mean`, `median`, `stddev`, `variance`), vectors and **matrices** (`[[1, 2], [3, 4]]` with `*`, `transpose`, `det`, `inv`), complex numbers, symbolic differentiation (`diff`) and equation solving (`solve`), higher-order list operations (`map`, `filter`, `reduce`, `zip`), `for`/`while` loops and conditionals, financial functions (`pmt`, `fv`, `pv`), hex/binary literals, and inline `sparkline`s.
+* **Powerful Calculation Engine**: Far beyond basic arithmetic — trigonometry, statistics (`mean`, `median`, `stddev`, `variance`), vectors and **matrices** (`[[1, 2], [3, 4]]` with `*`, `transpose`, `det`, `inv`, and linear systems via `linsolve(A, b)`), complex numbers, symbolic differentiation (`diff`) and equation solving (`solve` — symbolic rearrangement, algebraic inversion, or Newton-Raphson with an optional initial guess for nonlinear equations), higher-order list operations (`map`, `filter`, `reduce`, `zip`), `for`/`while` loops and conditionals, financial functions (`pmt`, `fv`, `pv`), hex/binary literals, and inline `sparkline`s.
 * **Dimensional & Currency Analysis**: Supports physical units (length, speed, data size, temperature, time) and live-updated currency conversion (fetched via a background thread to prevent startup latency).
 * **Export**: Compile the current note to HTML, or the entire wiki to a single Markdown document (`Ctrl-e`).
 
