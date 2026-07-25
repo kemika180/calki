@@ -5,7 +5,7 @@ use crate::edtui::{
     EditorState, Index2, Lines,
     actions::motion::CharacterClass,
     clipboard::ClipboardTrait,
-    helper::{is_out_of_bounds, max_col_insert, skip_whitespace, skip_whitespace_rev},
+    helper::{is_out_of_bounds, max_col_insert, max_row, skip_whitespace, skip_whitespace_rev},
     state::selection::Selection,
 };
 
@@ -337,8 +337,12 @@ impl Execute for DeleteSelection {
 
 pub(crate) fn delete_selection(state: &mut EditorState, selection: &Selection) -> Lines {
     state.cursor = selection.start();
+    let deleted = selection.extract_from(&mut state.lines);
+    // Deleting through the last line removes the start row itself, so clamp the
+    // cursor back onto the buffer — otherwise it strands below the final line.
+    state.cursor.row = state.cursor.row.min(max_row(state));
     state.clamp_column();
-    selection.extract_from(&mut state.lines)
+    deleted
 }
 
 /// Joins line below to the current line.
@@ -402,6 +406,25 @@ mod tests {
         ReplaceChar('x').execute(&mut state);
         assert_eq!(state.cursor, Index2::new(99, 0));
         assert_eq!(state.lines, Lines::from("Hellx World!\n\n123."));
+    }
+
+    #[test]
+    fn test_delete_selection_through_last_line_clamps_cursor() {
+        // Line-wise select from row 1 down to the last row and delete: the
+        // start row (1) no longer exists, so the cursor must clamp back onto
+        // the buffer instead of stranding below the final line.
+        let mut state = EditorState::new(Lines::from("a\nb\nc\nd"));
+        let selection = Selection::new(Index2::new(1, 0), Index2::new(3, 0)).line_mode();
+        state.selection = Some(selection);
+        DeleteSelection.execute(&mut state);
+        assert_eq!(state.lines, Lines::from("a"));
+        assert!(
+            state.cursor.row < state.lines.len(),
+            "cursor row {} must be within {} lines",
+            state.cursor.row,
+            state.lines.len()
+        );
+        assert_eq!(state.cursor.row, 0);
     }
 
     #[test]
