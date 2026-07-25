@@ -1,5 +1,7 @@
-//! Bottom status line: transient success messages and the search prompt.
-//! Extracted from `ui()`.
+//! Bottom status line: the search / command prompt, or a transient success
+//! message. An active prompt (`search_active`/`command_active`) takes precedence
+//! over a lingering `status_message` so opening `:` or `/` isn't masked by a
+//! notification that hasn't timed out yet. Extracted from `ui()`.
 
 use crate::App;
 use ratatui::prelude::*;
@@ -16,19 +18,10 @@ pub(crate) fn render_status_line(
         let status_bg = app.palette.surface;
         let status_block = Block::default().bg(status_bg);
 
-        let status_line = if let Some((msg, inst)) = &app.status_message {
-            if inst.elapsed() < Duration::from_secs(5) {
-                Line::from(vec![
-                    Span::styled(
-                        " ✔  ",
-                        Style::default().fg(app.palette.keybind_label).bold(),
-                    ),
-                    Span::styled(msg, Style::default().fg(app.palette.keybind_label)),
-                ])
-            } else {
-                Line::from("")
-            }
-        } else if app.search_active {
+        // An active prompt wins over a transient notification, so pressing `:`
+        // or `/` while a `status_message` is still showing opens the prompt
+        // instead of being masked by the (not-yet-expired) message.
+        let status_line = if app.search_active {
             Line::from(vec![
                 Span::styled(
                     " 🔍 Search: ",
@@ -49,6 +42,18 @@ pub(crate) fn render_status_line(
                 ),
                 Span::styled("█", Style::default().fg(app.palette.config_key).bold()), // cursor
             ])
+        } else if let Some((msg, inst)) = &app.status_message {
+            if inst.elapsed() < Duration::from_secs(5) {
+                Line::from(vec![
+                    Span::styled(
+                        " ✔  ",
+                        Style::default().fg(app.palette.keybind_label).bold(),
+                    ),
+                    Span::styled(msg, Style::default().fg(app.palette.keybind_label)),
+                ])
+            } else {
+                Line::from("")
+            }
         } else {
             Line::from("")
         };
