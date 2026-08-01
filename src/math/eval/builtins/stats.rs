@@ -234,3 +234,54 @@ pub(in crate::math::eval) fn max(args: &[Quantity], ctx: &Context) -> Result<Qua
         unit: target_unit,
     })
 }
+
+/// Parse the `x [, mu, sigma]` convention shared by the normal-distribution
+/// builtins. Accepts 1, 2, or 3 args; defaults `mu = 0`, `sigma = 1`. All args
+/// must be real, dimensionless, and `sigma` must be positive.
+fn normal_params(name: &str, args: &[Quantity]) -> Result<(f64, f64, f64), String> {
+    if args.is_empty() || args.len() > 3 {
+        return Err(format!(
+            "Function '{}' expects 1 to 3 arguments (x [, mu, sigma])",
+            name
+        ));
+    }
+    for a in args {
+        if a.unit.is_some() || a.list.is_some() {
+            return Err(format!(
+                "Function '{}' expects dimensionless arguments",
+                name
+            ));
+        }
+    }
+    let x = args[0].value;
+    let mu = args.get(1).map(|q| q.value).unwrap_or(0.0);
+    let sigma = args.get(2).map(|q| q.value).unwrap_or(1.0);
+    if sigma <= 0.0 {
+        return Err(format!("Function '{}' requires sigma > 0", name));
+    }
+    Ok((x, mu, sigma))
+}
+
+pub(in crate::math::eval) fn normpdf(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let (x, mu, sigma) = normal_params(name, args)?;
+    let z = (x - mu) / sigma;
+    let val = (-0.5 * z * z).exp() / (sigma * (2.0 * std::f64::consts::PI).sqrt());
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: val,
+        unit: None,
+    })
+}
+
+pub(in crate::math::eval) fn normcdf(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let (x, mu, sigma) = normal_params(name, args)?;
+    let z = (x - mu) / (sigma * std::f64::consts::SQRT_2);
+    let val = 0.5 * (1.0 + super::math::erf_approx(z));
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: val,
+        unit: None,
+    })
+}

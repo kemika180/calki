@@ -1440,6 +1440,8 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "beta" => builtins::math::beta(name, &arg_vals),
                 "erf" => builtins::math::erf(name, &arg_vals),
                 "erfc" => builtins::math::erfc(name, &arg_vals),
+                "normpdf" => builtins::stats::normpdf(name, &arg_vals),
+                "normcdf" => builtins::stats::normcdf(name, &arg_vals),
                 "abs" => builtins::math::abs(name, &arg_vals),
                 "round" => builtins::math::round(&arg_vals),
                 "xor" => builtins::math::xor(name, &arg_vals),
@@ -1825,6 +1827,30 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_normal_distribution() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        // standard normal
+        assert!((ev("normcdf(0) =>") - 0.5).abs() < 1e-9);
+        assert!((ev("normpdf(0) =>") - 1.0 / (2.0 * std::f64::consts::PI).sqrt()).abs() < 1e-9);
+        // 68-95-99.7: P(|Z|<1.96) ≈ 0.95, so normcdf(1.96) ≈ 0.975
+        assert!((ev("normcdf(1.96) =>") - 0.975).abs() < 1e-3);
+        // symmetry of the pdf and cdf about mu
+        assert!((ev("normpdf(-1.5) =>") - ev("normpdf(1.5) =>")).abs() < 1e-12);
+        assert!((ev("normcdf(-1.0) =>") + ev("normcdf(1.0) =>") - 1.0).abs() < 1e-6);
+        // parameterized: normcdf(mu, mu, sigma) = 0.5 for any sigma
+        assert!((ev("normcdf(10, 10, 3) =>") - 0.5).abs() < 1e-9);
+        // sigma <= 0 and units error
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("normpdf(1, 0, 0) =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("normcdf(1 m) =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]
