@@ -1912,9 +1912,9 @@ mod tests {
         // a dimensioned value cannot be rendered as a percentage
         let mut ctx = Context::default();
         assert!(eval_expr(&parse_line("5 m in % =>").unwrap_expr(), &mut ctx).is_err());
-        // regression: `%` after a real unit stays the suffix operator, not part
-        // of the target unit — `5000 m in km%` = (5000 m in km) then % => 0.05 km
-        assert_eq!(fmt("5000 m in km% =>"), "0.05 km");
+        // `%` is a display target only as the whole target; `km%` is just an
+        // unknown unit, so it errors rather than inventing a value.
+        assert!(eval_expr(&parse_line("5000 m in km% =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]
