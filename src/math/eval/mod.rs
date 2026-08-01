@@ -1438,6 +1438,8 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "gamma" => builtins::math::gamma(name, &arg_vals),
                 "lgamma" => builtins::math::lgamma(name, &arg_vals),
                 "beta" => builtins::math::beta(name, &arg_vals),
+                "erf" => builtins::math::erf(name, &arg_vals),
+                "erfc" => builtins::math::erfc(name, &arg_vals),
                 "abs" => builtins::math::abs(name, &arg_vals),
                 "round" => builtins::math::round(&arg_vals),
                 "xor" => builtins::math::xor(name, &arg_vals),
@@ -1823,6 +1825,25 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_erf() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        assert!(ev("erf(0) =>").abs() < 1e-9);
+        // erf(1) ≈ 0.8427007929
+        assert!((ev("erf(1) =>") - 0.842_700_792_9).abs() < 1e-6);
+        // odd: erf(-x) = -erf(x)
+        assert!((ev("erf(-0.7) =>") + ev("erf(0.7) =>")).abs() < 1e-9);
+        // complement: erf(x) + erfc(x) = 1
+        assert!((ev("erf(1.3) =>") + ev("erfc(1.3) =>") - 1.0).abs() < 1e-12);
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("erf(1 m) =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]

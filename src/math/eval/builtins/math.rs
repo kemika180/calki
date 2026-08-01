@@ -189,9 +189,9 @@ fn lgamma_lanczos(x: f64) -> f64 {
     }
 }
 
-/// Shared validation for the gamma-family builtins: one dimensionless, real
-/// argument that is not a pole (non-positive integer). Returns the value.
-fn gamma_family_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
+/// Shared validation for single-argument special functions: one real,
+/// dimensionless argument. Returns the value.
+fn real_dimensionless_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
     check_built_in_args(name, args, 1)?;
     if args[0].unit.is_some() {
         return Err(format!(
@@ -205,11 +205,51 @@ fn gamma_family_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
             name
         ));
     }
-    let x = args[0].value;
+    Ok(args[0].value)
+}
+
+/// Validation for the gamma-family builtins: additionally rejects the poles at
+/// non-positive integers.
+fn gamma_family_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
+    let x = real_dimensionless_arg(name, args)?;
     if x <= 0.0 && x.fract() == 0.0 {
         return Err(format!("'{}' is undefined at non-positive integers", name));
     }
     Ok(x)
+}
+
+/// Error function via Abramowitz & Stegun 7.1.26 (max abs error ~1.5e-7).
+pub(in crate::math::eval) fn erf_approx(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    const A1: f64 = 0.254_829_592;
+    const A2: f64 = -0.284_496_736;
+    const A3: f64 = 1.421_413_741;
+    const A4: f64 = -1.453_152_027;
+    const A5: f64 = 1.061_405_429;
+    let poly = ((((A5 * t + A4) * t + A3) * t + A2) * t + A1) * t;
+    sign * (1.0 - poly * (-x * x).exp())
+}
+
+pub(in crate::math::eval) fn erf(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let x = real_dimensionless_arg(name, args)?;
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: erf_approx(x),
+        unit: None,
+    })
+}
+
+pub(in crate::math::eval) fn erfc(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let x = real_dimensionless_arg(name, args)?;
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: 1.0 - erf_approx(x),
+        unit: None,
+    })
 }
 
 pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
