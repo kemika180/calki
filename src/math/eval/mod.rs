@@ -1587,9 +1587,17 @@ fn format_float(val: f64) -> String {
     } else {
         let abs_val = val.abs();
         if abs_val < 1e-9 && abs_val > 0.0 {
-            // Scientific notation. Return as-is: the trailing-zero trim below
-            // would corrupt the exponent (e.g. `9.87e-10` -> `9.87e-1`).
-            return format!("{:e}", val);
+            // Scientific notation, 4 significant figures (e.g. `2.152e-17`).
+            // Trim trailing zeros from the mantissa ONLY — trimming the whole
+            // string would corrupt the exponent (`9.87e-10` -> `9.87e-1`).
+            let s = format!("{:.3e}", val);
+            return match s.split_once('e') {
+                Some((mantissa, exp)) => {
+                    let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
+                    format!("{}e{}", mantissa, exp)
+                }
+                None => s,
+            };
         }
         let formatted = if abs_val < 1e-4 && abs_val > 0.0 {
             format!("{:.10}", val)
@@ -1881,7 +1889,10 @@ mod tests {
 
     #[test]
     fn test_format_float_small_scientific() {
-        // trailing-zero trimming must not eat the exponent's zero: e-10 -> e-1
+        // 4 significant figures, trailing mantissa zeros trimmed, exponent intact
+        // (the trim must not turn e-10 into e-1).
+        assert_eq!(format_float(2.151973671249889e-17), "2.152e-17");
+        assert_eq!(format_float(9.865876450377006e-10), "9.866e-10");
         assert_eq!(format_float(5e-10), "5e-10");
         assert_eq!(format_float(1.5e-12), "1.5e-12");
         assert_eq!(format_float(2e-20), "2e-20");
@@ -1890,7 +1901,7 @@ mod tests {
         let s = format_quantity(
             &eval_expr(&parse_line("normcdf(-6) =>").unwrap_expr(), &mut ctx).unwrap(),
         );
-        assert!(s.ends_with("e-10"), "got {s}");
+        assert_eq!(s, "9.866e-10");
         // larger-magnitude values keep their trailing-zero trim
         assert_eq!(format_float(1.5e-6), "0.0000015");
         assert_eq!(format_float(2.5), "2.5");
