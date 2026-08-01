@@ -43,6 +43,7 @@ pub enum Expr {
     Quantity(f64, String),
     Variable(String),
     Percentage(Box<Expr>),
+    Factorial(Box<Expr>),
     BinaryOp(Op, Box<Expr>, Box<Expr>),
     FnCall(String, Vec<Expr>),
     Convert(Box<Expr>, String),
@@ -195,6 +196,17 @@ impl Parser {
                     left = Expr::Percentage(Box::new(left));
                     continue;
                 }
+            }
+
+            // Handle factorial as a suffix operator (highest precedence)
+            if next_tok == Token::Bang {
+                let (left_bp, _) = suffix_binding_power(&next_tok);
+                if left_bp < min_bp {
+                    break;
+                }
+                self.next_token(); // consume !
+                left = Expr::Factorial(Box::new(left));
+                continue;
             }
 
             // Handle standard infix/binary operators
@@ -574,6 +586,7 @@ fn prefix_binding_power(op: &Token) -> ((), u8) {
 fn suffix_binding_power(op: &Token) -> (u8, ()) {
     match op {
         Token::Percentage => (50, ()),
+        Token::Bang => (50, ()),
         _ => panic!("Not a suffix operator"),
     }
 }

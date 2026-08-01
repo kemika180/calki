@@ -3,6 +3,7 @@ pub enum Token {
     Number(f64),
     Identifier(String),
     Percentage, // %
+    Bang,       // ! (postfix factorial)
     Plus,       // +
     Minus,      // -
     Star,       // *
@@ -201,7 +202,7 @@ impl<'a> Lexer<'a> {
                         self.chars.next();
                         tokens.push(Token::NotEq);
                     } else {
-                        return Err(format!("Unexpected character '!' at position {}", idx));
+                        tokens.push(Token::Bang);
                     }
                 }
                 '$' => {

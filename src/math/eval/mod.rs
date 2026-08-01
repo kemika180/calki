@@ -23,6 +23,7 @@ fn differentiate(expr: &Expr, var: &str) -> Result<Expr, String> {
             let d_inner = differentiate(inner, var)?;
             Ok(Expr::Percentage(Box::new(d_inner)))
         }
+        Expr::Factorial(_) => Err("Cannot differentiate factorial".to_string()),
         Expr::BinaryOp(op, left, right) => match op {
             Op::Add => {
                 let dl = differentiate(left, var)?;
@@ -235,6 +236,7 @@ fn simplify(expr: &Expr) -> Expr {
                 _ => Expr::Percentage(Box::new(si)),
             }
         }
+        Expr::Factorial(inner) => Expr::Factorial(Box::new(simplify(inner))),
         Expr::FnCall(name, args) => {
             let s_args = args.iter().map(simplify).collect();
             Expr::FnCall(name.clone(), s_args)
@@ -311,6 +313,7 @@ pub(crate) fn expr_to_string(expr: &Expr) -> String {
         }
         Expr::Variable(name) => name.clone(),
         Expr::Percentage(inner) => format!("{}%", expr_to_string(inner)),
+        Expr::Factorial(inner) => format!("{}!", expr_to_string(inner)),
         Expr::BinaryOp(op, left, right) => {
             if *op == Op::Sub
                 && let Expr::Number(n) = &**left
@@ -610,6 +613,7 @@ fn expr_contains_var(expr: &Expr, var_name: &str) -> bool {
     match expr {
         Expr::Variable(name) => name == var_name,
         Expr::Percentage(inner)
+        | Expr::Factorial(inner)
         | Expr::Not(inner)
         | Expr::BitNot(inner)
         | Expr::Convert(inner, _) => expr_contains_var(inner, var_name),
@@ -1269,6 +1273,24 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 unit: qty.unit,
             })
         }
+        Expr::Factorial(inner) => {
+            let qty = eval_expr(inner, ctx)?;
+            if qty.unit.is_some() || qty.list.is_some() {
+                return Err("Factorial expects a dimensionless number".to_string());
+            }
+            let n = qty.value;
+            if n < 0.0 && n.fract() == 0.0 {
+                return Err("Factorial is undefined for negative integers".to_string());
+            }
+            // n! = Γ(n+1); reuse the gamma builtin so non-integer args work too.
+            let result = builtins::math::gamma("!", &[Quantity::scalar(n + 1.0, None)])?;
+            Ok(Quantity {
+                is_bool: false,
+                list: None,
+                value: result.value,
+                unit: None,
+            })
+        }
         Expr::Block(exprs) => control::eval_block(exprs, ctx),
         Expr::For {
             var,
@@ -1608,6 +1630,7 @@ fn find_variable_in_expr(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Variable(name) => Some(name.clone()),
         Expr::Percentage(inner) => find_variable_in_expr(inner),
+        Expr::Factorial(inner) => find_variable_in_expr(inner),
         Expr::BinaryOp(_, left, right) => {
             find_variable_in_expr(left).or_else(|| find_variable_in_expr(right))
         }
@@ -1688,6 +1711,7 @@ fn find_all_variables_in_expr_helper(expr: &Expr, vars: &mut Vec<String>) {
             vars.push(name.clone());
         }
         Expr::Percentage(inner) => find_all_variables_in_expr_helper(inner, vars),
+        Expr::Factorial(inner) => find_all_variables_in_expr_helper(inner, vars),
         Expr::BinaryOp(_, left, right) => {
             find_all_variables_in_expr_helper(left, vars);
             find_all_variables_in_expr_helper(right, vars);
@@ -1797,6 +1821,27 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_factorial() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        assert!((ev("5! =>") - 120.0).abs() < 1e-9);
+        assert!((ev("0! =>") - 1.0).abs() < 1e-9);
+        assert!((ev("1! =>") - 1.0).abs() < 1e-9);
+        // non-integer via gamma: 0.5! = Γ(1.5) = sqrt(pi)/2
+        assert!((ev("0.5! =>") - std::f64::consts::PI.sqrt() / 2.0).abs() < 1e-9);
+        // binds tighter than *: 3 * 2! = 6, not (3*2)! = 720
+        assert!((ev("3 * 2! =>") - 6.0).abs() < 1e-9);
+        // negative integers and units error
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("(-3)! =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("(5 m)! =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]
