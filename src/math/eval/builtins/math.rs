@@ -158,26 +158,9 @@ const LANCZOS_C: [f64; 9] = [
     1.505_632_735_149_311_6e-7,
 ];
 
-/// Lanczos approximation of the gamma function, with the reflection formula for
-/// `x < 0.5`. Accurate to ~1e-15 for real arguments. Non-positive integers are
-/// poles; callers guard those separately.
-fn gamma_lanczos(x: f64) -> f64 {
-    if x < 0.5 {
-        // Reflection: Γ(x)·Γ(1−x) = π / sin(πx)
-        std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * gamma_lanczos(1.0 - x))
-    } else {
-        let x = x - 1.0;
-        let mut a = LANCZOS_C[0];
-        let t = x + LANCZOS_G + 0.5;
-        for (i, &c) in LANCZOS_C.iter().enumerate().skip(1) {
-            a += c / (x + i as f64);
-        }
-        (2.0 * std::f64::consts::PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * a
-    }
-}
-
-/// `ln|Γ(x)|` via the same Lanczos series, computed in log space so it stays
-/// finite for large `x` (where `gamma` overflows). Reflection for `x < 0.5`.
+/// `ln|Γ(x)|` via the Lanczos series (g=7, n=9), computed in log space so it
+/// stays finite for large `x`. Reflection for `x < 0.5`. This is the shared
+/// kernel — [`gamma_lanczos`] exponentiates it.
 fn lgamma_lanczos(x: f64) -> f64 {
     if x < 0.5 {
         std::f64::consts::PI.ln()
@@ -194,23 +177,47 @@ fn lgamma_lanczos(x: f64) -> f64 {
     }
 }
 
-/// Shared validation for single-argument special functions: one real,
-/// dimensionless argument. Returns the value.
-fn real_dimensionless_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
-    check_built_in_args(name, args, 1)?;
-    if args[0].unit.is_some() {
-        return Err(format!(
-            "Function '{}' expects a dimensionless argument",
-            name
-        ));
+/// Gamma function. For `x >= 0.5` it exponentiates [`lgamma_lanczos`] rather
+/// than forming `t^exponent · e^-t` directly — the latter overflows its
+/// intermediate near x≈143 even though Γ itself stays finite until x≈171.6.
+/// `x < 0.5` uses the reflection formula. Non-positive integers are poles;
+/// callers guard those separately.
+fn gamma_lanczos(x: f64) -> f64 {
+    if x < 0.5 {
+        // Reflection: Γ(x)·Γ(1−x) = π / sin(πx)
+        std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * gamma_lanczos(1.0 - x))
+    } else {
+        lgamma_lanczos(x).exp()
     }
-    if is_complex(&args[0]) {
+}
+
+/// Reject non-scalar / dimensioned / complex operands, returning the real value.
+/// Shared by every single- and multi-argument special function so their
+/// validation (and error messages) stay consistent.
+fn require_real_dimensionless(name: &str, q: &Quantity) -> Result<f64, String> {
+    if is_complex(q) {
         return Err(format!(
             "Function '{}' does not support complex arguments",
             name
         ));
     }
-    Ok(args[0].value)
+    if q.list.is_some() {
+        return Err(format!("Function '{}' expects a scalar, not a list", name));
+    }
+    if q.unit.is_some() {
+        return Err(format!(
+            "Function '{}' expects a dimensionless argument",
+            name
+        ));
+    }
+    Ok(q.value)
+}
+
+/// Shared validation for single-argument special functions: exactly one real,
+/// dimensionless, scalar argument.
+fn real_dimensionless_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
+    check_built_in_args(name, args, 1)?;
+    require_real_dimensionless(name, &args[0])
 }
 
 /// Validation for the gamma-family builtins: additionally rejects the poles at
@@ -299,11 +306,15 @@ pub(in crate::math::eval) fn erfinv(name: &str, args: &[Quantity]) -> Result<Qua
 
 pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let x = gamma_family_arg(name, args)?;
+    let value = gamma_lanczos(x);
+    if !value.is_finite() {
+        return Err(format!("'{}' overflowed (argument too large)", name));
+    }
     Ok(Quantity {
         display: None,
         is_bool: false,
         list: None,
-        value: gamma_lanczos(x),
+        value,
         unit: None,
     })
 }
@@ -321,21 +332,8 @@ pub(in crate::math::eval) fn lgamma(name: &str, args: &[Quantity]) -> Result<Qua
 
 pub(in crate::math::eval) fn beta(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 2)?;
-    for a in args {
-        if a.unit.is_some() {
-            return Err(format!(
-                "Function '{}' expects dimensionless arguments",
-                name
-            ));
-        }
-        if is_complex(a) {
-            return Err(format!(
-                "Function '{}' does not support complex arguments",
-                name
-            ));
-        }
-    }
-    let (a, b) = (args[0].value, args[1].value);
+    let a = require_real_dimensionless(name, &args[0])?;
+    let b = require_real_dimensionless(name, &args[1])?;
     if a <= 0.0 || b <= 0.0 {
         return Err(format!("Function '{}' requires positive arguments", name));
     }

@@ -1894,6 +1894,33 @@ mod tests {
         // a dimensioned value cannot be rendered as a percentage
         let mut ctx = Context::default();
         assert!(eval_expr(&parse_line("5 m in % =>").unwrap_expr(), &mut ctx).is_err());
+        // regression: `%` after a real unit stays the suffix operator, not part
+        // of the target unit — `5000 m in km%` = (5000 m in km) then % => 0.05 km
+        assert_eq!(fmt("5000 m in km% =>"), "0.05 km");
+    }
+
+    #[test]
+    fn test_gamma_factorial_edge_cases() {
+        let mut ctx = Context::default();
+        let err = |s: &str| {
+            let mut c = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut c).is_err()
+        };
+        // overflow surfaces as an error, not a silent inf
+        assert!(err("gamma(172) =>"));
+        assert!(err("171! =>"));
+        // still fine just below the overflow threshold
+        assert!(
+            eval_expr(&parse_line("gamma(170) =>").unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+                .is_finite()
+        );
+        // list arguments are rejected (consistent with normpdf/normcdf), not
+        // silently reduced to the first element
+        assert!(err("gamma([2, 3, 4]) =>"));
+        assert!(err("erf([0.1, 0.2]) =>"));
+        assert!(err("beta([1, 2], 3) =>"));
     }
 
     #[test]

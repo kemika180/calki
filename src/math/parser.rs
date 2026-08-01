@@ -573,8 +573,11 @@ impl Parser {
                             self.next_token();
                             consumed_any = true;
                         }
-                        // `expr in %` selects percentage display formatting.
-                        Token::Percentage => {
+                        // `expr in %` selects percentage display formatting — but
+                        // only when `%` is the whole target. After a real unit
+                        // (e.g. `in km%`) let `%` fall through to the suffix
+                        // percentage operator, preserving prior behavior.
+                        Token::Percentage if !consumed_any => {
                             unit_str.push('%');
                             self.next_token();
                             consumed_any = true;
