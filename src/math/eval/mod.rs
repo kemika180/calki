@@ -1413,6 +1413,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "ln" => builtins::math::ln(name, &arg_vals),
                 "log2" => builtins::math::log2(name, &arg_vals),
                 "sqrt" => builtins::math::sqrt(name, &arg_vals),
+                "gamma" => builtins::math::gamma(name, &arg_vals),
                 "abs" => builtins::math::abs(name, &arg_vals),
                 "round" => builtins::math::round(&arg_vals),
                 "xor" => builtins::math::xor(name, &arg_vals),
@@ -1775,6 +1776,28 @@ impl LineExt for crate::math::parser::Line {
 mod tests {
     use super::*;
     use crate::math::parser::{Line, parse_line};
+
+    #[test]
+    fn test_gamma() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        // Γ(n) = (n-1)! for positive integers
+        assert!((ev("gamma(5) =>") - 24.0).abs() < 1e-9);
+        assert!((ev("gamma(1) =>") - 1.0).abs() < 1e-9);
+        // Γ(1/2) = sqrt(pi)
+        assert!((ev("gamma(0.5) =>") - std::f64::consts::PI.sqrt()).abs() < 1e-9);
+        // reflection: Γ(-0.5) = -2·sqrt(pi)
+        assert!((ev("gamma(-0.5) =>") - (-2.0 * std::f64::consts::PI.sqrt())).abs() < 1e-9);
+        // poles at non-positive integers error; units rejected
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
 
     #[test]
     fn test_matrix_star_operator() {

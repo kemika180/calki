@@ -139,6 +139,62 @@ pub(in crate::math::eval) fn sqrt(name: &str, args: &[Quantity]) -> Result<Quant
     })
 }
 
+/// Lanczos approximation of the gamma function (g = 7, n = 9), with the
+/// reflection formula for `x < 0.5`. Accurate to ~1e-15 for real arguments.
+/// Non-positive integers are poles; callers guard those separately.
+fn gamma_lanczos(x: f64) -> f64 {
+    const G: f64 = 7.0;
+    const C: [f64; 9] = [
+        0.999_999_999_999_809_9,
+        676.520_368_121_885_1,
+        -1_259.139_216_722_402_8,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
+        12.507_343_278_686_905,
+        -0.138_571_095_265_720_12,
+        9.984_369_578_019_572e-6,
+        1.505_632_735_149_311_6e-7,
+    ];
+    if x < 0.5 {
+        // Reflection: Γ(x)·Γ(1−x) = π / sin(πx)
+        std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * gamma_lanczos(1.0 - x))
+    } else {
+        let x = x - 1.0;
+        let mut a = C[0];
+        let t = x + G + 0.5;
+        for (i, &c) in C.iter().enumerate().skip(1) {
+            a += c / (x + i as f64);
+        }
+        (2.0 * std::f64::consts::PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * a
+    }
+}
+
+pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    check_built_in_args(name, args, 1)?;
+    if args[0].unit.is_some() {
+        return Err(format!(
+            "Function '{}' expects a dimensionless argument",
+            name
+        ));
+    }
+    if is_complex(&args[0]) {
+        return Err(format!(
+            "Function '{}' does not support complex arguments",
+            name
+        ));
+    }
+    let x = args[0].value;
+    if x <= 0.0 && x.fract() == 0.0 {
+        return Err(format!("'{}' is undefined at non-positive integers", name));
+    }
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: gamma_lanczos(x),
+        unit: None,
+    })
+}
+
 pub(in crate::math::eval) fn abs(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     if is_complex(&args[0]) {
