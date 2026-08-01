@@ -252,6 +252,43 @@ pub(in crate::math::eval) fn erfc(name: &str, args: &[Quantity]) -> Result<Quant
     })
 }
 
+/// Inverse error function on (-1, 1): Winitzki's rational initial guess refined
+/// by two Newton steps against [`erf_approx`] (`f(y) = erf(y) − x`).
+pub(in crate::math::eval) fn erfinv_approx(x: f64) -> f64 {
+    if x <= -1.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x >= 1.0 {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+    const A: f64 = 0.147;
+    let ln1mx2 = (1.0 - x * x).ln();
+    let t1 = 2.0 / (std::f64::consts::PI * A) + ln1mx2 / 2.0;
+    let mut y = x.signum() * ((t1 * t1 - ln1mx2 / A).sqrt() - t1).sqrt();
+    for _ in 0..2 {
+        let residual = erf_approx(y) - x;
+        let deriv = 2.0 / std::f64::consts::PI.sqrt() * (-y * y).exp();
+        y -= residual / deriv;
+    }
+    y
+}
+
+pub(in crate::math::eval) fn erfinv(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let x = real_dimensionless_arg(name, args)?;
+    if x <= -1.0 || x >= 1.0 {
+        return Err(format!("Function '{}' is defined only on (-1, 1)", name));
+    }
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: erfinv_approx(x),
+        unit: None,
+    })
+}
+
 pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let x = gamma_family_arg(name, args)?;
     Ok(Quantity {

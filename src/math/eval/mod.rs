@@ -1442,6 +1442,8 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "erfc" => builtins::math::erfc(name, &arg_vals),
                 "normpdf" => builtins::stats::normpdf(name, &arg_vals),
                 "normcdf" => builtins::stats::normcdf(name, &arg_vals),
+                "erfinv" => builtins::math::erfinv(name, &arg_vals),
+                "norminv" => builtins::stats::norminv(name, &arg_vals),
                 "abs" => builtins::math::abs(name, &arg_vals),
                 "round" => builtins::math::round(&arg_vals),
                 "xor" => builtins::math::xor(name, &arg_vals),
@@ -1827,6 +1829,31 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_erfinv_norminv() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        assert!(ev("erfinv(0) =>").abs() < 1e-9);
+        // round-trip against erf (both use the same A&S kernel)
+        assert!((ev("erfinv(erf(0.6)) =>") - 0.6).abs() < 1e-4);
+        assert!((ev("erf(erfinv(0.4)) =>") - 0.4).abs() < 1e-6);
+        // probit: norminv(0.975) ≈ 1.959964 (the 95% two-sided z)
+        assert!((ev("norminv(0.975) =>") - 1.959_963_98).abs() < 1e-3);
+        assert!(ev("norminv(0.5) =>").abs() < 1e-9);
+        assert!((ev("norminv(0.5, 10, 2) =>") - 10.0).abs() < 1e-9);
+        // norminv inverts normcdf
+        assert!((ev("norminv(normcdf(1.2)) =>") - 1.2).abs() < 1e-4);
+        // domain errors
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("erfinv(1) =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("norminv(0) =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("norminv(1) =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]

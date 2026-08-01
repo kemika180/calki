@@ -285,3 +285,18 @@ pub(in crate::math::eval) fn normcdf(name: &str, args: &[Quantity]) -> Result<Qu
         unit: None,
     })
 }
+
+pub(in crate::math::eval) fn norminv(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let (p, mu, sigma) = normal_params(name, args)?;
+    if p <= 0.0 || p >= 1.0 {
+        return Err(format!("Function '{}' requires 0 < p < 1", name));
+    }
+    // Quantile of N(mu, sigma): mu + sigma·√2·erfinv(2p − 1).
+    let z = std::f64::consts::SQRT_2 * super::math::erfinv_approx(2.0 * p - 1.0);
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: mu + sigma * z,
+        unit: None,
+    })
+}
