@@ -232,6 +232,36 @@ pub(in crate::math::eval) fn lgamma(name: &str, args: &[Quantity]) -> Result<Qua
     })
 }
 
+pub(in crate::math::eval) fn beta(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    check_built_in_args(name, args, 2)?;
+    for a in args {
+        if a.unit.is_some() {
+            return Err(format!(
+                "Function '{}' expects dimensionless arguments",
+                name
+            ));
+        }
+        if is_complex(a) {
+            return Err(format!(
+                "Function '{}' does not support complex arguments",
+                name
+            ));
+        }
+    }
+    let (a, b) = (args[0].value, args[1].value);
+    if a <= 0.0 || b <= 0.0 {
+        return Err(format!("Function '{}' requires positive arguments", name));
+    }
+    // B(a,b) = Γ(a)Γ(b)/Γ(a+b), evaluated in log space to avoid overflow.
+    let val = (lgamma_lanczos(a) + lgamma_lanczos(b) - lgamma_lanczos(a + b)).exp();
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: val,
+        unit: None,
+    })
+}
+
 pub(in crate::math::eval) fn abs(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     if is_complex(&args[0]) {

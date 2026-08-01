@@ -1437,6 +1437,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "sqrt" => builtins::math::sqrt(name, &arg_vals),
                 "gamma" => builtins::math::gamma(name, &arg_vals),
                 "lgamma" => builtins::math::lgamma(name, &arg_vals),
+                "beta" => builtins::math::beta(name, &arg_vals),
                 "abs" => builtins::math::abs(name, &arg_vals),
                 "round" => builtins::math::round(&arg_vals),
                 "xor" => builtins::math::xor(name, &arg_vals),
@@ -1822,6 +1823,24 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_beta() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        // B(1,1) = 1; B(2,3) = 1/12; B(a,b) symmetric
+        assert!((ev("beta(1, 1) =>") - 1.0).abs() < 1e-9);
+        assert!((ev("beta(2, 3) =>") - 1.0 / 12.0).abs() < 1e-9);
+        assert!((ev("beta(2.5, 4.5) =>") - ev("beta(4.5, 2.5) =>")).abs() < 1e-12);
+        // non-positive args and units error
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("beta(0, 1) =>").unwrap_expr(), &mut ctx).is_err());
+        assert!(eval_expr(&parse_line("beta(2, 3 m) =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]
