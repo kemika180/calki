@@ -288,7 +288,9 @@ pub(in crate::math::eval) fn normpdf(name: &str, args: &[Quantity]) -> Result<Qu
 pub(in crate::math::eval) fn normcdf(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let (x, mu, sigma) = normal_params(name, args)?;
     let z = (x - mu) / (sigma * std::f64::consts::SQRT_2);
-    let val = 0.5 * (1.0 + super::math::erf_approx(z));
+    // Φ(x) = ½·erfc(−z), using erfc directly so the left tail (large −z) does
+    // not cancel the way 0.5·(1 + erf(z)) would.
+    let val = 0.5 * super::math::erfc_approx(-z);
     Ok(Quantity {
         display: None,
         is_bool: false,

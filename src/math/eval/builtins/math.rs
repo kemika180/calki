@@ -230,18 +230,86 @@ fn gamma_family_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
     Ok(x)
 }
 
-/// Error function via Abramowitz & Stegun 7.1.26 (max abs error ~1.5e-7).
+/// Regularized lower incomplete gamma `P(a, x)` via its series expansion
+/// (converges fast for `x < a + 1`). `Γ(a)` comes from [`lgamma_lanczos`].
+fn gamma_p_series(a: f64, x: f64) -> f64 {
+    const ITMAX: usize = 200;
+    const EPS: f64 = 1e-15;
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let gln = lgamma_lanczos(a);
+    let mut ap = a;
+    let mut del = 1.0 / a;
+    let mut sum = del;
+    for _ in 0..ITMAX {
+        ap += 1.0;
+        del *= x / ap;
+        sum += del;
+        if del.abs() < sum.abs() * EPS {
+            break;
+        }
+    }
+    sum * (-x + a * x.ln() - gln).exp()
+}
+
+/// Regularized upper incomplete gamma `Q(a, x)` via the Lentz continued fraction
+/// (converges fast for `x >= a + 1`). Computing the tail directly here is what
+/// lets `erfc`/`normcdf` stay accurate where `1 - erf` would cancel to zero.
+fn gamma_q_cf(a: f64, x: f64) -> f64 {
+    const ITMAX: usize = 200;
+    const EPS: f64 = 1e-15;
+    const FPMIN: f64 = 1e-300;
+    let gln = lgamma_lanczos(a);
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / FPMIN;
+    let mut d = 1.0 / b;
+    let mut h = d;
+    for i in 1..ITMAX {
+        let an = -(i as f64) * (i as f64 - a);
+        b += 2.0;
+        d = an * d + b;
+        if d.abs() < FPMIN {
+            d = FPMIN;
+        }
+        c = b + an / c;
+        if c.abs() < FPMIN {
+            c = FPMIN;
+        }
+        d = 1.0 / d;
+        let del = d * c;
+        h *= del;
+        if (del - 1.0).abs() < EPS {
+            break;
+        }
+    }
+    (-x + a * x.ln() - gln).exp() * h
+}
+
+/// Error function, accurate to ~1e-14, via the regularized incomplete gamma
+/// identity `erf(x) = P(1/2, x²)` (sign-odd). Replaces the earlier ~1e-7
+/// Abramowitz & Stegun kernel so the tail-sensitive callers stay usable.
 pub(in crate::math::eval) fn erf_approx(x: f64) -> f64 {
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let x = x.abs();
-    let t = 1.0 / (1.0 + 0.327_591_1 * x);
-    const A1: f64 = 0.254_829_592;
-    const A2: f64 = -0.284_496_736;
-    const A3: f64 = 1.421_413_741;
-    const A4: f64 = -1.453_152_027;
-    const A5: f64 = 1.061_405_429;
-    let poly = ((((A5 * t + A4) * t + A3) * t + A2) * t + A1) * t;
-    sign * (1.0 - poly * (-x * x).exp())
+    let p = if x * x < 1.5 {
+        gamma_p_series(0.5, x * x)
+    } else {
+        1.0 - gamma_q_cf(0.5, x * x)
+    };
+    if x < 0.0 { -p } else { p }
+}
+
+/// Complementary error function `erfc(x) = 1 − erf(x)`, computed *directly* from
+/// the upper incomplete gamma `Q(1/2, x²)` for `x >= 0` so tiny tail values
+/// (e.g. `erfc(6) ≈ 2e-17`) survive instead of cancelling to zero.
+pub(in crate::math::eval) fn erfc_approx(x: f64) -> f64 {
+    if x < 0.0 {
+        // erfc(x) = 1 + erf(|x|); near 2, no cancellation on the small quantity.
+        1.0 + erf_approx(-x)
+    } else if x * x < 1.5 {
+        1.0 - gamma_p_series(0.5, x * x)
+    } else {
+        gamma_q_cf(0.5, x * x)
+    }
 }
 
 pub(in crate::math::eval) fn erf(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
@@ -261,7 +329,7 @@ pub(in crate::math::eval) fn erfc(name: &str, args: &[Quantity]) -> Result<Quant
         display: None,
         is_bool: false,
         list: None,
-        value: 1.0 - erf_approx(x),
+        value: erfc_approx(x),
         unit: None,
     })
 }

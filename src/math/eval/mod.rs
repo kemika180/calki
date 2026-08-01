@@ -1966,6 +1966,8 @@ mod tests {
         assert!((ev("normcdf(-1.0) =>") + ev("normcdf(1.0) =>") - 1.0).abs() < 1e-6);
         // parameterized: normcdf(mu, mu, sigma) = 0.5 for any sigma
         assert!((ev("normcdf(10, 10, 3) =>") - 0.5).abs() < 1e-9);
+        // left tail is accurate now, not ~75x off: normcdf(-6) ≈ 9.866e-10
+        assert!((ev("normcdf(-6) =>") - 9.865_876_e-10).abs() < 1e-14);
         // sigma <= 0 and units error
         let mut ctx = Context::default();
         assert!(eval_expr(&parse_line("normpdf(1, 0, 0) =>").unwrap_expr(), &mut ctx).is_err());
@@ -1985,8 +1987,14 @@ mod tests {
         assert!((ev("erf(1) =>") - 0.842_700_792_9).abs() < 1e-6);
         // odd: erf(-x) = -erf(x)
         assert!((ev("erf(-0.7) =>") + ev("erf(0.7) =>")).abs() < 1e-9);
+        // high accuracy across the range (incomplete-gamma kernel, ~1e-14)
+        assert!((ev("erf(2) =>") - 0.995_322_265_018_952_7).abs() < 1e-12);
         // complement: erf(x) + erfc(x) = 1
         assert!((ev("erf(1.3) =>") + ev("erfc(1.3) =>") - 1.0).abs() < 1e-12);
+        // erfc tail survives instead of collapsing: erfc(5) ≈ 1.5375e-12,
+        // erfc(6) ≈ 2.1519e-17 (the old 1 - erf kernel returned 0 here)
+        assert!((ev("erfc(5) =>") - 1.537_459_794_428_e-12).abs() < 1e-16);
+        assert!(ev("erfc(6) =>") > 0.0 && ev("erfc(6) =>") < 1e-16);
         let mut ctx = Context::default();
         assert!(eval_expr(&parse_line("erf(1 m) =>").unwrap_expr(), &mut ctx).is_err());
     }
