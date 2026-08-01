@@ -1586,12 +1586,13 @@ fn format_float(val: f64) -> String {
         format!("{}", val as i64)
     } else {
         let abs_val = val.abs();
+        if abs_val < 1e-9 && abs_val > 0.0 {
+            // Scientific notation. Return as-is: the trailing-zero trim below
+            // would corrupt the exponent (e.g. `9.87e-10` -> `9.87e-1`).
+            return format!("{:e}", val);
+        }
         let formatted = if abs_val < 1e-4 && abs_val > 0.0 {
-            if abs_val < 1e-9 {
-                format!("{:e}", val)
-            } else {
-                format!("{:.10}", val)
-            }
+            format!("{:.10}", val)
         } else {
             format!("{:.4}", val)
         };
@@ -1876,6 +1877,23 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_format_float_small_scientific() {
+        // trailing-zero trimming must not eat the exponent's zero: e-10 -> e-1
+        assert_eq!(format_float(5e-10), "5e-10");
+        assert_eq!(format_float(1.5e-12), "1.5e-12");
+        assert_eq!(format_float(2e-20), "2e-20");
+        // normcdf(-6) renders with the correct exponent end-to-end
+        let mut ctx = Context::default();
+        let s = format_quantity(
+            &eval_expr(&parse_line("normcdf(-6) =>").unwrap_expr(), &mut ctx).unwrap(),
+        );
+        assert!(s.ends_with("e-10"), "got {s}");
+        // larger-magnitude values keep their trailing-zero trim
+        assert_eq!(format_float(1.5e-6), "0.0000015");
+        assert_eq!(format_float(2.5), "2.5");
     }
 
     #[test]
