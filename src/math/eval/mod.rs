@@ -1436,6 +1436,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "log2" => builtins::math::log2(name, &arg_vals),
                 "sqrt" => builtins::math::sqrt(name, &arg_vals),
                 "gamma" => builtins::math::gamma(name, &arg_vals),
+                "lgamma" => builtins::math::lgamma(name, &arg_vals),
                 "abs" => builtins::math::abs(name, &arg_vals),
                 "round" => builtins::math::round(&arg_vals),
                 "xor" => builtins::math::xor(name, &arg_vals),
@@ -1821,6 +1822,25 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_lgamma() {
+        let ev = |s: &str| -> f64 {
+            let mut ctx = Context::default();
+            eval_expr(&parse_line(s).unwrap_expr(), &mut ctx)
+                .unwrap()
+                .value
+        };
+        // lgamma(x) = ln(gamma(x)); gamma(5)=24
+        assert!((ev("lgamma(5) =>") - 24.0f64.ln()).abs() < 1e-9);
+        assert!(ev("lgamma(1) =>").abs() < 1e-9); // ln(1) = 0
+        // stable for large args where gamma overflows (Γ(171) is > f64::MAX):
+        // recurrence lgamma(x+1) − lgamma(x) = ln(x)
+        assert!((ev("lgamma(171) =>") - ev("lgamma(170) =>") - 170.0f64.ln()).abs() < 1e-6);
+        assert!(ev("lgamma(171) =>").is_finite());
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("lgamma(0) =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]

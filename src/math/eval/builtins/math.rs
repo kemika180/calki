@@ -139,37 +139,59 @@ pub(in crate::math::eval) fn sqrt(name: &str, args: &[Quantity]) -> Result<Quant
     })
 }
 
-/// Lanczos approximation of the gamma function (g = 7, n = 9), with the
-/// reflection formula for `x < 0.5`. Accurate to ~1e-15 for real arguments.
-/// Non-positive integers are poles; callers guard those separately.
+/// Lanczos coefficients (g = 7, n = 9), shared by `gamma` and `lgamma`.
+const LANCZOS_G: f64 = 7.0;
+const LANCZOS_C: [f64; 9] = [
+    0.999_999_999_999_809_9,
+    676.520_368_121_885_1,
+    -1_259.139_216_722_402_8,
+    771.323_428_777_653_1,
+    -176.615_029_162_140_6,
+    12.507_343_278_686_905,
+    -0.138_571_095_265_720_12,
+    9.984_369_578_019_572e-6,
+    1.505_632_735_149_311_6e-7,
+];
+
+/// Lanczos approximation of the gamma function, with the reflection formula for
+/// `x < 0.5`. Accurate to ~1e-15 for real arguments. Non-positive integers are
+/// poles; callers guard those separately.
 fn gamma_lanczos(x: f64) -> f64 {
-    const G: f64 = 7.0;
-    const C: [f64; 9] = [
-        0.999_999_999_999_809_9,
-        676.520_368_121_885_1,
-        -1_259.139_216_722_402_8,
-        771.323_428_777_653_1,
-        -176.615_029_162_140_6,
-        12.507_343_278_686_905,
-        -0.138_571_095_265_720_12,
-        9.984_369_578_019_572e-6,
-        1.505_632_735_149_311_6e-7,
-    ];
     if x < 0.5 {
         // Reflection: Γ(x)·Γ(1−x) = π / sin(πx)
         std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * gamma_lanczos(1.0 - x))
     } else {
         let x = x - 1.0;
-        let mut a = C[0];
-        let t = x + G + 0.5;
-        for (i, &c) in C.iter().enumerate().skip(1) {
+        let mut a = LANCZOS_C[0];
+        let t = x + LANCZOS_G + 0.5;
+        for (i, &c) in LANCZOS_C.iter().enumerate().skip(1) {
             a += c / (x + i as f64);
         }
         (2.0 * std::f64::consts::PI).sqrt() * t.powf(x + 0.5) * (-t).exp() * a
     }
 }
 
-pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+/// `ln|Γ(x)|` via the same Lanczos series, computed in log space so it stays
+/// finite for large `x` (where `gamma` overflows). Reflection for `x < 0.5`.
+fn lgamma_lanczos(x: f64) -> f64 {
+    if x < 0.5 {
+        std::f64::consts::PI.ln()
+            - (std::f64::consts::PI * x).sin().abs().ln()
+            - lgamma_lanczos(1.0 - x)
+    } else {
+        let x = x - 1.0;
+        let mut a = LANCZOS_C[0];
+        let t = x + LANCZOS_G + 0.5;
+        for (i, &c) in LANCZOS_C.iter().enumerate().skip(1) {
+            a += c / (x + i as f64);
+        }
+        0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
+    }
+}
+
+/// Shared validation for the gamma-family builtins: one dimensionless, real
+/// argument that is not a pole (non-positive integer). Returns the value.
+fn gamma_family_arg(name: &str, args: &[Quantity]) -> Result<f64, String> {
     check_built_in_args(name, args, 1)?;
     if args[0].unit.is_some() {
         return Err(format!(
@@ -187,10 +209,25 @@ pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quan
     if x <= 0.0 && x.fract() == 0.0 {
         return Err(format!("'{}' is undefined at non-positive integers", name));
     }
+    Ok(x)
+}
+
+pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let x = gamma_family_arg(name, args)?;
     Ok(Quantity {
         is_bool: false,
         list: None,
         value: gamma_lanczos(x),
+        unit: None,
+    })
+}
+
+pub(in crate::math::eval) fn lgamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    let x = gamma_family_arg(name, args)?;
+    Ok(Quantity {
+        is_bool: false,
+        list: None,
+        value: lgamma_lanczos(x),
         unit: None,
     })
 }
