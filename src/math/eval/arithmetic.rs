@@ -37,7 +37,7 @@ pub(in crate::math::eval) fn eval_binary_op(
                         Op::Sub => left_qty.value - right_qty.value,
                         _ => unreachable!(),
                     };
-                    Ok(Quantity {
+                    Ok(Quantity { display: None,
                         is_bool: false,
                         list: None,
                         value,
@@ -59,7 +59,7 @@ pub(in crate::math::eval) fn eval_binary_op(
                         Op::Sub => left_qty.value - right_converted,
                         _ => unreachable!(),
                     };
-                    Ok(Quantity {
+                    Ok(Quantity { display: None,
                         is_bool: false,
                         list: None,
                         value,
@@ -93,6 +93,7 @@ pub(in crate::math::eval) fn eval_binary_op(
             );
             let value = left_qty.value * right_qty.value * multiplier;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value,
@@ -123,6 +124,7 @@ pub(in crate::math::eval) fn eval_binary_op(
             );
             let value = (left_qty.value / right_qty.value) * multiplier;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value,
@@ -163,6 +165,7 @@ pub(in crate::math::eval) fn eval_binary_op(
                 None
             };
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value,
@@ -184,6 +187,7 @@ pub(in crate::math::eval) fn eval_binary_op(
                         convert_quantity(right_qty.value, unit2, unit1, &ctx.exchange_rates)?;
                     let rem = left_qty.value % right_converted;
                     Ok(Quantity {
+                        display: None,
                         is_bool: false,
                         list: None,
                         value: rem,
@@ -191,6 +195,7 @@ pub(in crate::math::eval) fn eval_binary_op(
                     })
                 }
                 (None, None) => Ok(Quantity {
+                    display: None,
                     is_bool: false,
                     list: None,
                     value: left_qty.value % right_qty.value,
@@ -238,6 +243,7 @@ pub(in crate::math::eval) fn eval_binary_op(
             let val = (left_qty.value as i64) & (right_qty.value as i64);
             let unit = left_qty.unit.or(right_qty.unit);
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: val as f64,
@@ -248,6 +254,7 @@ pub(in crate::math::eval) fn eval_binary_op(
             let val = (left_qty.value as i64) | (right_qty.value as i64);
             let unit = left_qty.unit.or(right_qty.unit);
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: val as f64,
@@ -258,6 +265,7 @@ pub(in crate::math::eval) fn eval_binary_op(
             let val = (left_qty.value as i64) << (right_qty.value as i64);
             let unit = left_qty.unit;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: val as f64,
@@ -268,6 +276,7 @@ pub(in crate::math::eval) fn eval_binary_op(
             let val = (left_qty.value as i64) >> (right_qty.value as i64);
             let unit = left_qty.unit;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: val as f64,

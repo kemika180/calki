@@ -37,6 +37,7 @@ pub(in crate::math::eval) fn log(args: &[Quantity]) -> Result<Quantity, String> 
             return Ok(make_complex_qty(ln_re / ln_base, ln_im / ln_base));
         }
         Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: args[0].value.log(base),
@@ -59,6 +60,7 @@ pub(in crate::math::eval) fn log(args: &[Quantity]) -> Result<Quantity, String> 
             return Ok(make_complex_qty(ln_re / ln_10, ln_im / ln_10));
         }
         Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: args[0].value.log10(),
@@ -82,6 +84,7 @@ pub(in crate::math::eval) fn ln(name: &str, args: &[Quantity]) -> Result<Quantit
         ));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.ln(),
@@ -107,6 +110,7 @@ pub(in crate::math::eval) fn log2(name: &str, args: &[Quantity]) -> Result<Quant
         return Ok(make_complex_qty(ln_re / ln_2, ln_im / ln_2));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.log2(),
@@ -132,6 +136,7 @@ pub(in crate::math::eval) fn sqrt(name: &str, args: &[Quantity]) -> Result<Quant
         return Ok(make_complex_qty(0.0, val));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.sqrt(),
@@ -235,6 +240,7 @@ pub(in crate::math::eval) fn erf_approx(x: f64) -> f64 {
 pub(in crate::math::eval) fn erf(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let x = real_dimensionless_arg(name, args)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: erf_approx(x),
@@ -245,6 +251,7 @@ pub(in crate::math::eval) fn erf(name: &str, args: &[Quantity]) -> Result<Quanti
 pub(in crate::math::eval) fn erfc(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let x = real_dimensionless_arg(name, args)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: 1.0 - erf_approx(x),
@@ -282,6 +289,7 @@ pub(in crate::math::eval) fn erfinv(name: &str, args: &[Quantity]) -> Result<Qua
         return Err(format!("Function '{}' is defined only on (-1, 1)", name));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: erfinv_approx(x),
@@ -292,6 +300,7 @@ pub(in crate::math::eval) fn erfinv(name: &str, args: &[Quantity]) -> Result<Qua
 pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let x = gamma_family_arg(name, args)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: gamma_lanczos(x),
@@ -302,6 +311,7 @@ pub(in crate::math::eval) fn gamma(name: &str, args: &[Quantity]) -> Result<Quan
 pub(in crate::math::eval) fn lgamma(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     let x = gamma_family_arg(name, args)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: lgamma_lanczos(x),
@@ -332,6 +342,7 @@ pub(in crate::math::eval) fn beta(name: &str, args: &[Quantity]) -> Result<Quant
     // B(a,b) = Γ(a)Γ(b)/Γ(a+b), evaluated in log space to avoid overflow.
     let val = (lgamma_lanczos(a) + lgamma_lanczos(b) - lgamma_lanczos(a + b)).exp();
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val,
@@ -344,6 +355,7 @@ pub(in crate::math::eval) fn abs(name: &str, args: &[Quantity]) -> Result<Quanti
     if is_complex(&args[0]) {
         let (a, b) = to_complex_parts(&args[0]);
         return Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: (a * a + b * b).sqrt(),
@@ -351,6 +363,7 @@ pub(in crate::math::eval) fn abs(name: &str, args: &[Quantity]) -> Result<Quanti
         });
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.abs(),
@@ -374,6 +387,7 @@ pub(in crate::math::eval) fn round(args: &[Quantity]) -> Result<Quantity, String
     let factor = 10.0f64.powi(digits);
     let rounded = (value * factor).round() / factor;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: rounded,
@@ -386,6 +400,7 @@ pub(in crate::math::eval) fn xor(name: &str, args: &[Quantity]) -> Result<Quanti
     let val = (args[0].value as i64) ^ (args[1].value as i64);
     let unit = args[0].unit.clone().or(args[1].unit.clone());
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val as f64,
@@ -396,6 +411,7 @@ pub(in crate::math::eval) fn xor(name: &str, args: &[Quantity]) -> Result<Quanti
 pub(in crate::math::eval) fn ceil(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.ceil(),
@@ -406,6 +422,7 @@ pub(in crate::math::eval) fn ceil(name: &str, args: &[Quantity]) -> Result<Quant
 pub(in crate::math::eval) fn floor(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.floor(),
@@ -451,6 +468,7 @@ pub(in crate::math::eval) fn plot(args: &[Quantity]) -> Result<Quantity, String>
     }
 
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: 0.0,
@@ -477,6 +495,7 @@ pub(in crate::math::eval) fn modulo(
             let converted = convert_quantity(q2.value, u2, u1, &ctx.exchange_rates)?;
             let rem = q1.value % converted;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: rem,
@@ -484,6 +503,7 @@ pub(in crate::math::eval) fn modulo(
             })
         }
         (None, None) => Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: q1.value % q2.value,

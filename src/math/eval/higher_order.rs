@@ -158,6 +158,7 @@ pub(in crate::math::eval) fn diff(
     } else {
         let formula_str = expr_to_string(&simplified_ast);
         Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: 1.0,

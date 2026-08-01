@@ -76,6 +76,7 @@ pub(in crate::math::eval) fn sum(args: &[Quantity], ctx: &Context) -> Result<Qua
     let (vals, target_unit) = reconcile(args, "sum", ctx, false)?;
     let total: f64 = vals.iter().sum();
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: total,
@@ -108,6 +109,7 @@ pub(in crate::math::eval) fn prod(args: &[Quantity], ctx: &Context) -> Result<Qu
         current_unit = new_unit;
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: total_val,
@@ -120,6 +122,7 @@ pub(in crate::math::eval) fn mean(args: &[Quantity], ctx: &Context) -> Result<Qu
     let total: f64 = vals.iter().sum();
     let mean_val = total / (vals.len() as f64);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: mean_val,
@@ -137,6 +140,7 @@ pub(in crate::math::eval) fn median(args: &[Quantity], ctx: &Context) -> Result<
         vals[len / 2]
     };
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: median_val,
@@ -149,6 +153,7 @@ pub(in crate::math::eval) fn stddev(args: &[Quantity], ctx: &Context) -> Result<
     let len = vals.len();
     if len == 1 {
         return Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: 0.0,
@@ -166,6 +171,7 @@ pub(in crate::math::eval) fn stddev(args: &[Quantity], ctx: &Context) -> Result<
         .sum();
     let stddev_val = (variance_sum / ((len - 1) as f64)).sqrt();
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: stddev_val,
@@ -181,6 +187,7 @@ pub(in crate::math::eval) fn variance(
     let len = vals.len();
     if len == 1 {
         return Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: 0.0,
@@ -198,6 +205,7 @@ pub(in crate::math::eval) fn variance(
         .sum();
     let variance_val = variance_sum / ((len - 1) as f64);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: variance_val,
@@ -217,6 +225,7 @@ pub(in crate::math::eval) fn min(args: &[Quantity], ctx: &Context) -> Result<Qua
     let (vals, target_unit) = reconcile(args, "min", ctx, true)?;
     let min_val = vals[1..].iter().copied().fold(vals[0], f64::min);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: min_val,
@@ -228,6 +237,7 @@ pub(in crate::math::eval) fn max(args: &[Quantity], ctx: &Context) -> Result<Qua
     let (vals, target_unit) = reconcile(args, "max", ctx, true)?;
     let max_val = vals[1..].iter().copied().fold(vals[0], f64::max);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: max_val,
@@ -267,6 +277,7 @@ pub(in crate::math::eval) fn normpdf(name: &str, args: &[Quantity]) -> Result<Qu
     let z = (x - mu) / sigma;
     let val = (-0.5 * z * z).exp() / (sigma * (2.0 * std::f64::consts::PI).sqrt());
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val,
@@ -279,6 +290,7 @@ pub(in crate::math::eval) fn normcdf(name: &str, args: &[Quantity]) -> Result<Qu
     let z = (x - mu) / (sigma * std::f64::consts::SQRT_2);
     let val = 0.5 * (1.0 + super::math::erf_approx(z));
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val,
@@ -294,6 +306,7 @@ pub(in crate::math::eval) fn norminv(name: &str, args: &[Quantity]) -> Result<Qu
     // Quantile of N(mu, sigma): mu + sigma·√2·erfinv(2p − 1).
     let z = std::f64::consts::SQRT_2 * super::math::erfinv_approx(2.0 * p - 1.0);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: mu + sigma * z,

@@ -1,11 +1,20 @@
 use crate::math::lexer::Token;
 
+/// Presentation hint attached to a [`Quantity`]. Purely a rendering concern —
+/// arithmetic ignores it, so it never leaks into the value or unit domain.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DisplayFormat {
+    /// Render the (dimensionless) value scaled ×100 with a `%` suffix.
+    Percent,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Quantity {
     pub value: f64,
     pub unit: Option<String>,
     pub list: Option<Vec<Quantity>>,
     pub is_bool: bool,
+    pub display: Option<DisplayFormat>,
 }
 
 impl Quantity {
@@ -15,6 +24,7 @@ impl Quantity {
             unit,
             list: None,
             is_bool: false,
+            display: None,
         }
     }
 
@@ -24,6 +34,7 @@ impl Quantity {
             unit: elements.first().and_then(|q| q.unit.clone()),
             list: Some(elements),
             is_bool: false,
+            display: None,
         }
     }
 
@@ -33,6 +44,7 @@ impl Quantity {
             unit: None,
             list: None,
             is_bool: true,
+            display: None,
         }
     }
 }
@@ -558,6 +570,12 @@ impl Parser {
                         }
                         Token::Number(val) => {
                             unit_str.push_str(&val.to_string());
+                            self.next_token();
+                            consumed_any = true;
+                        }
+                        // `expr in %` selects percentage display formatting.
+                        Token::Percentage => {
+                            unit_str.push('%');
                             self.next_token();
                             consumed_any = true;
                         }

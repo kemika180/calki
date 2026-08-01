@@ -12,6 +12,7 @@ pub(in crate::math::eval) fn sin(name: &str, args: &[Quantity]) -> Result<Quanti
         return Ok(make_complex_qty(a.sin() * b.cosh(), a.cos() * b.sinh()));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.sin(),
@@ -26,6 +27,7 @@ pub(in crate::math::eval) fn cos(name: &str, args: &[Quantity]) -> Result<Quanti
         return Ok(make_complex_qty(a.cos() * b.cosh(), -a.sin() * b.sinh()));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.cos(),
@@ -51,6 +53,7 @@ pub(in crate::math::eval) fn tan(name: &str, args: &[Quantity]) -> Result<Quanti
         ));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.tan(),
@@ -65,6 +68,7 @@ pub(in crate::math::eval) fn asin(name: &str, args: &[Quantity]) -> Result<Quant
         return Err("Argument to 'asin' must be between -1.0 and 1.0".to_string());
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val.asin(),
@@ -79,6 +83,7 @@ pub(in crate::math::eval) fn acos(name: &str, args: &[Quantity]) -> Result<Quant
         return Err("Argument to 'acos' must be between -1.0 and 1.0".to_string());
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val.acos(),
@@ -89,6 +94,7 @@ pub(in crate::math::eval) fn acos(name: &str, args: &[Quantity]) -> Result<Quant
 pub(in crate::math::eval) fn atan(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.atan(),
@@ -99,6 +105,7 @@ pub(in crate::math::eval) fn atan(name: &str, args: &[Quantity]) -> Result<Quant
 pub(in crate::math::eval) fn sinh(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.sinh(),
@@ -109,6 +116,7 @@ pub(in crate::math::eval) fn sinh(name: &str, args: &[Quantity]) -> Result<Quant
 pub(in crate::math::eval) fn cosh(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.cosh(),
@@ -119,6 +127,7 @@ pub(in crate::math::eval) fn cosh(name: &str, args: &[Quantity]) -> Result<Quant
 pub(in crate::math::eval) fn tanh(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.tanh(),
@@ -129,6 +138,7 @@ pub(in crate::math::eval) fn tanh(name: &str, args: &[Quantity]) -> Result<Quant
 pub(in crate::math::eval) fn asinh(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
     check_built_in_args(name, args, 1)?;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.asinh(),
@@ -143,6 +153,7 @@ pub(in crate::math::eval) fn acosh(name: &str, args: &[Quantity]) -> Result<Quan
         return Err("Argument to 'acosh' must be greater than or equal to 1.0".to_string());
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val.acosh(),
@@ -157,6 +168,7 @@ pub(in crate::math::eval) fn atanh(name: &str, args: &[Quantity]) -> Result<Quan
         return Err("Argument to 'atanh' must be between -1.0 and 1.0 (exclusive)".to_string());
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: val.atanh(),
@@ -172,6 +184,7 @@ pub(in crate::math::eval) fn exp(name: &str, args: &[Quantity]) -> Result<Quanti
         return Ok(make_complex_qty(r * b.cos(), r * b.sin()));
     }
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: args[0].value.exp(),

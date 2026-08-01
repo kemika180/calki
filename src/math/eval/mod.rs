@@ -483,6 +483,7 @@ fn quantity_add(q1: &Quantity, q2: &Quantity, ctx: &Context) -> Result<Quantity,
         }
         (None, None) => match (&q1.unit, &q2.unit) {
             (None, None) => Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: q1.value + q2.value,
@@ -497,6 +498,7 @@ fn quantity_add(q1: &Quantity, q2: &Quantity, ctx: &Context) -> Result<Quantity,
                 }
                 let right_converted = convert_quantity(q2.value, u2, u1, &ctx.exchange_rates)?;
                 Ok(Quantity {
+                    display: None,
                     is_bool: false,
                     list: None,
                     value: q1.value + right_converted,
@@ -527,6 +529,7 @@ fn quantity_sub(q1: &Quantity, q2: &Quantity, ctx: &Context) -> Result<Quantity,
         }
         (None, None) => match (&q1.unit, &q2.unit) {
             (None, None) => Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: q1.value - q2.value,
@@ -541,6 +544,7 @@ fn quantity_sub(q1: &Quantity, q2: &Quantity, ctx: &Context) -> Result<Quantity,
                 }
                 let right_converted = convert_quantity(q2.value, u2, u1, &ctx.exchange_rates)?;
                 Ok(Quantity {
+                    display: None,
                     is_bool: false,
                     list: None,
                     value: q1.value - right_converted,
@@ -566,6 +570,7 @@ fn quantity_mul(
     );
     let value = left_qty.value * right_qty.value * multiplier;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value,
@@ -589,6 +594,7 @@ fn quantity_div(
     );
     let value = (left_qty.value / right_qty.value) * multiplier;
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value,
@@ -602,6 +608,7 @@ fn quantity_pow(left_qty: &Quantity, right_qty: &Quantity) -> Result<Quantity, S
     }
     let value = left_qty.value.powf(right_qty.value);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value,
@@ -685,6 +692,7 @@ fn solve_equation(expr: &Expr, var_name: &str, ctx: &mut Context) -> Result<Quan
         _ => {
             // Solve expr == 0
             let target_val = Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: 0.0,
@@ -715,6 +723,7 @@ fn solve_rec(
                     Op::Div => quantity_mul(&target_val, &r_val, ctx)?,
                     Op::Pow => {
                         let one_over_r = Quantity {
+                            display: None,
                             is_bool: false,
                             list: None,
                             value: 1.0 / r_val.value,
@@ -781,6 +790,7 @@ fn solve_symbolic(expr: &Expr, var_name: &str) -> Result<Quantity, String> {
     };
     let simplified = simplify(&formula);
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: 1.0,
@@ -1147,6 +1157,7 @@ impl Default for Context {
         variables.insert(
             "pi".to_string(),
             Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: std::f64::consts::PI,
@@ -1156,6 +1167,7 @@ impl Default for Context {
         variables.insert(
             "e".to_string(),
             Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: std::f64::consts::E,
@@ -1165,6 +1177,7 @@ impl Default for Context {
         variables.insert(
             "inf".to_string(),
             Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: f64::INFINITY,
@@ -1190,6 +1203,7 @@ impl Default for Context {
             variables.insert(
                 name.to_string(),
                 Quantity {
+                    display: None,
                     is_bool: false,
                     list: None,
                     value,
@@ -1241,12 +1255,14 @@ pub fn eval_and_scale(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String
 pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
     match expr {
         Expr::Number(val) => Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: *val,
             unit: None,
         }),
         Expr::Quantity(val, unit) => Ok(Quantity {
+            display: None,
             is_bool: false,
             list: None,
             value: *val,
@@ -1257,6 +1273,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 Ok(val.clone())
             } else {
                 Ok(Quantity {
+                    display: None,
                     is_bool: false,
                     list: None,
                     value: 1.0,
@@ -1267,6 +1284,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
         Expr::Percentage(inner) => {
             let qty = eval_expr(inner, ctx)?;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: qty.value * 0.01,
@@ -1285,6 +1303,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             // n! = Γ(n+1); reuse the gamma builtin so non-integer args work too.
             let result = builtins::math::gamma("!", &[Quantity::scalar(n + 1.0, None)])?;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: result.value,
@@ -1310,6 +1329,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             default_case,
         } => control::eval_switch(val, cases, default_case.as_deref(), ctx),
         Expr::StringLiteral(val) => Ok(Quantity {
+            display: None,
             value: 0.0,
             unit: Some(val.clone()),
             list: None,
@@ -1323,10 +1343,31 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 || target_unit == "BIN"
             {
                 return Ok(Quantity {
+                    display: None,
                     is_bool: qty.is_bool,
                     list: qty.list,
                     value: qty.value,
                     unit: Some(target_unit.to_lowercase()),
+                });
+            }
+            if target_unit == "%" || target_unit == "percent" {
+                // Display-only: keep the value untouched (so further math is
+                // unaffected) and tag it to render ×100 with a `%` suffix.
+                if qty.unit.is_some() {
+                    return Err(format!(
+                        "Cannot render '{}' as a percentage",
+                        qty.unit.as_deref().unwrap_or("")
+                    ));
+                }
+                if qty.list.is_some() {
+                    return Err("Cannot render a list as a percentage".to_string());
+                }
+                return Ok(Quantity {
+                    is_bool: false,
+                    list: None,
+                    value: qty.value,
+                    unit: None,
+                    display: Some(crate::math::parser::DisplayFormat::Percent),
                 });
             }
             let src_unit = qty.unit.ok_or_else(|| {
@@ -1338,6 +1379,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             let converted_val =
                 convert_quantity(qty.value, &src_unit, target_unit, &ctx.exchange_rates)?;
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: converted_val,
@@ -1365,6 +1407,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             }
             let val = !(qty.value as i64);
             Ok(Quantity {
+                display: None,
                 is_bool: false,
                 list: None,
                 value: val as f64,
@@ -1509,6 +1552,7 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 };
 
                 return Ok(Quantity {
+                    display: None,
                     is_bool: false,
                     list: None,
                     value: final_val,
@@ -1560,6 +1604,9 @@ fn format_float(val: f64) -> String {
 
 // Formats a Quantity nicely for buffer output
 pub fn format_quantity(qty: &Quantity) -> String {
+    if qty.display == Some(crate::math::parser::DisplayFormat::Percent) {
+        return format!("{}%", format_float(qty.value * 100.0));
+    }
     if let Some(ref u) = qty.unit {
         if let Some(rest) = u.strip_prefix("sparkline:") {
             return rest.to_string();
@@ -1829,6 +1876,24 @@ mod tests {
         assert!(eval_expr(&parse_line("gamma(0) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(-3) =>").unwrap_expr(), &mut ctx).is_err());
         assert!(eval_expr(&parse_line("gamma(5 m) =>").unwrap_expr(), &mut ctx).is_err());
+    }
+
+    #[test]
+    fn test_percent_display() {
+        let fmt = |s: &str| -> String {
+            let mut ctx = Context::default();
+            format_quantity(&eval_expr(&parse_line(s).unwrap_expr(), &mut ctx).unwrap())
+        };
+        assert_eq!(fmt("1/2 in % =>"), "50%");
+        assert_eq!(fmt("1 in % =>"), "100%");
+        assert_eq!(fmt("0.075 to % =>"), "7.5%");
+        assert_eq!(fmt("0.333 in percent =>"), "33.3%");
+        // value is preserved for further math (not scaled by the display tag):
+        // (1/2 in %) * 2 = 1, rendered plainly once the tag is dropped by arithmetic.
+        assert_eq!(fmt("(1/2 in %) * 2 =>"), "1");
+        // a dimensioned value cannot be rendered as a percentage
+        let mut ctx = Context::default();
+        assert!(eval_expr(&parse_line("5 m in % =>").unwrap_expr(), &mut ctx).is_err());
     }
 
     #[test]

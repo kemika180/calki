@@ -29,6 +29,7 @@ pub(in crate::math::eval) fn to_complex_parts(qty: &Quantity) -> (f64, f64) {
 pub(in crate::math::eval) fn make_complex_qty(re: f64, im: f64) -> Quantity {
     if im == 0.0 {
         Quantity {
+            display: None,
             value: re,
             unit: None,
             list: None,
@@ -36,6 +37,7 @@ pub(in crate::math::eval) fn make_complex_qty(re: f64, im: f64) -> Quantity {
         }
     } else if re == 0.0 {
         Quantity {
+            display: None,
             value: im,
             unit: Some("i".to_string()),
             list: None,
@@ -43,16 +45,19 @@ pub(in crate::math::eval) fn make_complex_qty(re: f64, im: f64) -> Quantity {
         }
     } else {
         Quantity {
+            display: None,
             value: re,
             unit: Some("complex".to_string()),
             list: Some(vec![
                 Quantity {
+                    display: None,
                     value: re,
                     unit: None,
                     list: None,
                     is_bool: false,
                 },
                 Quantity {
+                    display: None,
                     value: im,
                     unit: Some("i".to_string()),
                     list: None,

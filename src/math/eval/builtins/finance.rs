@@ -25,6 +25,7 @@ pub(in crate::math::eval) fn pmt(name: &str, args: &[Quantity]) -> Result<Quanti
     };
 
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: pmt_val,
@@ -64,6 +65,7 @@ pub(in crate::math::eval) fn fv(args: &[Quantity]) -> Result<Quantity, String> {
     };
 
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: fv_val,
@@ -103,6 +105,7 @@ pub(in crate::math::eval) fn pv(args: &[Quantity]) -> Result<Quantity, String> {
     };
 
     Ok(Quantity {
+        display: None,
         is_bool: false,
         list: None,
         value: pv_val,
