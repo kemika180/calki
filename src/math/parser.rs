@@ -1,11 +1,28 @@
 use crate::math::lexer::Token;
 
+/// Distinguishes a bare calendar date from a date+time value, so formatting can
+/// render `2026-08-01` vs `2026-08-01T09:30` from the same epoch-seconds `value`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DateTimeKind {
+    /// Calendar date only — render `YYYY-MM-DD`.
+    Date,
+    /// Date and time — render `YYYY-MM-DDTHH:MM`.
+    DateTime,
+}
+
 /// Presentation hint attached to a [`Quantity`]. Purely a rendering concern —
 /// arithmetic ignores it, so it never leaks into the value or unit domain.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DisplayFormat {
     /// Render the (dimensionless) value scaled ×100 with a `%` suffix.
     Percent,
+    /// Render the `value` (epoch seconds, UTC) as a date/time in the original
+    /// zone. `tz_offset_secs` is the UTC offset captured at parse time so the
+    /// value round-trips to the same wall-clock string it was written as.
+    DateTime {
+        kind: DateTimeKind,
+        tz_offset_secs: i32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,6 +73,13 @@ pub enum Expr {
     Variable(String),
     Percentage(Box<Expr>),
     Factorial(Box<Expr>),
+    /// A date/time literal. `epoch_secs` is the instant in UTC; `kind` and
+    /// `tz_offset_secs` drive rendering (see [`DisplayFormat::DateTime`]).
+    DateTime {
+        epoch_secs: f64,
+        kind: DateTimeKind,
+        tz_offset_secs: i32,
+    },
     BinaryOp(Op, Box<Expr>, Box<Expr>),
     FnCall(String, Vec<Expr>),
     Convert(Box<Expr>, String),
@@ -250,6 +274,19 @@ impl Parser {
                     Ok(Expr::Number(val))
                 }
             }
+            Token::DateTime {
+                epoch_secs,
+                is_date_only,
+                tz_offset_secs,
+            } => Ok(Expr::DateTime {
+                epoch_secs,
+                kind: if is_date_only {
+                    DateTimeKind::Date
+                } else {
+                    DateTimeKind::DateTime
+                },
+                tz_offset_secs,
+            }),
             Token::Identifier(ref name) if name == "$" => {
                 // Prefix currency notation: $100 -> Quantity(100.0, "$")
                 if let Some(&Token::Number(val)) = self.peek() {

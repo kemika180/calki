@@ -24,6 +24,7 @@ fn differentiate(expr: &Expr, var: &str) -> Result<Expr, String> {
             Ok(Expr::Percentage(Box::new(d_inner)))
         }
         Expr::Factorial(_) => Err("Cannot differentiate factorial".to_string()),
+        Expr::DateTime { .. } => Err("Cannot differentiate a date/time".to_string()),
         Expr::BinaryOp(op, left, right) => match op {
             Op::Add => {
                 let dl = differentiate(left, var)?;
@@ -312,6 +313,11 @@ pub(crate) fn expr_to_string(expr: &Expr) -> String {
             format!("{}{}", rounded, unit)
         }
         Expr::Variable(name) => name.clone(),
+        Expr::DateTime {
+            epoch_secs,
+            kind,
+            tz_offset_secs,
+        } => format_datetime(*epoch_secs, *kind, *tz_offset_secs),
         Expr::Percentage(inner) => format!("{}%", expr_to_string(inner)),
         Expr::Factorial(inner) => format!("{}!", expr_to_string(inner)),
         Expr::BinaryOp(op, left, right) => {
@@ -630,7 +636,9 @@ fn expr_contains_var(expr: &Expr, var_name: &str) -> bool {
         Expr::FnCall(_, args) | Expr::List(args) => {
             args.iter().any(|arg| expr_contains_var(arg, var_name))
         }
-        Expr::Number(_) | Expr::Quantity(_, _) | Expr::StringLiteral(_) => false,
+        Expr::Number(_) | Expr::Quantity(_, _) | Expr::StringLiteral(_) | Expr::DateTime { .. } => {
+            false
+        }
         Expr::Block(exprs) => exprs.iter().any(|e| expr_contains_var(e, var_name)),
         Expr::LocalAssign(name, val_expr) => {
             name == var_name || expr_contains_var(val_expr, var_name)
@@ -1268,6 +1276,20 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
             value: *val,
             unit: Some(unit.clone()),
         }),
+        Expr::DateTime {
+            epoch_secs,
+            kind,
+            tz_offset_secs,
+        } => Ok(Quantity {
+            display: Some(crate::math::parser::DisplayFormat::DateTime {
+                kind: *kind,
+                tz_offset_secs: *tz_offset_secs,
+            }),
+            is_bool: false,
+            list: None,
+            value: *epoch_secs,
+            unit: None,
+        }),
         Expr::Variable(name) => {
             if let Some(val) = ctx.variables.get(name) {
                 Ok(val.clone())
@@ -1612,9 +1634,38 @@ fn format_float(val: f64) -> String {
 }
 
 // Formats a Quantity nicely for buffer output
+/// Render an epoch-seconds (UTC) `value` as an ISO 8601 date/time string in the
+/// zone given by `tz_offset_secs`. Falls back to the raw number on any error so
+/// formatting is always infallible.
+fn format_datetime(
+    epoch_secs: f64,
+    kind: crate::math::parser::DateTimeKind,
+    tz_offset_secs: i32,
+) -> String {
+    use crate::math::parser::DateTimeKind;
+    let (Ok(ts), Ok(offset)) = (
+        jiff::Timestamp::from_second(epoch_secs as i64),
+        jiff::tz::Offset::from_seconds(tz_offset_secs),
+    ) else {
+        return format_float(epoch_secs);
+    };
+    let zoned = ts.to_zoned(jiff::tz::TimeZone::fixed(offset));
+    match kind {
+        DateTimeKind::Date => zoned.strftime("%Y-%m-%d").to_string(),
+        DateTimeKind::DateTime => zoned.strftime("%Y-%m-%dT%H:%M").to_string(),
+    }
+}
+
 pub fn format_quantity(qty: &Quantity) -> String {
     if qty.display == Some(crate::math::parser::DisplayFormat::Percent) {
         return format!("{}%", format_float(qty.value * 100.0));
+    }
+    if let Some(crate::math::parser::DisplayFormat::DateTime {
+        kind,
+        tz_offset_secs,
+    }) = qty.display
+    {
+        return format_datetime(qty.value, kind, tz_offset_secs);
     }
     if let Some(ref u) = qty.unit {
         if let Some(rest) = u.strip_prefix("sparkline:") {

@@ -213,6 +213,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_datetime_literals() {
+        let rates = HashMap::new();
+
+        // Bare date round-trips as YYYY-MM-DD.
+        let (out, _) = evaluate_sheet("2026-08-01 =>\n", &rates);
+        assert!(
+            out.contains("2026-08-01 => 2026-08-01"),
+            "Actual output: {}",
+            out
+        );
+
+        // Date+time via `T` renders as YYYY-MM-DDTHH:MM.
+        let (out_t, _) = evaluate_sheet("2026-08-01T09:30 =>\n", &rates);
+        assert!(
+            out_t.contains("=> 2026-08-01T09:30"),
+            "Actual output: {}",
+            out_t
+        );
+
+        // Date+time via a space separator normalizes to the same rendering.
+        let (out_sp, _) = evaluate_sheet("2026-08-01 09:30 =>\n", &rates);
+        assert!(
+            out_sp.contains("=> 2026-08-01T09:30"),
+            "Actual output: {}",
+            out_sp
+        );
+
+        // Regression: spaced/unpadded hyphen forms remain subtraction.
+        let (out_sub, _) = evaluate_sheet("2030 - 8 =>\n", &rates);
+        assert!(out_sub.contains("=> 2022"), "Actual output: {}", out_sub);
+        let (out_unpadded, _) = evaluate_sheet("2020-1-1 =>\n", &rates);
+        assert!(
+            out_unpadded.contains("=> 2018"),
+            "Actual output: {}",
+            out_unpadded
+        );
+    }
+
+    #[test]
     fn test_evaluate_sheet() {
         let sheet = r#"# Grocery Math
 price = 6
