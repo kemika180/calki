@@ -291,6 +291,31 @@ mod tests {
     }
 
     #[test]
+    fn test_datetime_calendar() {
+        let rates = HashMap::new();
+        let check = |src: &str, want: &str| {
+            let (out, _) = evaluate_sheet(src, &rates);
+            assert!(out.contains(want), "for `{}` got: {}", src.trim(), out);
+        };
+
+        // Whole-month/year addition uses the civil calendar, not 30.4-day math.
+        check("2026-08-01 + 1 month =>\n", "=> 2026-09-01");
+        check("2026-01-15 + 2 months =>\n", "=> 2026-03-15");
+        check("2026-08-01 + 1 year =>\n", "=> 2027-08-01");
+        check("2026-08-01 - 1 month =>\n", "=> 2026-07-01");
+        check("1 year + 2026-08-01 =>\n", "=> 2027-08-01");
+        // End-of-month clamping.
+        check("2024-01-31 + 1 month =>\n", "=> 2024-02-29");
+        check("2024-02-29 + 1 year =>\n", "=> 2025-02-28");
+        // Crossing a year boundary.
+        check("2026-11-15 + 3 months =>\n", "=> 2027-02-15");
+
+        // Fractional month falls back to the linear-seconds path (30.4-day
+        // months), yielding a date-time offset rather than a clean calendar date.
+        check("2026-08-01 + 1.5 months =>\n", "=> 2026-09-15T15:00");
+    }
+
+    #[test]
     fn test_evaluate_sheet() {
         let sheet = r#"# Grocery Math
 price = 6

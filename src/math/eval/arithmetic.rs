@@ -12,6 +12,7 @@ use crate::math::eval::{
 };
 use crate::math::parser::{DateTimeKind, DisplayFormat, Op, Quantity};
 use crate::math::units::{are_compatible, combine_units_with_multiplier, convert_quantity};
+use jiff::ToSpan;
 
 const SECONDS_PER_DAY: f64 = 86400.0;
 
@@ -63,8 +64,62 @@ fn shifted_datetime(
     }
 }
 
-/// Add/subtract involving at least one date/time operand. Value math is exact
-/// seconds (calendar-aware `+ 1 month`/`+ 1 year` is a later step).
+/// A calendar unit that must be added by civil arithmetic, not linear seconds.
+#[derive(Clone, Copy)]
+enum CalUnit {
+    Month,
+    Year,
+}
+
+/// A (non-datetime) operand interpreted as a whole number of calendar months or
+/// years. Only whole counts have a well-defined civil meaning; fractional or
+/// other Time units fall back to the linear-seconds path.
+fn calendar_span(q: &Quantity) -> Option<(CalUnit, i64)> {
+    let unit = match q.unit.as_deref()? {
+        "month" | "months" => CalUnit::Month,
+        "year" | "years" | "yr" | "yrs" => CalUnit::Year,
+        _ => return None,
+    };
+    if q.value.fract() != 0.0 {
+        return None;
+    }
+    Some((unit, q.value as i64))
+}
+
+/// Add `n` calendar months/years to a datetime via jiff civil arithmetic in the
+/// system zone — correct month/year rollover with end-of-month clamping
+/// (`2024-01-31 + 1 month = 2024-02-29`). The `kind` is preserved (a bare date
+/// stays a date; a date-time keeps its time-of-day).
+fn shift_calendar(
+    epoch: f64,
+    kind: DateTimeKind,
+    unit: CalUnit,
+    n: i64,
+) -> Result<Quantity, String> {
+    let ts = jiff::Timestamp::from_second(epoch as i64)
+        .map_err(|e| format!("Invalid date/time: {e}"))?;
+    let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
+    let span = match unit {
+        CalUnit::Month => n.months(),
+        CalUnit::Year => n.years(),
+    };
+    let shifted = zoned
+        .checked_add(span)
+        .map_err(|e| format!("Date/time out of range: {e}"))?;
+    Ok(Quantity {
+        value: shifted.timestamp().as_second() as f64,
+        unit: None,
+        list: None,
+        is_bool: false,
+        display: Some(DisplayFormat::DateTime {
+            kind,
+            tz_offset_secs: shifted.offset().seconds(),
+        }),
+    })
+}
+
+/// Add/subtract involving at least one date/time operand. Month/year durations
+/// use civil-calendar arithmetic; all other durations are exact seconds.
 fn eval_datetime_add_sub(
     op: &Op,
     left: &Quantity,
@@ -92,6 +147,14 @@ fn eval_datetime_add_sub(
         }
         // datetime ± duration → datetime.
         (Some((kind, tz)), None) => {
+            if let Some((cu, n)) = calendar_span(right) {
+                let signed = match op {
+                    Op::Add => n,
+                    Op::Sub => -n,
+                    _ => unreachable!(),
+                };
+                return shift_calendar(left.value, kind, cu, signed);
+            }
             let secs = duration_to_seconds(right, ctx)?;
             let delta = match op {
                 Op::Add => secs,
@@ -103,6 +166,9 @@ fn eval_datetime_add_sub(
         // duration + datetime → datetime; duration − datetime is undefined.
         (None, Some((kind, tz))) => match op {
             Op::Add => {
+                if let Some((cu, n)) = calendar_span(left) {
+                    return shift_calendar(right.value, kind, cu, n);
+                }
                 let secs = duration_to_seconds(left, ctx)?;
                 Ok(shifted_datetime(right.value, kind, tz, secs))
             }
