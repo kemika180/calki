@@ -360,13 +360,12 @@ impl<'a> Lexer<'a> {
 
         let is_date_only = time.is_none();
         let (hour, minute, second) = time.unwrap_or((0, 0, 0));
-        let token = civil_to_epoch(year, month, day, hour, minute, second).map(
-            |(epoch_secs, tz_offset_secs)| Token::DateTime {
+        let token = crate::math::datetime::civil_to_epoch(year, month, day, hour, minute, second)
+            .map(|(epoch_secs, tz_offset_secs)| Token::DateTime {
                 epoch_secs,
                 is_date_only,
                 tz_offset_secs,
-            },
-        );
+            });
 
         // Commit: advance past the matched literal (ASCII, one byte per char).
         for _ in 0..len {
@@ -435,28 +434,6 @@ impl<'a> Lexer<'a> {
             _ => Token::Identifier(ident_str.to_string()),
         }
     }
-}
-
-/// Resolve a civil (wall-clock) date/time in the system-local zone to
-/// `(epoch_seconds_utc, utc_offset_seconds)`. The offset is captured so the
-/// value renders back in the same zone it was written in.
-fn civil_to_epoch(
-    year: i16,
-    month: i8,
-    day: i8,
-    hour: i8,
-    minute: i8,
-    second: i8,
-) -> Result<(f64, i32), String> {
-    let dt = jiff::civil::DateTime::new(year, month, day, hour, minute, second, 0)
-        .map_err(|e| format!("Invalid date/time: {e}"))?;
-    let zoned = dt
-        .to_zoned(jiff::tz::TimeZone::system())
-        .map_err(|e| format!("Invalid date/time: {e}"))?;
-    Ok((
-        zoned.timestamp().as_second() as f64,
-        zoned.offset().seconds(),
-    ))
 }
 
 #[cfg(test)]

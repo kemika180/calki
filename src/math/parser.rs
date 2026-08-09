@@ -619,6 +619,25 @@ impl Parser {
                             self.next_token();
                             consumed_any = true;
                         }
+                        // A signed whole-hour UTC offset in a timezone target
+                        // (`UTC+2`, `GMT-5`, or a bare `+3`). Only absorbed when a
+                        // Number follows AND the target so far is a bare offset or
+                        // `UTC`/`GMT` prefix — so `x in y + z` and `1m in km + 5m`
+                        // stay arithmetic.
+                        Token::Plus | Token::Minus
+                            if matches!(self.tokens.get(self.pos + 1), Some(Token::Number(_)))
+                                && (unit_str.is_empty()
+                                    || unit_str.eq_ignore_ascii_case("UTC")
+                                    || unit_str.eq_ignore_ascii_case("GMT")) =>
+                        {
+                            unit_str.push(if matches!(tok, Token::Minus) {
+                                '-'
+                            } else {
+                                '+'
+                            });
+                            self.next_token();
+                            consumed_any = true;
+                        }
                         _ => break,
                     }
                 }

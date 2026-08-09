@@ -1392,6 +1392,36 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                     display: Some(crate::math::parser::DisplayFormat::Percent),
                 });
             }
+            // Date/time zone conversion: `<datetime> in <zone>`. Keeps the
+            // instant (epoch value) and re-renders it in the target zone.
+            if let Some(crate::math::parser::DisplayFormat::DateTime { kind, .. }) = &qty.display {
+                let kind = *kind;
+                let tz = crate::math::datetime::resolve_timezone(target_unit)?;
+                let ts = jiff::Timestamp::from_second(qty.value as i64)
+                    .map_err(|e| format!("Invalid date/time: {e}"))?;
+                let zoned = ts.to_zoned(tz);
+                // A bare date stays a date only if it lands exactly on midnight
+                // in the new zone; otherwise it gains a time component.
+                let new_kind = if matches!(kind, crate::math::parser::DateTimeKind::Date)
+                    && zoned.hour() == 0
+                    && zoned.minute() == 0
+                    && zoned.second() == 0
+                {
+                    crate::math::parser::DateTimeKind::Date
+                } else {
+                    crate::math::parser::DateTimeKind::DateTime
+                };
+                return Ok(Quantity {
+                    display: Some(crate::math::parser::DisplayFormat::DateTime {
+                        kind: new_kind,
+                        tz_offset_secs: zoned.offset().seconds(),
+                    }),
+                    is_bool: false,
+                    list: None,
+                    value: qty.value,
+                    unit: None,
+                });
+            }
             let src_unit = qty.unit.ok_or_else(|| {
                 format!(
                     "Cannot convert dimensionless value to unit '{}'",
@@ -2336,6 +2366,68 @@ mod tests {
         if let Line::Evaluation { expr, .. } = e2 {
             let res = eval_expr(&expr, &mut ctx).unwrap();
             assert_eq!(res.value, 50.0);
+        }
+    }
+
+    #[test]
+    fn test_datetime_tz_conversion() {
+        use crate::math::parser::{DateTimeKind, Expr};
+        let mut ctx = Context::default();
+        let convert = |ctx: &mut Context, epoch: f64, zone: &str| {
+            let e = Expr::Convert(
+                Box::new(Expr::DateTime {
+                    epoch_secs: epoch,
+                    kind: DateTimeKind::DateTime,
+                    tz_offset_secs: 0,
+                }),
+                zone.to_string(),
+            );
+            eval_expr(&e, ctx).map(|q| format_quantity(&q))
+        };
+
+        // Epoch 0 = 1970-01-01T00:00:00Z. Fixed-offset targets are tz-independent.
+        assert_eq!(convert(&mut ctx, 0.0, "UTC").unwrap(), "1970-01-01T00:00");
+        assert_eq!(convert(&mut ctx, 0.0, "UTC+2").unwrap(), "1970-01-01T02:00");
+        assert_eq!(convert(&mut ctx, 0.0, "GMT-5").unwrap(), "1969-12-31T19:00");
+
+        // Named zone, DST-aware: 2026-07-01T16:00Z → New York EDT (−4) = 12:00.
+        let (summer, _) = crate::math::datetime::civil_to_epoch_in_zone(
+            2026,
+            7,
+            1,
+            16,
+            0,
+            0,
+            &jiff::tz::TimeZone::UTC,
+        )
+        .unwrap();
+        assert_eq!(
+            convert(&mut ctx, summer, "America/New_York").unwrap(),
+            "2026-07-01T12:00"
+        );
+        assert_eq!(
+            convert(&mut ctx, summer, "PST").unwrap(),
+            "2026-07-01T09:00"
+        );
+
+        // Unknown zone errors.
+        assert!(convert(&mut ctx, 0.0, "Nowhere").is_err());
+
+        // Parser folds a UTC offset into the conversion target...
+        let toks = crate::math::lexer::Lexer::new("2026-08-01T09:00 in UTC+2")
+            .lex()
+            .unwrap();
+        match crate::math::parser::Parser::new(toks).parse().unwrap() {
+            Expr::Convert(_, t) => assert_eq!(t, "UTC+2"),
+            other => panic!("expected Convert, got {:?}", other),
+        }
+        // ...but leaves trailing arithmetic on unit conversions alone.
+        let toks2 = crate::math::lexer::Lexer::new("1 m in km + 5 m")
+            .lex()
+            .unwrap();
+        match crate::math::parser::Parser::new(toks2).parse().unwrap() {
+            Expr::BinaryOp(Op::Add, _, _) => {}
+            other => panic!("expected (… in km) + 5 m, got {:?}", other),
         }
     }
 
