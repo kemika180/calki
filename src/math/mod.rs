@@ -317,6 +317,35 @@ mod tests {
     }
 
     #[test]
+    fn test_datetime_ampm_and_zone_literals() {
+        let rates = HashMap::new();
+        let check = |src: &str, want: &str| {
+            let (out, _) = evaluate_sheet(src, &rates);
+            assert!(out.contains(want), "for `{}` got: {}", src.trim(), out);
+        };
+
+        // Standalone times anchor to today; rendered in the system zone, so the
+        // time component is deterministic regardless of the machine's zone.
+        check("9am =>\n", "T09:00");
+        check("9:30pm =>\n", "T21:30");
+        check("12am =>\n", "T00:00");
+        check("12pm =>\n", "T12:00");
+
+        // Zone-qualified literals, converted to UTC (DST-correct via jiff).
+        // PDT in summer is UTC−7: 09:00 → 16:00.
+        check("2026-07-01T09:00 PST in UTC =>\n", "=> 2026-07-01T16:00");
+        // am/pm + abbreviation together: EDT in summer is UTC−4: 09:00 → 13:00.
+        check("2026-07-01 9am EST in UTC =>\n", "=> 2026-07-01T13:00");
+        // Same wall clock in winter: PST is UTC−8: 09:00 → 17:00 (DST applied).
+        check("2026-01-15T09:00 PST in UTC =>\n", "=> 2026-01-15T17:00");
+        // IANA name literal.
+        check(
+            "2026-07-01T12:00 Asia/Tokyo in UTC =>\n",
+            "=> 2026-07-01T03:00",
+        );
+    }
+
+    #[test]
     fn test_evaluate_sheet() {
         let sheet = r#"# Grocery Math
 price = 6

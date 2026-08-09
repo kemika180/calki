@@ -4,19 +4,6 @@
 
 use jiff::tz::{Offset, TimeZone};
 
-/// Resolve a civil (wall-clock) date/time in the system-local zone to
-/// `(epoch_seconds_utc, utc_offset_seconds)`.
-pub fn civil_to_epoch(
-    year: i16,
-    month: i8,
-    day: i8,
-    hour: i8,
-    minute: i8,
-    second: i8,
-) -> Result<(f64, i32), String> {
-    civil_to_epoch_in_zone(year, month, day, hour, minute, second, &TimeZone::system())
-}
-
 /// Resolve a civil date/time in the given zone to `(epoch_seconds_utc,
 /// utc_offset_seconds)`. The offset is the zone's offset at that instant (so
 /// DST is applied), captured for round-trip rendering.
@@ -38,6 +25,13 @@ pub fn civil_to_epoch_in_zone(
         zoned.timestamp().as_second() as f64,
         zoned.offset().seconds(),
     ))
+}
+
+/// Today's civil date `(year, month, day)` in the given zone. Used to anchor a
+/// standalone time literal (e.g. `9am PST`) to the current day.
+pub fn today_in_zone(tz: &TimeZone) -> (i16, i8, i8) {
+    let z = jiff::Timestamp::now().to_zoned(tz.clone());
+    (z.year(), z.month(), z.day())
 }
 
 /// Resolve a timezone identifier to a [`TimeZone`]. Accepts, in order:
