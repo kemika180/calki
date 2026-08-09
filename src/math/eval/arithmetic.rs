@@ -10,8 +10,108 @@ use crate::math::eval::{
     Context, eval_and_logic, eval_eq_logic, eval_gt_logic, eval_gte_logic, eval_lt_logic,
     eval_lte_logic, eval_ne_logic, eval_or_logic, matmul_impl, scale_list,
 };
-use crate::math::parser::{Op, Quantity};
+use crate::math::parser::{DateTimeKind, DisplayFormat, Op, Quantity};
 use crate::math::units::{are_compatible, combine_units_with_multiplier, convert_quantity};
+
+const SECONDS_PER_DAY: f64 = 86400.0;
+
+/// The [`DisplayFormat::DateTime`] tag on a quantity, if it carries one.
+fn datetime_tag(q: &Quantity) -> Option<(DateTimeKind, i32)> {
+    match q.display {
+        Some(DisplayFormat::DateTime {
+            kind,
+            tz_offset_secs,
+        }) => Some((kind, tz_offset_secs)),
+        _ => None,
+    }
+}
+
+/// Interpret a (non-datetime) operand as a duration in seconds. Errors unless it
+/// carries a Time-dimension unit — a date/time only combines with a duration.
+fn duration_to_seconds(q: &Quantity, ctx: &Context) -> Result<f64, String> {
+    match &q.unit {
+        Some(u) if are_compatible(u, "sec") => {
+            convert_quantity(q.value, u, "sec", &ctx.exchange_rates)
+        }
+        Some(u) => Err(format!("Cannot add/subtract '{}' to a date/time", u)),
+        None => Err("Cannot add/subtract a dimensionless value to a date/time".to_string()),
+    }
+}
+
+/// Shift a datetime (`epoch` seconds, UTC) by `delta_secs`, preserving the tag.
+/// A bare `Date` stays a date only when the shift is a whole number of days;
+/// otherwise it gains a time component and renders as a date-time.
+fn shifted_datetime(
+    epoch: f64,
+    kind: DateTimeKind,
+    tz_offset_secs: i32,
+    delta_secs: f64,
+) -> Quantity {
+    let result_kind = match kind {
+        DateTimeKind::Date if delta_secs.rem_euclid(SECONDS_PER_DAY) == 0.0 => DateTimeKind::Date,
+        _ => DateTimeKind::DateTime,
+    };
+    Quantity {
+        value: epoch + delta_secs,
+        unit: None,
+        list: None,
+        is_bool: false,
+        display: Some(DisplayFormat::DateTime {
+            kind: result_kind,
+            tz_offset_secs,
+        }),
+    }
+}
+
+/// Add/subtract involving at least one date/time operand. Value math is exact
+/// seconds (calendar-aware `+ 1 month`/`+ 1 year` is a later step).
+fn eval_datetime_add_sub(
+    op: &Op,
+    left: &Quantity,
+    right: &Quantity,
+    l_dt: Option<(DateTimeKind, i32)>,
+    r_dt: Option<(DateTimeKind, i32)>,
+    ctx: &Context,
+) -> Result<Quantity, String> {
+    match (l_dt, r_dt) {
+        // date − date → duration; date + date is undefined.
+        (Some((lk, _)), Some((rk, _))) => {
+            if !matches!(op, Op::Sub) {
+                return Err("Cannot add two date/time values".to_string());
+            }
+            let diff = left.value - right.value;
+            // Whole-day granularity when both sides are bare dates; else seconds.
+            if matches!(lk, DateTimeKind::Date) && matches!(rk, DateTimeKind::Date) {
+                Ok(Quantity::scalar(
+                    diff / SECONDS_PER_DAY,
+                    Some("day".to_string()),
+                ))
+            } else {
+                Ok(Quantity::scalar(diff, Some("sec".to_string())))
+            }
+        }
+        // datetime ± duration → datetime.
+        (Some((kind, tz)), None) => {
+            let secs = duration_to_seconds(right, ctx)?;
+            let delta = match op {
+                Op::Add => secs,
+                Op::Sub => -secs,
+                _ => unreachable!(),
+            };
+            Ok(shifted_datetime(left.value, kind, tz, delta))
+        }
+        // duration + datetime → datetime; duration − datetime is undefined.
+        (None, Some((kind, tz))) => match op {
+            Op::Add => {
+                let secs = duration_to_seconds(left, ctx)?;
+                Ok(shifted_datetime(right.value, kind, tz, secs))
+            }
+            Op::Sub => Err("Cannot subtract a date/time from a duration".to_string()),
+            _ => unreachable!(),
+        },
+        (None, None) => unreachable!("dispatched only when an operand is a date/time"),
+    }
+}
 
 pub(in crate::math::eval) fn eval_binary_op(
     op: &Op,
@@ -29,6 +129,11 @@ pub(in crate::math::eval) fn eval_binary_op(
                     Op::Sub => Ok(make_complex_qty(a - c, b - d)),
                     _ => unreachable!(),
                 };
+            }
+            let l_dt = datetime_tag(&left_qty);
+            let r_dt = datetime_tag(&right_qty);
+            if l_dt.is_some() || r_dt.is_some() {
+                return eval_datetime_add_sub(op, &left_qty, &right_qty, l_dt, r_dt, ctx);
             }
             match (&left_qty.unit, &right_qty.unit) {
                 (None, None) => {

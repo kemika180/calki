@@ -252,6 +252,45 @@ mod tests {
     }
 
     #[test]
+    fn test_datetime_arithmetic() {
+        let rates = HashMap::new();
+        let check = |src: &str, want: &str| {
+            let (out, _) = evaluate_sheet(src, &rates);
+            assert!(out.contains(want), "for `{}` got: {}", src.trim(), out);
+        };
+
+        // date + duration -> date (whole days keep the bare-date rendering).
+        check("2026-08-01 + 3 days =>\n", "=> 2026-08-04");
+        // Commutative: duration + date.
+        check("3 days + 2026-08-01 =>\n", "=> 2026-08-04");
+        // date - date -> duration in days.
+        check("2026-08-04 - 2026-08-01 =>\n", "=> 3 days");
+        // Leap-year rollover falls out of exact-second math.
+        check("2024-02-28 + 1 day =>\n", "=> 2024-02-29");
+        // Sub-day offset on a bare date promotes it to a date-time.
+        check("2026-08-01 + 2 hours =>\n", "=> 2026-08-01T02:00");
+        // datetime - datetime -> seconds.
+        check("2026-08-01T09:00 - 2026-08-01T08:00 =>\n", "=> 3600 sec");
+        // date - duration -> earlier date.
+        check("2026-08-04 - 3 days =>\n", "=> 2026-08-01");
+
+        // Errors: date + date, duration - date, and non-time operands.
+        check(
+            "2026-08-01 + 2026-08-02 =>\n",
+            "[Error: Cannot add two date",
+        );
+        check(
+            "3 days - 2026-08-01 =>\n",
+            "[Error: Cannot subtract a date/time",
+        );
+        check("2026-08-01 + 5 km =>\n", "[Error: Cannot add/subtract 'km'");
+
+        // Regression: pure durations still combine as before.
+        let (dur, _) = evaluate_sheet("3 days + 2 hours =>\n", &rates);
+        assert!(!dur.contains("[Error"), "duration math regressed: {}", dur);
+    }
+
+    #[test]
     fn test_evaluate_sheet() {
         let sheet = r#"# Grocery Math
 price = 6
