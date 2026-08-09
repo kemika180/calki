@@ -635,3 +635,51 @@ pub(in crate::math::eval) fn range(args: &[Quantity]) -> Result<Quantity, String
 
     Ok(Quantity::list(elements))
 }
+
+/// `now()` — the current instant as a date-time in the system-local zone.
+pub(in crate::math::eval) fn now(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    if !args.is_empty() {
+        return Err(format!("Function '{}' takes no arguments", name));
+    }
+    let ts = jiff::Timestamp::now();
+    let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
+    Ok(datetime_quantity(
+        ts.as_second() as f64,
+        crate::math::parser::DateTimeKind::DateTime,
+        zoned.offset().seconds(),
+    ))
+}
+
+/// `today()` — the current date (midnight, system-local zone).
+pub(in crate::math::eval) fn today(name: &str, args: &[Quantity]) -> Result<Quantity, String> {
+    if !args.is_empty() {
+        return Err(format!("Function '{}' takes no arguments", name));
+    }
+    let tz = jiff::tz::TimeZone::system();
+    let (y, mo, d) = crate::math::datetime::today_in_zone(&tz);
+    let (epoch, offset) = crate::math::datetime::civil_to_epoch_in_zone(y, mo, d, 0, 0, 0, &tz)?;
+    Ok(datetime_quantity(
+        epoch,
+        crate::math::parser::DateTimeKind::Date,
+        offset,
+    ))
+}
+
+/// A dimensionless [`Quantity`] carrying an epoch-seconds value tagged for
+/// date/time rendering.
+fn datetime_quantity(
+    value: f64,
+    kind: crate::math::parser::DateTimeKind,
+    tz_offset_secs: i32,
+) -> Quantity {
+    Quantity {
+        value,
+        unit: None,
+        list: None,
+        is_bool: false,
+        display: Some(crate::math::parser::DisplayFormat::DateTime {
+            kind,
+            tz_offset_secs,
+        }),
+    }
+}

@@ -1552,6 +1552,8 @@ pub fn eval_expr(expr: &Expr, ctx: &mut Context) -> Result<Quantity, String> {
                 "fv" => builtins::finance::fv(&arg_vals),
                 "pv" => builtins::finance::pv(&arg_vals),
                 "range" => builtins::math::range(&arg_vals),
+                "now" => builtins::math::now(name, &arg_vals),
+                "today" => builtins::math::today(name, &arg_vals),
                 _ => {
                     // Custom user-defined functions
                     let (params, body) = ctx
@@ -2429,6 +2431,47 @@ mod tests {
             Expr::BinaryOp(Op::Add, _, _) => {}
             other => panic!("expected (… in km) + 5 m, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_now_today_builtins() {
+        use crate::math::parser::{DateTimeKind, DisplayFormat};
+        let mut ctx = Context::default();
+        let ev = |ctx: &mut Context, s: &str| {
+            let toks = crate::math::lexer::Lexer::new(s).lex().unwrap();
+            let e = crate::math::parser::Parser::new(toks).parse().unwrap();
+            eval_expr(&e, ctx)
+        };
+
+        // today() renders as a bare date; now() as a date-time.
+        let td = format_quantity(&ev(&mut ctx, "today()").unwrap());
+        assert!(td.len() == 10 && !td.contains('T'), "today() = {}", td);
+        let nw = format_quantity(&ev(&mut ctx, "now()").unwrap());
+        assert!(nw.contains('T'), "now() = {}", nw);
+
+        // now() − today() is the time since midnight: a non-negative sub-day
+        // duration in seconds (allow a DST-day margin).
+        let since = ev(&mut ctx, "now() - today()").unwrap();
+        assert_eq!(since.unit.as_deref(), Some("sec"));
+        assert!(
+            since.value >= 0.0 && since.value < 90000.0,
+            "seconds since midnight = {}",
+            since.value
+        );
+
+        // Composes with date arithmetic; today()+1 day stays a date.
+        let tomorrow = ev(&mut ctx, "today() + 1 day").unwrap();
+        assert!(matches!(
+            tomorrow.display,
+            Some(DisplayFormat::DateTime {
+                kind: DateTimeKind::Date,
+                ..
+            })
+        ));
+
+        // Both reject arguments.
+        assert!(ev(&mut ctx, "now(5)").is_err());
+        assert!(ev(&mut ctx, "today(1)").is_err());
     }
 
     #[test]
