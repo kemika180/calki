@@ -23,6 +23,7 @@ A terminal-based Markdown note-taking tool and interactive math sheet calculator
   ![Trip Planning & Speed Conversion](trip-planning.png)
 
 * **Wiki Link Navigation**: Create double-bracket links like `[[Project Goals]]` to connect notes. Press `Enter` on a link in Normal mode to jump to it, and `Backspace` or `Ctrl-o` to navigate back.
+* **Header Section Folding**: Collapse long notes by section. Press `za` or `Tab` on a Markdown header (`#`, `##`, …) to fold or unfold everything beneath it down to the next header of the same level, shown as a `▶ # Section (N lines folded)` marker. Folds nest, survive edits, and Vim motions step over them.
 * **Todo List Checkboxes**: Press `t` in Normal mode while hovering over any list line to toggle the checkbox state `[ ]` <-> `[x]`, or convert a plain list bullet into a checkbox item automatically.
 * **Custom Functions**: Define custom functions directly in your notes (e.g. `f(x) = x^2 + 2*x`) and use them elsewhere in the same file. They are also displayed under the Variables panel.
 * **Triple-Panel Layout**:
@@ -136,6 +137,8 @@ If you prefer to compile directly from the git repository:
 | --- | --- |
 | `t` (Normal) | Toggle todo item checkbox `[ ]` <=> `[x]` / Convert plain list bullet to todo checkbox |
 | `Ctrl-d` (Normal) | Delete the current wiki note (with confirmation) |
+| `za` or `Tab` (Normal) | Fold / unfold the Markdown header section at the cursor |
+| `>` / `<` (Visual) | Indent / dedent the selected lines by one level (spaces) |
 | `Enter` (Visual) | Wrap the highlighted selection in a `[[Wiki Link]]` |
 
 ---
