@@ -89,11 +89,14 @@ impl MouseEventHandler {
     }
 
     fn handle_scroll_up(state: &mut EditorState) {
-        if state.view.viewport.y > 0 {
-            state.view.viewport.y -= 1;
-            state.cursor.row = state.cursor.row.saturating_sub(1);
-        } else {
-            state.cursor.row = state.cursor.row.saturating_sub(1);
+        // Step by one *visible* row so scrolling walks over collapsed folds
+        // instead of stepping cursor/viewport into hidden rows.
+        let visible = state.visible_lines();
+        if let Some(prev_top) = visible.prev_before(state.view.viewport.y) {
+            state.view.viewport.y = prev_top;
+        }
+        if let Some(prev_cursor) = visible.prev_before(state.cursor.row) {
+            state.cursor.row = prev_cursor;
         }
         state.clamp_column();
         if state.mode == EditorMode::Visual {
@@ -102,13 +105,20 @@ impl MouseEventHandler {
     }
 
     fn handle_scroll_down(state: &mut EditorState) {
-        let last_visible_row = state.view.viewport.y + state.view.num_rows.saturating_sub(1);
-        let last_row = state.lines.last_row_index();
-        if last_visible_row < last_row {
-            state.view.viewport.y += 1;
-            state.cursor.row = (state.cursor.row + 1).min(last_row);
-        } else {
-            state.cursor.row = (state.cursor.row + 1).min(last_row);
+        let visible = state.visible_lines();
+        // Only scroll the viewport if a visible row still sits below the last
+        // one currently shown.
+        let top_ordinal = visible
+            .ordinal_at_or_after(state.view.viewport.y)
+            .unwrap_or(0);
+        let last_shown = top_ordinal + state.view.num_rows.saturating_sub(1);
+        if last_shown + 1 < visible.len()
+            && let Some(next_top) = visible.next_after(state.view.viewport.y)
+        {
+            state.view.viewport.y = next_top;
+        }
+        if let Some(next_cursor) = visible.next_after(state.cursor.row) {
+            state.cursor.row = next_cursor;
         }
         state.clamp_column();
         if state.mode == EditorMode::Visual {
@@ -143,7 +153,6 @@ fn mouse_position_to_cursor_position(
     mouse: &MousePosition,
     tab_width: usize,
 ) -> Index2 {
-    let mut row_index = state.view.viewport.y;
     let mut col_index = state.view.viewport.x;
 
     // Global -> editor coordinates
@@ -152,15 +161,32 @@ fn mouse_position_to_cursor_position(
         mouse.col.saturating_sub(state.view.screen_area.x.into()),
     );
 
+    // Screen rows map to *visible* buffer rows: collapsed folds remove rows from
+    // the painted sequence, so `mouse.row` counts visible rows from the first
+    // visible row at/after the viewport top.
+    let visible = state.visible_lines();
+    let top_ordinal = visible
+        .ordinal_at_or_after(state.view.viewport.y)
+        .unwrap_or(0);
+    let last_row = state.lines.last_row_index();
+
     if !state.view.wrap {
-        return Index2::new(
-            mouse.row.saturating_add(row_index),
-            mouse.col.saturating_add(col_index),
-        );
+        let row_index = visible
+            .to_buffer(top_ordinal + mouse.row)
+            .unwrap_or(last_row);
+        return Index2::new(row_index, mouse.col.saturating_add(col_index));
     }
 
     let mut row_screen_index = 0;
-    for line in state.lines.iter_row().skip(row_index) {
+    let mut row_index = visible.to_buffer(top_ordinal).unwrap_or(0);
+    for screen_row in top_ordinal.. {
+        let Some(buffer_row) = visible.to_buffer(screen_row) else {
+            break;
+        };
+        row_index = buffer_row;
+        let Some(line) = state.lines.get(jagged::index::RowIndex::new(buffer_row)) else {
+            break;
+        };
         let wrapped_line = LineWrapper::wrap_line(
             line,
             state.view.screen_area.width.into(),
@@ -173,7 +199,6 @@ fn mouse_position_to_cursor_position(
             break;
         }
         row_screen_index += wrapped_line_len;
-        row_index += 1;
     }
 
     Index2::new(row_index, col_index)
@@ -297,5 +322,44 @@ mod tests {
         MouseEventHandler::on_event(MouseEvent::ScrollUp(MousePosition::new(0, 0)), &mut state);
         assert_eq!(state.view.viewport.y, 0);
         assert_eq!(state.cursor.row, 0);
+    }
+
+    #[test]
+    fn click_below_fold_maps_to_correct_buffer_row() {
+        // # A (0), b1 (1), b2 (2), # B (3), c1 (4); fold A → visible rows 0,3,4.
+        let mut state = EditorState::new(Lines::from("# A\nb1\nb2\n# B\nc1"));
+        state.view.screen_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        state.view.viewport.y = 0;
+        state.folded.insert(0);
+
+        // Screen row 1 is "# B" (buffer row 3), NOT the hidden "b1" (row 1).
+        let hit = mouse_position_to_cursor_position(
+            &state,
+            &MousePosition::new(1, 0),
+            state.view.tab_width,
+        );
+        assert_eq!(hit.row, 3);
+        // Screen row 2 is "c1" (buffer row 4).
+        let hit2 = mouse_position_to_cursor_position(
+            &state,
+            &MousePosition::new(2, 0),
+            state.view.tab_width,
+        );
+        assert_eq!(hit2.row, 4);
+    }
+
+    #[test]
+    fn scroll_down_steps_over_fold() {
+        // Fold A hides rows 1,2 → visible sequence [0, 3, 4, 5].
+        let mut state = EditorState::new(Lines::from("# A\nb1\nb2\n# B\nc1\nc2"));
+        state.view.screen_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        state.view.num_rows = 2;
+        state.view.viewport.y = 0;
+        state.cursor.row = 0;
+        state.folded.insert(0);
+
+        MouseEventHandler::on_event(MouseEvent::ScrollDown(MousePosition::new(0, 0)), &mut state);
+        // Cursor advances to the next VISIBLE row (# B = 3), never into hidden 1/2.
+        assert_eq!(state.cursor.row, 3);
     }
 }

@@ -79,6 +79,33 @@ impl VisibleLines {
             Err(_) => self.rows.first().copied().unwrap_or(buffer_row),
         }
     }
+
+    /// On-screen ordinal of the first visible row at or after `buffer_row`
+    /// (the viewport top may point at a hidden row; the render starts painting
+    /// at the first visible row from there).
+    pub(crate) fn ordinal_at_or_after(&self, buffer_row: usize) -> Option<usize> {
+        match self.rows.binary_search(&buffer_row) {
+            Ok(pos) => Some(pos),
+            Err(pos) => (pos < self.rows.len()).then_some(pos),
+        }
+    }
+
+    /// The next visible buffer row strictly after `buffer_row`, if any.
+    pub(crate) fn next_after(&self, buffer_row: usize) -> Option<usize> {
+        let pos = match self.rows.binary_search(&buffer_row) {
+            Ok(p) => p + 1,
+            Err(p) => p,
+        };
+        self.rows.get(pos).copied()
+    }
+
+    /// The previous visible buffer row strictly before `buffer_row`, if any.
+    pub(crate) fn prev_before(&self, buffer_row: usize) -> Option<usize> {
+        let pos = match self.rows.binary_search(&buffer_row) {
+            Ok(p) | Err(p) => p,
+        };
+        (pos > 0).then(|| self.rows[pos - 1])
+    }
 }
 
 impl EditorState {
