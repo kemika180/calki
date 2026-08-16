@@ -299,8 +299,15 @@ pub(crate) fn render_editor(f: &mut Frame, app: &mut App, editor_area: Rect) {
         let text_width = inner_editor_area.width as usize;
         let wrap_width = text_width.saturating_sub(line_number_width);
 
+        // Rows hidden inside collapsed folds occupy no vertical space, so the
+        // scrolloff math below measures physical height over visible rows only.
+        let hidden = app.editor_state.hidden_rows();
+
         // Helper to get line height
         let get_line_height = |row: usize| -> usize {
+            if hidden.contains(&row) {
+                return 0;
+            }
             if let Some(line) = app.editor_state.lines.get(RowIndex::new(row)) {
                 estimate_line_height(line.as_slice(), wrap_width, 4)
             } else {
@@ -348,12 +355,26 @@ pub(crate) fn render_editor(f: &mut Frame, app: &mut App, editor_area: Rect) {
                 break;
             }
         }
-    } else {
+    } else if app.editor_state.folded.is_empty() {
         if cursor_row < y_offset + scrolloff {
             y_offset = cursor_row.saturating_sub(scrolloff);
         } else if cursor_row >= y_offset + viewport_height.saturating_sub(scrolloff) {
             y_offset = (cursor_row + scrolloff + 1).saturating_sub(viewport_height);
         }
+    } else {
+        // Fold-aware: keep `scrolloff` *visible* rows around the cursor so a
+        // collapsed section above it doesn't inflate the scroll distance.
+        let visible = app.editor_state.visible_lines();
+        let cursor_v = visible.to_visible(cursor_row).unwrap_or(0);
+        let top_v = visible.ordinal_at_or_after(y_offset).unwrap_or(0);
+        let new_top_v = if cursor_v < top_v + scrolloff {
+            cursor_v.saturating_sub(scrolloff)
+        } else if cursor_v >= top_v + viewport_height.saturating_sub(scrolloff) {
+            (cursor_v + scrolloff + 1).saturating_sub(viewport_height)
+        } else {
+            top_v
+        };
+        y_offset = visible.to_buffer(new_top_v).unwrap_or(y_offset);
     }
 
     app.editor_state.set_viewport_offset(x_offset, y_offset);

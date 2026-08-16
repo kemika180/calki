@@ -1,6 +1,7 @@
 use crate::edtui::{
     Lines,
     helper::{char_width, chars_width},
+    state::fold::VisibleLines,
     view::LineNumbers,
     view::line_wrapper::LineWrapper,
 };
@@ -146,6 +147,34 @@ impl ViewState {
             self.viewport.y += cursor_row.saturating_sub(max_cursor_pos);
         }
 
+        self.viewport.y
+    }
+
+    /// Fold-aware vertical viewport update: same scroll/scrolloff behaviour as
+    /// [`Self::update_viewport_vertical`] but measured in *visible* rows, so a
+    /// collapsed fold above the cursor doesn't inflate the scroll distance and
+    /// push the visible content off-screen.
+    pub(crate) fn update_viewport_vertical_folded(
+        &mut self,
+        height: usize,
+        cursor_row: usize,
+        visible: &VisibleLines,
+    ) -> usize {
+        let cursor_v = visible.to_visible(cursor_row).unwrap_or(0);
+        let top_v = visible.ordinal_at_or_after(self.viewport.y).unwrap_or(0);
+        let max_cursor_pos = height.saturating_sub(1) + top_v;
+
+        let mut new_top_v = top_v;
+        // scroll up
+        if cursor_v < top_v {
+            new_top_v = cursor_v;
+        }
+        // scroll down
+        if cursor_v >= max_cursor_pos {
+            new_top_v = top_v + cursor_v.saturating_sub(max_cursor_pos);
+        }
+
+        self.viewport.y = visible.to_buffer(new_top_v).unwrap_or(self.viewport.y);
         self.viewport.y
     }
 

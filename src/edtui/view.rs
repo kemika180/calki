@@ -265,17 +265,28 @@ impl Widget for EditorView<'_, '_> {
         // Update the view offset. Requires the screen size and the position
         // of the cursor. Updates the view offset only if the cursor is out
         // side of the view port. The state is stored in the `ViewOffset`.
+        // When folds are active the vertical offset is measured in visible
+        // rows; the no-fold fast path keeps the original buffer-row math.
+        let visible = (!self.state.folded.is_empty()).then(|| self.state.visible_lines());
         let view_state = &mut self.state.view;
         let (offset_x, offset_y) = if wrap_lines {
-            (
-                0,
-                view_state.update_viewport_vertical_wrap(width, height, cursor.row, lines),
-            )
+            let offset_y = match &visible {
+                // With folds active, keep the cursor within `height` *visible*
+                // rows of the viewport top (approximating each visible row as
+                // one screen row); calki has already set a fold-aware offset.
+                Some(v) => view_state.update_viewport_vertical_folded(height, cursor.row, v),
+                None => view_state.update_viewport_vertical_wrap(width, height, cursor.row, lines),
+            };
+            (0, offset_y)
         } else {
             let line = lines.get(RowIndex::new(cursor.row));
+            let offset_y = match &visible {
+                Some(v) => view_state.update_viewport_vertical_folded(height, cursor.row, v),
+                None => view_state.update_viewport_vertical(height, cursor.row),
+            };
             (
                 view_state.update_viewport_horizontal(width, cursor.col, line),
-                view_state.update_viewport_vertical(height, cursor.row),
+                offset_y,
             )
         };
 

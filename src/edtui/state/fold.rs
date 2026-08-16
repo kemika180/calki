@@ -383,6 +383,25 @@ mod tests {
     }
 
     #[test]
+    fn render_keeps_fold_marker_visible_when_cursor_is_below_it() {
+        // A large folded section then a small one: moving the cursor into the
+        // small section must not over-scroll the collapsed header off-screen.
+        let mut text = String::from("# Big");
+        for i in 1..=20 {
+            text.push_str(&format!("\nbig {i}"));
+        }
+        text.push_str("\n# Small\nsa\nsb");
+        let mut s = state(&text);
+        fold_at(&mut s, 0);
+        s.cursor = Index2::new(21, 0); // "# Small", just below the collapsed fold
+
+        let rows = rendered_rows(&mut s);
+        // The fold marker stays the top rendered row (visible-row scroll math).
+        assert!(rows[0].starts_with("▶ # Big"));
+        assert_eq!(&rows[1], "# Small");
+    }
+
+    #[test]
     fn render_marker_singular_line_count() {
         let mut s = state("# A\nonly-body");
         fold_at(&mut s, 0);
