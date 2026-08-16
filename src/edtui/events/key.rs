@@ -1005,6 +1005,9 @@ impl KeyEventHandler {
         // Else lookup an action from the register
         if let Some(mut action) = self.get(key_input, mode) {
             action.execute(state);
+            // Never leave the cursor stranded inside a collapsed fold, whatever
+            // motion / search / jump the action performed.
+            state.normalize_cursor_visible();
         }
     }
 }

@@ -1,5 +1,5 @@
 //! The editors state
-mod fold;
+pub(crate) mod fold;
 pub mod highlight;
 pub mod mode;
 mod search;

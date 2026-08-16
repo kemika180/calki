@@ -6,7 +6,9 @@
 //! keyed by header row; extents are recomputed from live header positions on
 //! every query so the model stays correct as the buffer changes.
 
+use crate::edtui::EditorMode;
 use crate::edtui::EditorState;
+use crate::edtui::state::selection::set_selection_with_lines;
 use crate::highlight::header_level;
 use std::collections::HashSet;
 
@@ -24,6 +26,58 @@ impl FoldRegion {
     /// Number of hidden body lines below the header.
     pub(crate) fn hidden_count(&self) -> usize {
         self.end_row - self.header_row - 1
+    }
+}
+
+/// The set of rows hidden by a list of fold regions. Shared by the render path
+/// and [`EditorState::hidden_rows`] so the two derivations never drift.
+pub(crate) fn hidden_rows_from(regions: &[FoldRegion]) -> HashSet<usize> {
+    regions
+        .iter()
+        .flat_map(|r| (r.header_row + 1)..r.end_row)
+        .collect()
+}
+
+/// The buffer↔screen line mapping: the ordered buffer rows that are actually
+/// visible (hidden fold bodies removed; folded headers kept as markers).
+///
+/// Every consumer that translates between buffer rows and on-screen rows —
+/// rendering, cursor motions, mouse hit-testing, viewport scrolling — routes
+/// through this so folds are handled in exactly one place instead of each
+/// caller re-deriving the row geometry (and getting it subtly wrong).
+pub(crate) struct VisibleLines {
+    /// Visible buffer rows in ascending order; the index is the on-screen
+    /// ordinal (0 = first rendered row).
+    rows: Vec<usize>,
+}
+
+impl VisibleLines {
+    /// Number of visible rows.
+    pub(crate) fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// The buffer row shown at on-screen ordinal `visible_idx`, if any.
+    pub(crate) fn to_buffer(&self, visible_idx: usize) -> Option<usize> {
+        self.rows.get(visible_idx).copied()
+    }
+
+    /// The on-screen ordinal of `buffer_row`, or `None` if it is hidden.
+    pub(crate) fn to_visible(&self, buffer_row: usize) -> Option<usize> {
+        self.rows.binary_search(&buffer_row).ok()
+    }
+
+    /// The visible buffer row nearest to `buffer_row`: `buffer_row` itself if
+    /// visible, otherwise the fold header just above it (the greatest visible
+    /// row below it), falling back to the first visible row. Keeps the cursor
+    /// out of hidden regions regardless of how it was placed.
+    pub(crate) fn snap(&self, buffer_row: usize) -> usize {
+        match self.rows.binary_search(&buffer_row) {
+            Ok(_) => buffer_row,
+            // `pos` is the insertion point: rows[pos-1] < buffer_row < rows[pos].
+            Err(pos) if pos > 0 => self.rows[pos - 1],
+            Err(_) => self.rows.first().copied().unwrap_or(buffer_row),
+        }
     }
 }
 
@@ -75,10 +129,21 @@ impl EditorState {
 
     /// The rows currently hidden inside collapsed folds.
     pub(crate) fn hidden_rows(&self) -> HashSet<usize> {
-        self.folded_regions()
-            .iter()
-            .flat_map(|r| (r.header_row + 1)..r.end_row)
-            .collect()
+        hidden_rows_from(&self.folded_regions())
+    }
+
+    /// The current buffer↔screen line mapping (see [`VisibleLines`]).
+    pub(crate) fn visible_lines(&self) -> VisibleLines {
+        let regions = self.folded_regions();
+        let rows = if regions.is_empty() {
+            (0..self.lines.len()).collect()
+        } else {
+            let hidden = hidden_rows_from(&regions);
+            (0..self.lines.len())
+                .filter(|r| !hidden.contains(r))
+                .collect()
+        };
+        VisibleLines { rows }
     }
 
     /// If `row` falls inside a collapsed fold, the visible header row of that
@@ -89,6 +154,24 @@ impl EditorState {
             .iter()
             .find(|r| row > r.header_row && row < r.end_row)
             .map_or(row, |r| r.header_row)
+    }
+
+    /// Snap the cursor onto the nearest visible row if it landed inside a
+    /// collapsed fold — the single normalization every input path runs after
+    /// mutating the cursor, so no motion, search, or jump can strand the cursor
+    /// on a hidden row. Cheap no-op when nothing is folded.
+    pub(crate) fn normalize_cursor_visible(&mut self) {
+        if self.folded.is_empty() {
+            return;
+        }
+        let snapped = self.visible_lines().snap(self.cursor.row);
+        if snapped != self.cursor.row {
+            self.cursor.row = snapped;
+            self.clamp_column();
+            if self.mode == EditorMode::Visual {
+                set_selection_with_lines(&mut self.selection, self.cursor, &self.lines);
+            }
+        }
     }
 
     /// Drop fold entries whose row is no longer a Markdown header — e.g. after
@@ -294,6 +377,42 @@ mod tests {
         s.reconcile_folds();
         assert!(s.folded.contains(&0));
         assert!(s.folded.contains(&2));
+    }
+
+    #[test]
+    fn visible_lines_maps_between_buffer_and_screen() {
+        // # A (0), b1 (1), b2 (2), # B (3), c1 (4); fold A hides rows 1,2.
+        let mut s = state("# A\nb1\nb2\n# B\nc1");
+        s.folded.insert(0);
+        let vl = s.visible_lines();
+
+        assert_eq!(vl.len(), 3); // rows 0, 3, 4 visible
+        assert_eq!(vl.to_buffer(0), Some(0)); // screen row 0 → "# A"
+        assert_eq!(vl.to_buffer(1), Some(3)); // screen row 1 → "# B"
+        assert_eq!(vl.to_buffer(2), Some(4)); // screen row 2 → "c1"
+        assert_eq!(vl.to_buffer(3), None);
+
+        assert_eq!(vl.to_visible(3), Some(1)); // "# B" is the 2nd visible row
+        assert_eq!(vl.to_visible(1), None); // hidden body row has no screen ordinal
+
+        // Hidden rows snap up to their fold header; visible rows are unchanged.
+        assert_eq!(vl.snap(1), 0);
+        assert_eq!(vl.snap(2), 0);
+        assert_eq!(vl.snap(3), 3);
+    }
+
+    #[test]
+    fn normalize_cursor_pulls_out_of_fold() {
+        let mut s = state("# A\nb1\nb2\n# B\nc1");
+        s.folded.insert(0);
+        s.cursor = Index2::new(2, 0); // stranded inside the fold (any jump/search)
+        s.normalize_cursor_visible();
+        assert_eq!(s.cursor.row, 0); // snapped onto the visible header
+
+        // No-op when the cursor is already visible.
+        s.cursor = Index2::new(3, 0);
+        s.normalize_cursor_visible();
+        assert_eq!(s.cursor.row, 3);
     }
 
     #[test]

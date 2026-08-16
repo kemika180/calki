@@ -29,7 +29,7 @@ use ratatui_core::{
     widgets::Widget,
 };
 pub use status_line::EditorStatusLine;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use theme::EditorTheme;
 
 /// Configuration for line numbers.
@@ -290,10 +290,7 @@ impl Widget for EditorView<'_, '_> {
         // markers. `hidden_rows` are skipped entirely; `fold_markers` maps a
         // visible header row to the number of body lines it conceals.
         let folded_regions = self.state.folded_regions();
-        let hidden_rows: HashSet<usize> = folded_regions
-            .iter()
-            .flat_map(|r| (r.header_row + 1)..r.end_row)
-            .collect();
+        let hidden_rows = crate::edtui::state::fold::hidden_rows_from(&folded_regions);
         let fold_markers: HashMap<usize, usize> = folded_regions
             .iter()
             .filter(|r| !hidden_rows.contains(&r.header_row))
