@@ -330,7 +330,7 @@ mod tests {
         let mut state = EditorState::new(Lines::from("# A\nb1\nb2\n# B\nc1"));
         state.view.screen_area = ratatui::layout::Rect::new(0, 0, 80, 24);
         state.view.viewport.y = 0;
-        state.folded.insert(0);
+        state.folded.insert(0, "# A".to_string());
 
         // Screen row 1 is "# B" (buffer row 3), NOT the hidden "b1" (row 1).
         let hit = mouse_position_to_cursor_position(
@@ -356,7 +356,7 @@ mod tests {
         state.view.num_rows = 2;
         state.view.viewport.y = 0;
         state.cursor.row = 0;
-        state.folded.insert(0);
+        state.folded.insert(0, "# A".to_string());
 
         MouseEventHandler::on_event(MouseEvent::ScrollDown(MousePosition::new(0, 0)), &mut state);
         // Cursor advances to the next VISIBLE row (# B = 3), never into hidden 1/2.

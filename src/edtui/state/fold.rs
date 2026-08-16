@@ -10,7 +10,8 @@ use crate::edtui::EditorMode;
 use crate::edtui::EditorState;
 use crate::edtui::state::selection::set_selection_with_lines;
 use crate::highlight::header_level;
-use std::collections::HashSet;
+use jagged::index::RowIndex;
+use std::collections::{HashMap, HashSet};
 
 /// A currently-collapsed header section.
 ///
@@ -143,7 +144,7 @@ impl EditorState {
         headers
             .iter()
             .enumerate()
-            .filter(|(_, (row, _))| self.folded.contains(row))
+            .filter(|(_, (row, _))| self.folded.contains_key(row))
             .filter_map(|(idx, (row, _))| {
                 let end_row = Self::section_end(&headers, idx, num_rows);
                 (end_row > row + 1).then_some(FoldRegion {
@@ -201,19 +202,36 @@ impl EditorState {
         }
     }
 
-    /// Drop fold entries whose row is no longer a Markdown header — e.g. after
-    /// the buffer was rebuilt or lines were inserted/deleted above a fold,
-    /// shifting header positions. Folds still anchored on a header are kept.
+    /// The text of buffer row `row` (empty string if out of bounds).
+    fn row_text(&self, row: usize) -> String {
+        self.lines
+            .get(RowIndex::new(row))
+            .map(|chars| chars.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Drop fold entries that no longer sit on the *same* header — e.g. after the
+    /// buffer was rebuilt or lines were inserted/deleted, shifting header
+    /// positions. A fold is kept only if the exact header text it was created
+    /// against is still a header at that row.
     ///
-    /// This prevents stale row indices from lingering (and a later header
-    /// reappearing at a stale index from surprise-folding). Called wherever the
-    /// buffer may have changed structurally.
+    /// Matching on text identity (not just header-ness) is what stops an
+    /// inserted or renamed header from silently inheriting an unrelated fold.
     pub(crate) fn reconcile_folds(&mut self) {
         if self.folded.is_empty() {
             return;
         }
-        let headers: HashSet<usize> = self.header_rows().into_iter().map(|(row, _)| row).collect();
-        self.folded.retain(|row| headers.contains(row));
+        // Current header rows → their text.
+        let current: HashMap<usize, String> = self
+            .lines
+            .iter_row()
+            .enumerate()
+            .filter_map(|(row, chars)| {
+                header_level(chars).map(|_| (row, chars.iter().collect::<String>()))
+            })
+            .collect();
+        self.folded
+            .retain(|row, text| current.get(row) == Some(text));
     }
 
     /// Toggle the fold of the header section enclosing (or at) the cursor.
@@ -232,10 +250,10 @@ impl EditorState {
             return;
         };
 
-        if self.folded.contains(&header_row) {
+        if self.folded.contains_key(&header_row) {
             self.folded.remove(&header_row);
         } else {
-            self.folded.insert(header_row);
+            self.folded.insert(header_row, self.row_text(header_row));
             if cursor_row > header_row {
                 self.cursor.row = header_row;
                 self.clamp_column();
@@ -251,6 +269,13 @@ mod tests {
 
     fn state(text: &str) -> EditorState {
         EditorState::new(Lines::from(text))
+    }
+
+    /// Collapse the header at `row`, recording its current text (as the real
+    /// toggle path does) so reconcile can check header identity.
+    fn fold_at(s: &mut EditorState, row: usize) {
+        let text = s.row_text(row);
+        s.folded.insert(row, text);
     }
 
     /// Render `state` into a fixed area and return the visible text of each row.
@@ -273,7 +298,7 @@ mod tests {
     fn folded_regions_computes_extent_to_next_same_level_header() {
         // # A (0), body (1,2), # B (3)
         let mut s = state("# A\nbody1\nbody2\n# B\nbody3");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         let regions = s.folded_regions();
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0].header_row, 0);
@@ -285,7 +310,7 @@ mod tests {
     fn subheader_does_not_close_a_higher_level_section() {
         // # A (0), ## sub (1), body (2), # B (3): folding A swallows the ## section.
         let mut s = state("# A\n## sub\nbody\n# B");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         let regions = s.folded_regions();
         assert_eq!(regions[0].end_row, 3);
         assert_eq!(regions[0].hidden_count(), 2); // "## sub" + "body"
@@ -294,7 +319,7 @@ mod tests {
     #[test]
     fn last_section_extends_to_end_of_buffer() {
         let mut s = state("intro\n# A\nb1\nb2");
-        s.folded.insert(1);
+        fold_at(&mut s, 1);
         let regions = s.folded_regions();
         assert_eq!(regions[0].end_row, 4);
         assert_eq!(regions[0].hidden_count(), 2);
@@ -304,7 +329,7 @@ mod tests {
     fn empty_section_is_not_a_region() {
         // Header immediately followed by another same-level header: nothing to hide.
         let mut s = state("# A\n# B");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         assert!(s.folded_regions().is_empty());
     }
 
@@ -313,7 +338,7 @@ mod tests {
         let mut s = state("# A\nb1\nb2");
         s.cursor = Index2::new(0, 0);
         s.toggle_fold_at_cursor();
-        assert!(s.folded.contains(&0));
+        assert!(s.folded.contains_key(&0));
         s.toggle_fold_at_cursor();
         assert!(s.folded.is_empty());
     }
@@ -323,7 +348,7 @@ mod tests {
         let mut s = state("# A\nb1\nb2");
         s.cursor = Index2::new(2, 0); // inside the body
         s.toggle_fold_at_cursor();
-        assert!(s.folded.contains(&0));
+        assert!(s.folded.contains_key(&0));
         assert_eq!(s.cursor.row, 0); // cursor pulled to the header
     }
 
@@ -333,8 +358,8 @@ mod tests {
         let mut s = state("# A\n## sub\nbody");
         s.cursor = Index2::new(2, 0);
         s.toggle_fold_at_cursor();
-        assert!(s.folded.contains(&1));
-        assert!(!s.folded.contains(&0));
+        assert!(s.folded.contains_key(&1));
+        assert!(!s.folded.contains_key(&0));
     }
 
     #[test]
@@ -348,7 +373,7 @@ mod tests {
         assert_eq!(&rows[3], "# B");
 
         // Folded: "# A"'s body collapses to a marker; "# B" shifts up into its place.
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         let rows = rendered_rows(&mut s);
         assert_eq!(&rows[0], "▶ # A (2 lines folded)");
         assert_eq!(&rows[1], "# B");
@@ -360,7 +385,7 @@ mod tests {
     #[test]
     fn render_marker_singular_line_count() {
         let mut s = state("# A\nonly-body");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         let rows = rendered_rows(&mut s);
         assert_eq!(&rows[0], "▶ # A (1 line folded)");
     }
@@ -370,7 +395,7 @@ mod tests {
         use crate::edtui::actions::{Execute, MoveDown, MoveUp};
         // # A (0), b1 (1), b2 (2), # B (3), c1 (4); fold A → 1,2 hidden.
         let mut s = state("# A\nb1\nb2\n# B\nc1");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         s.cursor = Index2::new(0, 0);
 
         MoveDown(1).execute(&mut s);
@@ -383,34 +408,48 @@ mod tests {
     #[test]
     fn reconcile_prunes_entries_no_longer_on_a_header() {
         let mut s = state("# A\nbody\n# B\nbody");
-        s.folded.insert(0);
-        s.folded.insert(2);
+        fold_at(&mut s, 0);
+        fold_at(&mut s, 2);
 
         // Row 2 stops being a header (edited to plain text); row 0 unchanged.
         s.lines = Lines::from("# A\nbody\nBudget\nbody");
         s.reconcile_folds();
 
-        assert!(s.folded.contains(&0)); // still a header → kept
-        assert!(!s.folded.contains(&2)); // no longer a header → pruned
+        assert!(s.folded.contains_key(&0)); // still a header → kept
+        assert!(!s.folded.contains_key(&2)); // no longer a header → pruned
     }
 
     #[test]
     fn reconcile_keeps_folds_when_headers_unchanged() {
         let mut s = state("# A\nb1\n# B\nb2");
-        s.folded.insert(0);
-        s.folded.insert(2);
+        fold_at(&mut s, 0);
+        fold_at(&mut s, 2);
         // A content-only rebuild (math result appended) leaves headers in place.
         s.lines = Lines::from("# A\nb1 => 1\n# B\nb2 => 2");
         s.reconcile_folds();
-        assert!(s.folded.contains(&0));
-        assert!(s.folded.contains(&2));
+        assert!(s.folded.contains_key(&0));
+        assert!(s.folded.contains_key(&2));
+    }
+
+    #[test]
+    fn reconcile_does_not_transfer_fold_to_a_different_header_at_the_same_row() {
+        // The finding-#4 scenario: fold "# Foo", then insert a header above it.
+        let mut s = state("# Foo\nbody\nmore");
+        fold_at(&mut s, 0);
+        // "# Foo" shifts to row 2; row 0 is now a *different* header, "# New".
+        s.lines = Lines::from("# New\nintro\n# Foo\nbody\nmore");
+        s.reconcile_folds();
+        // Identity check: the fold must NOT jump onto "# New" (that was the bug),
+        // and is conservatively dropped rather than silently relocated.
+        assert!(!s.folded.contains_key(&0));
+        assert!(s.folded.is_empty());
     }
 
     #[test]
     fn visible_lines_maps_between_buffer_and_screen() {
         // # A (0), b1 (1), b2 (2), # B (3), c1 (4); fold A hides rows 1,2.
         let mut s = state("# A\nb1\nb2\n# B\nc1");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         let vl = s.visible_lines();
 
         assert_eq!(vl.len(), 3); // rows 0, 3, 4 visible
@@ -431,7 +470,7 @@ mod tests {
     #[test]
     fn normalize_cursor_pulls_out_of_fold() {
         let mut s = state("# A\nb1\nb2\n# B\nc1");
-        s.folded.insert(0);
+        fold_at(&mut s, 0);
         s.cursor = Index2::new(2, 0); // stranded inside the fold (any jump/search)
         s.normalize_cursor_visible();
         assert_eq!(s.cursor.row, 0); // snapped onto the visible header
@@ -448,7 +487,7 @@ mod tests {
         use crate::edtui::actions::motion::MoveToLastRow;
         // intro (0), # A (1), b1 (2), b2 (3); fold A → 2,3 hidden, last row hidden.
         let mut s = state("intro\n# A\nb1\nb2");
-        s.folded.insert(1);
+        fold_at(&mut s, 1);
         s.cursor = Index2::new(0, 0);
 
         MoveToLastRow().execute(&mut s);
