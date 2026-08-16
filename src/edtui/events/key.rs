@@ -14,13 +14,14 @@ use crate::edtui::actions::motion::{
 use crate::edtui::actions::search::StartSearch;
 use crate::edtui::actions::{
     Action, AppendCharToSearch, AppendNewline, Chainable, ChangeInnerBetween, ChangeInnerWord,
-    ChangeSelection, CopyLine, CopySelection, DeleteChar, DeleteLine, DeleteSelection, Execute,
-    FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, JoinLineWithLineBelow, LineBreak,
-    MoveBackward, MoveDown, MoveForward, MoveHalfPageUp, MoveParagraphBackward,
-    MoveParagraphForward, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine,
-    MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord, Paste, Redo, RemoveChar,
-    RemoveCharFromSearch, SelectCurrentSearch, SelectInnerBetween, SelectInnerWord, SelectLine,
-    StopSearch, SwitchMode, ToggleCase, ToggleFold, Undo,
+    ChangeSelection, CopyLine, CopySelection, DedentSelection, DeleteChar, DeleteLine,
+    DeleteSelection, Execute, FindFirst, FindNext, FindPrevious, IndentSelection, InsertChar,
+    InsertNewline, JoinLineWithLineBelow, LineBreak, MoveBackward, MoveDown, MoveForward,
+    MoveHalfPageUp, MoveParagraphBackward, MoveParagraphForward, MoveToEndOfLine, MoveToFirst,
+    MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward,
+    MoveWordForwardToEndOfWord, Paste, Redo, RemoveChar, RemoveCharFromSearch, SelectCurrentSearch,
+    SelectInnerBetween, SelectInnerWord, SelectLine, StopSearch, SwitchMode, ToggleCase,
+    ToggleFold, Undo,
 };
 use crate::edtui::events::KeyInput;
 use crate::edtui::{EditorMode, EditorState};
@@ -350,6 +351,15 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         (
             KeyEventRegister::v(vec![KeyInput::new('~')]),
             ToggleCase.into(),
+        ),
+        // Visual-mode indentation (spaces, one `tab_width` level per press).
+        (
+            KeyEventRegister::v(vec![KeyInput::new('>')]),
+            IndentSelection.into(),
+        ),
+        (
+            KeyEventRegister::v(vec![KeyInput::new('<')]),
+            DedentSelection.into(),
         ),
         (
             KeyEventRegister::n(vec![KeyInput::ctrl('d')]),

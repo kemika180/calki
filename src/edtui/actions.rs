@@ -1,6 +1,7 @@
 //! Editor actions such as move, insert, delete
 pub mod cpaste;
 pub mod delete;
+pub mod indent;
 pub mod insert;
 pub mod motion;
 pub mod search;
@@ -21,6 +22,7 @@ pub use self::delete::{
     DeleteChar, DeleteCharForward, DeleteLine, DeleteSelection, DeleteToFirstCharOfLine,
     DeleteWordBackward, DeleteWordForward, JoinLineWithLineBelow, RemoveChar, ReplaceChar,
 };
+pub use self::indent::{DedentSelection, IndentSelection};
 pub use self::insert::{AppendNewline, InsertChar, InsertNewline, LineBreak};
 pub use self::motion::{
     MoveBackward, MoveDown, MoveForward, MoveHalfPageDown, MoveHalfPageUp, MovePageDown,
@@ -99,6 +101,8 @@ pub enum Action {
     RemoveCharFromSearch(RemoveCharFromSearch),
     ToggleCase(ToggleCase),
     ToggleFold(ToggleFold),
+    IndentSelection(IndentSelection),
+    DedentSelection(DedentSelection),
     #[cfg(feature = "system-editor")]
     OpenSystemEditor(OpenSystemEditor),
 }
