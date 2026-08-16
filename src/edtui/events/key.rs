@@ -20,7 +20,7 @@ use crate::edtui::actions::{
     MoveParagraphForward, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine,
     MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord, Paste, Redo, RemoveChar,
     RemoveCharFromSearch, SelectCurrentSearch, SelectInnerBetween, SelectInnerWord, SelectLine,
-    StopSearch, SwitchMode, ToggleCase, Undo,
+    StopSearch, SwitchMode, ToggleCase, ToggleFold, Undo,
 };
 use crate::edtui::events::KeyInput;
 use crate::edtui::{EditorMode, EditorState};
@@ -321,6 +321,15 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         (
             KeyEventRegister::n(vec![KeyInput::new('~')]),
             ToggleCase.into(),
+        ),
+        // Toggle the fold of the header section at/enclosing the cursor.
+        (
+            KeyEventRegister::n(vec![KeyInput::new('z'), KeyInput::new('a')]),
+            ToggleFold.into(),
+        ),
+        (
+            KeyEventRegister::n(vec![KeyInput::new(KeyCode::Tab)]),
+            ToggleFold.into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::new('0')]),

@@ -98,6 +98,7 @@ pub enum Action {
     AppendCharToSearch(AppendCharToSearch),
     RemoveCharFromSearch(RemoveCharFromSearch),
     ToggleCase(ToggleCase),
+    ToggleFold(ToggleFold),
     #[cfg(feature = "system-editor")]
     OpenSystemEditor(OpenSystemEditor),
 }
@@ -220,6 +221,16 @@ impl Execute for ToggleCase {
                 }
             }
         }
+    }
+}
+
+/// Toggles the fold of the Markdown header section at (or enclosing) the cursor.
+#[derive(Clone, Debug)]
+pub struct ToggleFold;
+
+impl Execute for ToggleFold {
+    fn execute(&mut self, state: &mut EditorState) {
+        state.toggle_fold_at_cursor();
     }
 }
 

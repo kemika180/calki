@@ -29,6 +29,7 @@ use ratatui_core::{
     widgets::Widget,
 };
 pub use status_line::EditorStatusLine;
+use std::collections::{HashMap, HashSet};
 use theme::EditorTheme;
 
 /// Configuration for line numbers.
@@ -285,6 +286,24 @@ impl Widget for EditorView<'_, '_> {
         };
         let selections = vec![&self.state.selection, &search_selection];
 
+        // Fold regions: hide collapsed section bodies and paint their headers as
+        // markers. `hidden_rows` are skipped entirely; `fold_markers` maps a
+        // visible header row to the number of body lines it conceals.
+        let folded_regions = self.state.folded_regions();
+        let hidden_rows: HashSet<usize> = folded_regions
+            .iter()
+            .flat_map(|r| (r.header_row + 1)..r.end_row)
+            .collect();
+        let fold_markers: HashMap<usize, usize> = folded_regions
+            .iter()
+            .filter(|r| !hidden_rows.contains(&r.header_row))
+            .map(|r| (r.header_row, r.hidden_count()))
+            .collect();
+        let fold_marker_style = self
+            .theme
+            .base
+            .add_modifier(ratatui_core::style::Modifier::DIM);
+
         let mut cursor_position: Option<Position> = None;
         let mut content_area = content_main;
         let mut gutter_row_area = gutter_area;
@@ -299,20 +318,29 @@ impl Widget for EditorView<'_, '_> {
                 break;
             }
 
+            // Skip rows hidden inside a collapsed fold.
+            if hidden_rows.contains(&row_index) {
+                continue;
+            }
+
             let col_skips = offset_x;
             num_rendered_rows += 1;
 
-            let spans = generate_spans(
-                line,
-                &selections,
-                &self.state.highlights,
-                row_index,
-                col_skips,
-                &self.theme.base,
-                &self.theme.selection_style,
-                #[cfg(feature = "syntax-highlighting")]
-                self.syntax_highlighter.as_ref(),
-            );
+            let spans = if let Some(&hidden_count) = fold_markers.get(&row_index) {
+                fold_marker_spans(line, hidden_count, fold_marker_style)
+            } else {
+                generate_spans(
+                    line,
+                    &selections,
+                    &self.state.highlights,
+                    row_index,
+                    col_skips,
+                    &self.theme.base,
+                    &self.theme.selection_style,
+                    #[cfg(feature = "syntax-highlighting")]
+                    self.syntax_highlighter.as_ref(),
+                )
+            };
 
             let render_line = if wrap_lines {
                 RenderLine::Wrapped(LineWrapper::wrap_spans(spans, width, tab_width))
@@ -415,6 +443,16 @@ impl Widget for EditorView<'_, '_> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Builds the single-line span for a collapsed section's header, e.g.
+/// `▶ # Planning (15 lines folded)`. Rendered as plain styled text — it is a
+/// synthetic row, not a buffer line, so it bypasses syntax highlighting.
+fn fold_marker_spans(header: &[char], hidden_count: usize, style: Style) -> Vec<Span<'static>> {
+    let header_text: String = header.iter().collect();
+    let plural = if hidden_count == 1 { "" } else { "s" };
+    let text = format!("▶ {header_text} ({hidden_count} line{plural} folded)");
+    vec![Span::styled(text, style)]
+}
+
 fn generate_spans<'a>(
     line: &[char],
     selections: &[&Option<Selection>],

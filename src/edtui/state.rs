@@ -1,4 +1,5 @@
 //! The editors state
+mod fold;
 pub mod highlight;
 pub mod mode;
 mod search;
@@ -15,6 +16,7 @@ use crate::edtui::clipboard::{Clipboard, ClipboardTrait};
 use crate::edtui::helper::max_col;
 use crate::edtui::{Index2, Lines};
 use ratatui_core::layout::Position;
+use std::collections::HashSet;
 
 /// Represents the state of an editor.
 #[derive(Clone)]
@@ -33,6 +35,10 @@ pub struct EditorState {
 
     /// Custom highlight ranges with their styles.
     pub highlights: Vec<Highlight>,
+
+    /// Buffer rows of Markdown headers whose sections are currently collapsed.
+    /// Keyed by header row; reconciled against live header positions on edits.
+    pub(crate) folded: HashSet<usize>,
 
     /// Internal view state of the editor.
     pub(crate) view: ViewState,
@@ -79,6 +85,7 @@ impl EditorState {
             mode: EditorMode::Normal,
             selection: None,
             highlights: Vec::new(),
+            folded: HashSet::new(),
             view: ViewState::default(),
             search: SearchState::default(),
             undo: Stack::new(),
