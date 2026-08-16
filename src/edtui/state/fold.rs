@@ -91,6 +91,21 @@ impl EditorState {
             .map_or(row, |r| r.header_row)
     }
 
+    /// Drop fold entries whose row is no longer a Markdown header — e.g. after
+    /// the buffer was rebuilt or lines were inserted/deleted above a fold,
+    /// shifting header positions. Folds still anchored on a header are kept.
+    ///
+    /// This prevents stale row indices from lingering (and a later header
+    /// reappearing at a stale index from surprise-folding). Called wherever the
+    /// buffer may have changed structurally.
+    pub(crate) fn reconcile_folds(&mut self) {
+        if self.folded.is_empty() {
+            return;
+        }
+        let headers: HashSet<usize> = self.header_rows().into_iter().map(|(row, _)| row).collect();
+        self.folded.retain(|row| headers.contains(row));
+    }
+
     /// Toggle the fold of the header section enclosing (or at) the cursor.
     ///
     /// Targets the innermost section, i.e. the nearest header at or above the
@@ -253,6 +268,32 @@ mod tests {
 
         MoveUp(1).execute(&mut s);
         assert_eq!(s.cursor.row, 0); // back to the header, not into the fold
+    }
+
+    #[test]
+    fn reconcile_prunes_entries_no_longer_on_a_header() {
+        let mut s = state("# A\nbody\n# B\nbody");
+        s.folded.insert(0);
+        s.folded.insert(2);
+
+        // Row 2 stops being a header (edited to plain text); row 0 unchanged.
+        s.lines = Lines::from("# A\nbody\nBudget\nbody");
+        s.reconcile_folds();
+
+        assert!(s.folded.contains(&0)); // still a header → kept
+        assert!(!s.folded.contains(&2)); // no longer a header → pruned
+    }
+
+    #[test]
+    fn reconcile_keeps_folds_when_headers_unchanged() {
+        let mut s = state("# A\nb1\n# B\nb2");
+        s.folded.insert(0);
+        s.folded.insert(2);
+        // A content-only rebuild (math result appended) leaves headers in place.
+        s.lines = Lines::from("# A\nb1 => 1\n# B\nb2 => 2");
+        s.reconcile_folds();
+        assert!(s.folded.contains(&0));
+        assert!(s.folded.contains(&2));
     }
 
     #[test]

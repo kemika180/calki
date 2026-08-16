@@ -647,6 +647,9 @@ impl App {
 
     // Updates highlights based on syntax highlighting and selected variable
     fn update_highlights(&mut self) {
+        // Prune fold entries orphaned by structural edits before we render.
+        self.editor_state.reconcile_folds();
+
         let vecs: Vec<&[char]> = self
             .editor_state
             .lines
