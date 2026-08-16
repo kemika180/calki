@@ -8,6 +8,7 @@
 
 use crate::edtui::EditorState;
 use crate::highlight::header_level;
+use std::collections::HashSet;
 
 /// A currently-collapsed header section.
 ///
@@ -70,6 +71,24 @@ impl EditorState {
                 })
             })
             .collect()
+    }
+
+    /// The rows currently hidden inside collapsed folds.
+    pub(crate) fn hidden_rows(&self) -> HashSet<usize> {
+        self.folded_regions()
+            .iter()
+            .flat_map(|r| (r.header_row + 1)..r.end_row)
+            .collect()
+    }
+
+    /// If `row` falls inside a collapsed fold, the visible header row of that
+    /// fold; otherwise `row` unchanged. Used to keep the cursor out of hidden
+    /// regions after absolute jumps.
+    pub(crate) fn visible_anchor_row(&self, row: usize) -> usize {
+        self.folded_regions()
+            .iter()
+            .find(|r| row > r.header_row && row < r.end_row)
+            .map_or(row, |r| r.header_row)
     }
 
     /// Toggle the fold of the header section enclosing (or at) the cursor.
@@ -219,5 +238,33 @@ mod tests {
         s.folded.insert(0);
         let rows = rendered_rows(&mut s);
         assert_eq!(&rows[0], "▶ # A (1 line folded)");
+    }
+
+    #[test]
+    fn move_down_skips_folded_body() {
+        use crate::edtui::actions::{Execute, MoveDown, MoveUp};
+        // # A (0), b1 (1), b2 (2), # B (3), c1 (4); fold A → 1,2 hidden.
+        let mut s = state("# A\nb1\nb2\n# B\nc1");
+        s.folded.insert(0);
+        s.cursor = Index2::new(0, 0);
+
+        MoveDown(1).execute(&mut s);
+        assert_eq!(s.cursor.row, 3); // jumped over hidden b1/b2 to "# B"
+
+        MoveUp(1).execute(&mut s);
+        assert_eq!(s.cursor.row, 0); // back to the header, not into the fold
+    }
+
+    #[test]
+    fn move_to_last_row_snaps_out_of_trailing_fold() {
+        use crate::edtui::actions::Execute;
+        use crate::edtui::actions::motion::MoveToLastRow;
+        // intro (0), # A (1), b1 (2), b2 (3); fold A → 2,3 hidden, last row hidden.
+        let mut s = state("intro\n# A\nb1\nb2");
+        s.folded.insert(1);
+        s.cursor = Index2::new(0, 0);
+
+        MoveToLastRow().execute(&mut s);
+        assert_eq!(s.cursor.row, 1); // snapped to the visible header, not hidden row 3
     }
 }

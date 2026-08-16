@@ -55,11 +55,13 @@ pub struct MoveUp(pub usize);
 
 impl Execute for MoveUp {
     fn execute(&mut self, state: &mut EditorState) {
+        let hidden = state.hidden_rows();
         for _ in 0..self.0 {
-            if state.cursor.row == 0 {
+            let next = prev_visible_row(state.cursor.row, &hidden);
+            if next == state.cursor.row {
                 break;
             }
-            state.cursor.row = state.cursor.row.saturating_sub(1);
+            state.cursor.row = next;
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -72,16 +74,44 @@ pub struct MoveDown(pub usize);
 
 impl Execute for MoveDown {
     fn execute(&mut self, state: &mut EditorState) {
+        let hidden = state.hidden_rows();
+        let last = state.lines.len().saturating_sub(1);
         for _ in 0..self.0 {
-            if state.cursor.row >= state.lines.len().saturating_sub(1) {
+            let next = next_visible_row(state.cursor.row, last, &hidden);
+            if next == state.cursor.row {
                 break;
             }
-            state.cursor.row += 1;
+            state.cursor.row = next;
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
         }
     }
+}
+
+/// Nearest visible row above `row`, skipping rows hidden inside collapsed folds.
+/// Returns `row` unchanged if none exists (the cursor stays put).
+fn prev_visible_row(row: usize, hidden: &std::collections::HashSet<usize>) -> usize {
+    let mut r = row;
+    while r > 0 {
+        r -= 1;
+        if !hidden.contains(&r) {
+            return r;
+        }
+    }
+    row
+}
+
+/// Nearest visible row below `row` (not exceeding `last`), skipping folded rows.
+fn next_visible_row(row: usize, last: usize, hidden: &std::collections::HashSet<usize>) -> usize {
+    let mut r = row;
+    while r < last {
+        r += 1;
+        if !hidden.contains(&r) {
+            return r;
+        }
+    }
+    row
 }
 
 /// Move one word forward. Breaks on the first character that is not of
@@ -304,7 +334,9 @@ pub struct MoveToLastRow();
 
 impl Execute for MoveToLastRow {
     fn execute(&mut self, state: &mut EditorState) {
-        state.cursor.row = state.lines.len().saturating_sub(1);
+        let last = state.lines.len().saturating_sub(1);
+        // Don't land inside a fold collapsed at the end of the buffer.
+        state.cursor.row = state.visible_anchor_row(last);
 
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
