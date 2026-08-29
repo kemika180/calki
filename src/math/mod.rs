@@ -142,6 +142,11 @@ pub fn evaluate_sheet(
                     updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
                 }
             },
+            // Registration wired in a later commit; for now echo the line unchanged
+            // (byte-identical to its former `Line::Text` output — no behavior change).
+            Line::UnitDefinition { .. } => {
+                updated_lines.push(line_text.to_string());
+            }
         }
     }
 

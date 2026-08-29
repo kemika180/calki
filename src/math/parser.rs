@@ -152,6 +152,18 @@ pub enum Line {
         raw_prefix: String,
         current_result: Option<String>,
     },
+    /// A physics-style unit equivalence: `N a = M b` (e.g. `1 jabberwock = 2 jumjumtrees`).
+    /// The explicit leading coefficient on the left disambiguates this from a normal
+    /// `name = expr` assignment. Resolution (which side is the new unit) happens at
+    /// registration time, not here.
+    UnitDefinition {
+        lhs_coeff: f64,
+        lhs_unit: String,
+        rhs_coeff: f64,
+        rhs_unit: String,
+        raw_prefix: String,
+        current_result: Option<String>,
+    },
 }
 
 pub struct Parser {
@@ -690,6 +702,37 @@ fn infix_binding_power(op: &Token) -> Option<(u8, u8)> {
 }
 
 // Parses a full document line (either assignment, evaluation, fn def, or plain markdown)
+/// Parse one side of a unit equivalence: `<number?> <single unit identifier>`, e.g.
+/// `"1 jabberwock"` → `(1.0, "jabberwock")`, `"jumjumtrees"` → `(1.0, "jumjumtrees")`.
+/// The numeric coefficient is mandatory when `coeff_required` (the LHS, our
+/// disambiguator against normal assignments). The unit must be a single identifier
+/// (compound units like `km/h` are deliberately not matched here). Returns `None`
+/// if the side doesn't fit this shape.
+fn parse_unit_side(s: &str, coeff_required: bool) -> Option<(f64, String)> {
+    let s = s.trim();
+    let num_len = s
+        .bytes()
+        .take_while(|b| b.is_ascii_digit() || *b == b'.')
+        .count();
+    let (num_str, rest) = s.split_at(num_len);
+    let rest = rest.trim();
+    let coeff = if num_str.is_empty() {
+        if coeff_required {
+            return None;
+        }
+        1.0
+    } else {
+        num_str.parse::<f64>().ok()?
+    };
+    let mut chars = rest.chars();
+    let starts_ok = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_');
+    if starts_ok && rest.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        Some((coeff, rest.to_string()))
+    } else {
+        None
+    }
+}
+
 pub fn parse_line(line_text: &str) -> Line {
     use crate::math::lexer::Lexer;
 
@@ -773,6 +816,34 @@ pub fn parse_line(line_text: &str) -> Line {
                     }
                 }
             }
+
+            // Physics-style unit equivalence: `N a = M b`. Only reached when the LHS
+            // is not a bare identifier (so it can't be a normal assignment) — the
+            // explicit leading coefficient is the disambiguator. `1 jabberwock = 2
+            // jumjumtrees` claims a line that would otherwise be inert markdown text.
+            let (rhs_side, current_result) = match right_part.find("=>") {
+                Some(arrow_pos) => {
+                    let res_str = right_part[arrow_pos + 2..].trim();
+                    let cur = (!res_str.is_empty()).then(|| res_str.to_string());
+                    (right_part[..arrow_pos].trim(), cur)
+                }
+                None => (right_part, None),
+            };
+            if let (Some((lhs_coeff, lhs_unit)), Some((rhs_coeff, rhs_unit))) = (
+                parse_unit_side(left_part, true),
+                parse_unit_side(rhs_side, false),
+            ) {
+                let eq_idx = line_text.find('=').unwrap();
+                let raw_prefix = line_text[..eq_idx + 1].to_string();
+                return Line::UnitDefinition {
+                    lhs_coeff,
+                    lhs_unit,
+                    rhs_coeff,
+                    rhs_unit,
+                    raw_prefix,
+                    current_result,
+                };
+            }
         }
     }
 
@@ -812,6 +883,50 @@ mod tests {
     fn parse_str(input: &str) -> Expr {
         let tokens = Lexer::new(input).lex().unwrap();
         Parser::new(tokens).parse().unwrap()
+    }
+
+    #[test]
+    fn test_unit_definition_parsing() {
+        // `N a = M b` with an explicit leading coefficient → UnitDefinition.
+        match parse_line("1 jabberwock = 2 jumjumtrees") {
+            Line::UnitDefinition {
+                lhs_coeff,
+                lhs_unit,
+                rhs_coeff,
+                rhs_unit,
+                ..
+            } => {
+                assert_eq!(lhs_coeff, 1.0);
+                assert_eq!(lhs_unit, "jabberwock");
+                assert_eq!(rhs_coeff, 2.0);
+                assert_eq!(rhs_unit, "jumjumtrees");
+            }
+            other => panic!("expected UnitDefinition, got {other:?}"),
+        }
+
+        // RHS coefficient defaults to 1.0 when omitted.
+        match parse_line("2 flurple = smerkle") {
+            Line::UnitDefinition {
+                rhs_coeff,
+                rhs_unit,
+                ..
+            } => {
+                assert_eq!(rhs_coeff, 1.0);
+                assert_eq!(rhs_unit, "smerkle");
+            }
+            other => panic!("expected UnitDefinition, got {other:?}"),
+        }
+
+        // Regression: a bare-identifier LHS stays a normal Assignment (could be
+        // variable arithmetic like `x = 2 y`), never a unit definition.
+        assert!(matches!(
+            parse_line("price = 2 rate"),
+            Line::Assignment { .. }
+        ));
+
+        // A leading-coefficient LHS with a non-unit RHS (bare number) is NOT a unit
+        // definition — falls through to text, not misread as a definition.
+        assert!(matches!(parse_line("2 x = 10"), Line::Text(_)));
     }
 
     #[test]
