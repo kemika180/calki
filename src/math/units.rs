@@ -11,8 +11,6 @@ thread_local! {
 
 /// Allocate a fresh invented-dimension id (used when a unit equivalence links two
 /// units that are both unknown to the built-in unit system).
-// `allow(dead_code)`: consumed by `register_equivalence` (added in the next commit).
-#[allow(dead_code)]
 fn alloc_custom_dim() -> u32 {
     NEXT_CUSTOM_DIM.with(|n| {
         let mut n = n.borrow_mut();
@@ -39,6 +37,168 @@ pub fn register_custom_unit(name: &str, value: f64, unit_str: &str) -> Result<()
         factors.borrow_mut().insert(name.to_string(), factor);
     });
 
+    Ok(())
+}
+
+/// Register a physics-style unit equivalence `lc·lu == rc·ru`, linking the two units
+/// so they become mutually convertible in either direction. Resolves which side is the
+/// already-known unit (built-in or previously defined) and which is new, handling four
+/// cases: both new (invent a fresh dimension), one known (the new unit joins the known
+/// dimension), both known in the same dimension (consistency check), and both known in
+/// different dimensions (merge — which is also how invented units ground into a built-in
+/// dimension like Length). Factor semantics match the rest of the module: `1 U == factor(U)`
+/// base units, so the equation is `lc·factor(lu) == rc·factor(ru)`.
+pub fn register_equivalence(
+    lc: f64,
+    lu: &str,
+    rc: f64,
+    ru: &str,
+    rates: &HashMap<String, f64>,
+) -> Result<(), String> {
+    if lc == 0.0 || rc == 0.0 {
+        return Err("Unit definition coefficients must be non-zero".to_string());
+    }
+    // Offset scales (temperature) have no meaningful linear equivalence.
+    for u in [lu, ru] {
+        if let Ok(p) = get_dimension_profile(&parse_unit(u))
+            && p.keys().any(|d| *d == Dimension::Temperature)
+        {
+            return Err(format!(
+                "Unit equivalences with temperature units are not supported ('{u}')"
+            ));
+        }
+    }
+
+    let left = resolve_known_side(lu, rates);
+    let right = resolve_known_side(ru, rates);
+
+    match (left, right) {
+        // Both known: consistency (same dimension) or merge (different dimensions).
+        (Some((lp, lf)), Some((rp, rf))) => {
+            if lp == rp {
+                let lhs_base = lc * lf;
+                let rhs_base = rc * rf;
+                let scale = lhs_base.abs().max(rhs_base.abs()).max(1e-300);
+                if (lhs_base - rhs_base).abs() / scale > 1e-9 {
+                    return Err(format!(
+                        "Contradictory unit definition: '{lu}' and '{ru}' are already related differently"
+                    ));
+                }
+                Ok(())
+            } else {
+                merge_dimensions(lc, &lp, lf, rc, &rp, rf)
+            }
+        }
+        // One known, one new: the new unit joins the known unit's dimension.
+        (Some((kp, kf)), None) => {
+            // known = left, new = right (ru): lc·kf == rc·factor(ru).
+            define_unit(ru, kp, (lc * kf) / rc);
+            Ok(())
+        }
+        (None, Some((kp, kf))) => {
+            // known = right, new = left (lu): rc·kf == lc·factor(lu).
+            define_unit(lu, kp, (rc * kf) / lc);
+            Ok(())
+        }
+        // Both new: invent a fresh dimension; make the left unit the base (factor 1).
+        (None, None) => {
+            let id = alloc_custom_dim();
+            let profile = HashMap::from([(Dimension::Custom(id), 1)]);
+            define_unit(lu, profile.clone(), 1.0);
+            define_unit(ru, profile, lc / rc); // lc·1 == rc·factor(ru)
+            Ok(())
+        }
+    }
+}
+
+/// Resolve a single unit to `(dimension profile, linear factor to base)` if it is
+/// already known (built-in, SI-prefixed, or a previously registered custom/invented
+/// unit); `None` if it is unknown (i.e. a new unit to be defined).
+fn resolve_known_side(
+    unit: &str,
+    rates: &HashMap<String, f64>,
+) -> Option<(HashMap<Dimension, i32>, f64)> {
+    let profile = get_dimension_profile(&parse_unit(unit)).ok()?;
+    let factor = get_linear_factor(unit, rates).ok()?;
+    Some((profile, factor))
+}
+
+/// Insert (or overwrite) a unit's dimension profile and linear factor.
+fn define_unit(unit: &str, profile: HashMap<Dimension, i32>, factor: f64) {
+    CUSTOM_UNIT_PROFILES.with(|p| {
+        p.borrow_mut().insert(unit.to_string(), profile);
+    });
+    CUSTOM_UNIT_FACTORS.with(|f| {
+        f.borrow_mut().insert(unit.to_string(), factor);
+    });
+}
+
+/// If `profile` is exactly `{Custom(id): 1}`, return that id (an invented dimension
+/// that can be absorbed into another during a merge); otherwise `None`.
+fn single_custom_id(profile: &HashMap<Dimension, i32>) -> Option<u32> {
+    if profile.len() == 1
+        && let Some((&Dimension::Custom(id), &1)) = profile.iter().next()
+    {
+        return Some(id);
+    }
+    None
+}
+
+/// Fold one dimension into another so two previously-separate unit systems become
+/// mutually convertible. The invented (source) dimension's units are all rewritten to
+/// the target dimension's profile with their factors rescaled. At least one side must
+/// be an invented dimension; two unrelated built-in dimensions (e.g. `1 m = 2 s`) error.
+fn merge_dimensions(
+    lc: f64,
+    lp: &HashMap<Dimension, i32>,
+    lf: f64,
+    rc: f64,
+    rp: &HashMap<Dimension, i32>,
+    rf: f64,
+) -> Result<(), String> {
+    // `s` is the scale mapping one source-base unit to target-base units, derived from
+    // `lc·lf` (left) == `rc·rf` (right) expressed in each side's base:
+    //   1 source-base = (target-side coeff·factor) / (source-side coeff·factor) target-base.
+    let (source_id, target_profile, s) = match (single_custom_id(lp), single_custom_id(rp)) {
+        (Some(li), Some(ri)) => {
+            if li == ri {
+                return Ok(()); // already the same dimension
+            } else if li < ri {
+                // absorb right (source) into left (target)
+                (ri, lp.clone(), (lc * lf) / (rc * rf))
+            } else {
+                // absorb left (source) into right (target)
+                (li, rp.clone(), (rc * rf) / (lc * lf))
+            }
+        }
+        // Ground the invented side into the real (built-in) side.
+        (Some(li), None) => (li, rp.clone(), (rc * rf) / (lc * lf)),
+        (None, Some(ri)) => (ri, lp.clone(), (lc * lf) / (rc * rf)),
+        (None, None) => {
+            return Err(
+                "Incompatible unit definition: these units are in different, unrelated dimensions"
+                    .to_string(),
+            );
+        }
+    };
+
+    CUSTOM_UNIT_PROFILES.with(|profiles| {
+        CUSTOM_UNIT_FACTORS.with(|factors| {
+            let mut profiles = profiles.borrow_mut();
+            let mut factors = factors.borrow_mut();
+            let names: Vec<String> = profiles
+                .iter()
+                .filter(|(_, p)| single_custom_id(p) == Some(source_id))
+                .map(|(n, _)| n.clone())
+                .collect();
+            for name in names {
+                profiles.insert(name.clone(), target_profile.clone());
+                if let Some(f) = factors.get_mut(&name) {
+                    *f *= s;
+                }
+            }
+        })
+    });
     Ok(())
 }
 
@@ -71,8 +231,6 @@ pub enum Dimension {
     /// A user-invented dimension, created when a `N a = M b` equivalence links units
     /// that don't ground in any built-in dimension. The `u32` is an opaque id from
     /// `alloc_custom_dim`; units sharing an id are mutually convertible.
-    // `allow(dead_code)`: constructed by `register_equivalence` (added in the next commit).
-    #[allow(dead_code)]
     Custom(u32),
 }
 

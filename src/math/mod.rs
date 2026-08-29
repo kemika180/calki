@@ -142,11 +142,24 @@ pub fn evaluate_sheet(
                     updated_lines.push(format!("{} [Error: {}]", raw_prefix, err));
                 }
             },
-            // Registration wired in a later commit; for now echo the line unchanged
-            // (byte-identical to its former `Line::Text` output — no behavior change).
-            Line::UnitDefinition { .. } => {
-                updated_lines.push(line_text.to_string());
-            }
+            Line::UnitDefinition {
+                lhs_coeff,
+                lhs_unit,
+                rhs_coeff,
+                rhs_unit,
+                raw_prefix,
+                ..
+            } => match units::register_equivalence(
+                lhs_coeff,
+                &lhs_unit,
+                rhs_coeff,
+                &rhs_unit,
+                exchange_rates,
+            ) {
+                // A definition produces no value; echo the source line unchanged.
+                Ok(()) => updated_lines.push(line_text.to_string()),
+                Err(err) => updated_lines.push(format!("{} [Error: {}]", raw_prefix, err)),
+            },
         }
     }
 
@@ -217,6 +230,83 @@ fn evaluate_inline_math(text: &str, ctx: &mut eval::Context) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_invented_unit_bidirectional() {
+        let rates = HashMap::new();
+        // Neither unit known beforehand; conversion works in both directions.
+        let sheet = "1 smerkle = 3 flurple\n\
+                     1 smerkle to flurple =>\n\
+                     1 flurple to smerkle =>\n";
+        let out = evaluate_sheet(sheet, &rates).0;
+        assert!(
+            out.contains("1 smerkle to flurple => 3 flurple"),
+            "Actual:\n{out}"
+        );
+        assert!(
+            out.contains("1 flurple to smerkle => 0.3333 smerkle"),
+            "Actual:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_invented_unit_chain() {
+        let rates = HashMap::new();
+        // The reported bug: a 3-unit chain grounded in nothing real.
+        let sheet = "1 jabberwock = 2 jumjumtrees\n\
+                     200 jumjumtrees = 7 bandersnatch\n\
+                     100 jabberwock to bandersnatch =>\n";
+        let out = evaluate_sheet(sheet, &rates).0;
+        assert!(
+            out.contains("100 jabberwock to bandersnatch => 7 bandersnatch"),
+            "Actual:\n{out}"
+        );
+    }
+
+    #[test]
+    fn test_invented_unit_grounding() {
+        let rates = HashMap::new();
+        // Grounding at birth: touching a real unit makes the invented unit real too.
+        let born = "1 jabberwock = 2 meters\n1 jabberwock to ft =>\n";
+        let out = evaluate_sheet(born, &rates).0;
+        assert!(out.contains("=> 6.5617 ft"), "Actual:\n{out}");
+
+        // Grounding after invention: invent a system, then anchor it to metres via a
+        // later equivalence (a merge). The whole chain becomes convertible to real units.
+        let after = "1 jabberwock = 2 jumjumtrees\n\
+                     1 jumjumtrees = 1 meter\n\
+                     1 jabberwock to meters =>\n";
+        let out2 = evaluate_sheet(after, &rates).0;
+        assert!(
+            out2.contains("1 jabberwock to meters => 2 m"),
+            "Actual:\n{out2}"
+        );
+    }
+
+    #[test]
+    fn test_invented_unit_contradiction() {
+        let rates = HashMap::new();
+        // Two incompatible definitions of the same relationship → error on the 2nd.
+        let contra = "1 a = 2 b\n1 a = 3 b\n";
+        let out = evaluate_sheet(contra, &rates).0;
+        assert!(out.contains("[Error:"), "Actual:\n{out}");
+
+        // Equating two unrelated real dimensions is rejected.
+        let bad = "1 m = 2 s\n";
+        let out2 = evaluate_sheet(bad, &rates).0;
+        assert!(out2.contains("[Error:"), "Actual:\n{out2}");
+    }
+
+    #[test]
+    fn test_existing_custom_units_unregressed() {
+        let rates = HashMap::new();
+        // Regression: the pre-existing `name = value unit` grounded custom-unit path
+        // and normal built-in conversions still work.
+        let sheet = "widget = 15cm\n2 widget in cm =>\n1 km to m =>\n";
+        let out = evaluate_sheet(sheet, &rates).0;
+        assert!(out.contains("2 widget in cm => 30 cm"), "Actual:\n{out}");
+        assert!(out.contains("1 km to m => 1000 m"), "Actual:\n{out}");
+    }
 
     #[test]
     fn test_datetime_literals() {
