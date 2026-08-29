@@ -4,6 +4,22 @@ use std::collections::HashMap;
 thread_local! {
     pub static CUSTOM_UNIT_PROFILES: RefCell<HashMap<String, HashMap<Dimension, i32>>> = RefCell::new(HashMap::new());
     pub static CUSTOM_UNIT_FACTORS: RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
+    /// Monotonic id source for user-invented dimensions (`Dimension::Custom`). Reset
+    /// per sheet evaluation by `clear_custom_units`, so ids are stable within one eval.
+    static NEXT_CUSTOM_DIM: RefCell<u32> = const { RefCell::new(0) };
+}
+
+/// Allocate a fresh invented-dimension id (used when a unit equivalence links two
+/// units that are both unknown to the built-in unit system).
+// `allow(dead_code)`: consumed by `register_equivalence` (added in the next commit).
+#[allow(dead_code)]
+fn alloc_custom_dim() -> u32 {
+    NEXT_CUSTOM_DIM.with(|n| {
+        let mut n = n.borrow_mut();
+        let id = *n;
+        *n += 1;
+        id
+    })
 }
 
 pub fn register_custom_unit(name: &str, value: f64, unit_str: &str) -> Result<(), String> {
@@ -29,6 +45,7 @@ pub fn register_custom_unit(name: &str, value: f64, unit_str: &str) -> Result<()
 pub fn clear_custom_units() {
     CUSTOM_UNIT_PROFILES.with(|p| p.borrow_mut().clear());
     CUSTOM_UNIT_FACTORS.with(|f| f.borrow_mut().clear());
+    NEXT_CUSTOM_DIM.with(|n| *n.borrow_mut() = 0);
 }
 
 pub fn is_custom_unit(name: &str) -> bool {
@@ -51,6 +68,12 @@ pub enum Dimension {
     Force,
     Frequency,
     Pressure,
+    /// A user-invented dimension, created when a `N a = M b` equivalence links units
+    /// that don't ground in any built-in dimension. The `u32` is an opaque id from
+    /// `alloc_custom_dim`; units sharing an id are mutually convertible.
+    // `allow(dead_code)`: constructed by `register_equivalence` (added in the next commit).
+    #[allow(dead_code)]
+    Custom(u32),
 }
 
 #[derive(Clone)]
