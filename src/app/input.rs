@@ -661,14 +661,14 @@ pub(crate) fn handle_modal_key(app: &mut App, key: KeyEvent) -> bool {
             }
             KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
                 app.help_tab_idx = if app.help_tab_idx == 0 {
-                    8
+                    9
                 } else {
                     app.help_tab_idx - 1
                 };
                 app.help_scroll = 0;
             }
             KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
-                app.help_tab_idx = (app.help_tab_idx + 1) % 9;
+                app.help_tab_idx = (app.help_tab_idx + 1) % 10;
                 app.help_scroll = 0;
             }
             KeyCode::Char('1') => {
@@ -705,6 +705,10 @@ pub(crate) fn handle_modal_key(app: &mut App, key: KeyEvent) -> bool {
             }
             KeyCode::Char('9') => {
                 app.help_tab_idx = 8;
+                app.help_scroll = 0;
+            }
+            KeyCode::Char('0') => {
+                app.help_tab_idx = 9;
                 app.help_scroll = 0;
             }
             KeyCode::Esc | KeyCode::F(1) | KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -988,7 +992,7 @@ mod tests {
         assert!(app.show_help);
         assert_eq!(app.help_tab_idx, 8);
 
-        // Press '0' should not close modal and do nothing
+        // Press '0' should switch to the 10th tab (About, index 9)
         let handled = handle_modal_key(
             &mut app,
             crossterm::event::KeyEvent::new(
@@ -998,6 +1002,7 @@ mod tests {
         );
         assert!(handled);
         assert!(app.show_help);
+        assert_eq!(app.help_tab_idx, 9);
 
         // Other key (Esc) should close modal
         let handled = handle_modal_key(

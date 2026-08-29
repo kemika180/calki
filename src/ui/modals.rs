@@ -27,7 +27,8 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App) {
         "6.\u{a0}Programming",
         "7.\u{a0}Markdown",
         "8.\u{a0}Vim\u{a0}Motions",
-        "9.\u{a0}About",
+        "9.\u{a0}Units\u{a0}&\u{a0}Time",
+        "10.\u{a0}About",
     ];
 
     let mut header_spans = Vec::new();

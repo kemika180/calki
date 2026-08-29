@@ -34,11 +34,11 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
             Line::from(vec![
                 Span::styled(
-                    " 1 - 9                  ",
+                    " 1 - 9, 0               ",
                     Style::default().fg(palette.keybind_label).bold(),
                 ),
                 Span::styled(
-                    "Switch directly to Help Tabs 1 through 9",
+                    "Switch directly to Help Tabs 1-9 (0 = tab 10, About)",
                     Style::default().fg(palette.fg),
                 ),
             ]),
@@ -1236,6 +1236,132 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
         ],
         8 => vec![
+            Line::from(vec![Span::styled(
+                "── Units & Conversion ──",
+                Style::default().bold().fg(palette.help_section),
+            )]),
+            Line::from(vec![
+                Span::styled(
+                    " X to unit / X in unit  ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Convert between compatible units (e.g. 5 km to m => 5000 m; 90 min in hours)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " Built-in dimensions    ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Length, mass, speed, data, temperature, time/duration, currency (live rates)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " 1/2 in %               ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Percent display (e.g. 0.075 to % => 7.5%)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "── Custom & Invented Units ──",
+                Style::default().bold().fg(palette.help_section),
+            )]),
+            Line::from(vec![
+                Span::styled(
+                    " name = value unit      ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Define a custom unit from a built-in one (e.g. widget = 15cm)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " N a = M b              ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Physics-style equivalence: invent units defined by each other (1 jabberwock = 2 jumjumtrees)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "                        ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Chain them and convert either way: 100 jabberwock to bandersnatch => 7 bandersnatch",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " Grounding              ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Tie an invented unit to a real one (1 jabberwock = 2 meters) to convert to ft, km, ...",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "── Date, Time & Timezones ──",
+                Style::default().bold().fg(palette.help_section),
+            )]),
+            Line::from(vec![
+                Span::styled(
+                    " Literals               ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "2026-08-01, 2026-08-01T09:30, 9am, 9:30pm, now(), today()",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " Arithmetic             ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "2026-08-01 + 3 days => 2026-08-04; 2026-08-04 - 2026-08-01 => 3 days",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " Calendar-aware         ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "2024-01-31 + 1 month => 2024-02-29 (leap-safe, end-of-month clamping)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " Timezones (DST-aware)  ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "9am PST in UTC; IANA names (America/New_York), abbreviations, and UTC±N offsets",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+        ],
+        9 => vec![
             Line::from(vec![Span::styled(
                 "── About calki ──",
                 Style::default().bold().fg(palette.help_section),
