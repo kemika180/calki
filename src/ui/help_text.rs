@@ -139,6 +139,26 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
             Line::from(vec![
                 Span::styled(
+                    " :e <path>              ",
+                    Style::default().fg(palette.keybind_label).bold(),
+                ),
+                Span::styled(
+                    "Open any file for editing (created if new; need not be in a wiki)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    " :wiki [dir]            ",
+                    Style::default().fg(palette.keybind_label).bold(),
+                ),
+                Span::styled(
+                    "Switch to another wiki tree for this session (:wiki alone shows current)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
                     " :q  :q!  :wq           ",
                     Style::default().fg(palette.keybind_label).bold(),
                 ),

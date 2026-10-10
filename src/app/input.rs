@@ -7,6 +7,7 @@ use crate::edtui::{EditorMode, RowIndex};
 use crate::{App, FocusedPanel, SystemClipboard, is_repeatable_motion};
 use crossterm::event::{self, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn handle_update_modal(app: &mut App, key: KeyEvent) {
     if let KeyCode::Char('i') | KeyCode::Char('I') = key.code
@@ -113,7 +114,91 @@ pub(crate) fn dispatch_command(app: &mut App, input: &str) {
         // Vim-style quit aliases; calki auto-saves, so all three just exit.
         "q" | "q!" | "wq" => app.should_quit = true,
         "theme" => apply_theme_command(app, arg),
+        "e" | "edit" => open_file_command(app, arg),
+        "wiki" => switch_wiki_command(app, arg),
         other => app.set_status_message(format!("unknown command: {other}")),
+    }
+}
+
+/// Directory a user-typed relative path is resolved against: the folder of the
+/// current file, falling back to the wiki root.
+fn active_dir(app: &App) -> PathBuf {
+    app.active_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| app.wiki_mgr.root_dir().to_path_buf())
+}
+
+/// Resolve a path typed into `:e`/`:wiki`: expand a leading `~` (or `~/`) to
+/// `$HOME`, and resolve relative paths against `base_dir`. Absolute paths pass
+/// through unchanged. (`~user` is not expanded — only the current user's home.)
+fn resolve_user_path(input: &str, base_dir: &Path) -> PathBuf {
+    let trimmed = input.trim();
+    let expanded = if trimmed == "~" {
+        std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(trimmed))
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        match std::env::var("HOME") {
+            Ok(home) => PathBuf::from(home).join(rest),
+            Err(_) => PathBuf::from(trimmed),
+        }
+    } else {
+        PathBuf::from(trimmed)
+    };
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        base_dir.join(expanded)
+    }
+}
+
+/// `:e <path>` / `:edit <path>` — open an arbitrary file for editing. The path
+/// may be absolute, `~`-relative, or relative to the current file's directory,
+/// and need not live in any wiki tree. A missing file is created (as when
+/// following a wiki link to a new note). Opening a file outside the current
+/// tree re-points `[[link]]`/backlink resolution at that file's directory
+/// (handled in `App::load_note`).
+fn open_file_command(app: &mut App, arg: &str) {
+    if arg.is_empty() {
+        app.set_status_message("usage: :e <path>");
+        return;
+    }
+    let target = resolve_user_path(arg, &active_dir(app));
+    let _ = app.save_current_note();
+    app.history_stack.push(app.active_path.clone());
+    match app.load_note(target.clone()) {
+        Ok(()) => app.set_status_message(format!("editing: {}", target.display())),
+        Err(e) => {
+            app.history_stack.pop();
+            app.set_status_message(format!("edit error: {e}"));
+        }
+    }
+}
+
+/// `:wiki [dir]` — switch to another wiki tree. Session-only: the next launch
+/// returns to the default `~/.calki/wiki`. With no argument, reports the
+/// current root. Lands on the tree's `home.md`, creating a minimal one if
+/// absent (not the sample-note onboarding).
+fn switch_wiki_command(app: &mut App, arg: &str) {
+    if arg.is_empty() {
+        app.set_status_message(format!("wiki: {}", app.wiki_mgr.root_dir().display()));
+        return;
+    }
+    let dir = resolve_user_path(arg, &active_dir(app));
+    if !dir.is_dir() {
+        app.set_status_message(format!("not a directory: {}", dir.display()));
+        return;
+    }
+    let _ = app.save_current_note();
+    app.history_stack.push(app.active_path.clone());
+    match app.load_note(dir.join("home.md")) {
+        Ok(()) => app.set_status_message(format!("wiki: {}", dir.display())),
+        Err(e) => {
+            app.history_stack.pop();
+            app.set_status_message(format!("wiki error: {e}"));
+        }
     }
 }
 
@@ -1084,6 +1169,90 @@ mod tests {
             app.palette,
             crate::theme::load_palette("kemika-purple").unwrap().0
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_user_path_forms() {
+        let base = PathBuf::from("/base/dir");
+        // Absolute paths pass through.
+        assert_eq!(
+            resolve_user_path("/abs/file.md", &base),
+            PathBuf::from("/abs/file.md")
+        );
+        // Relative paths resolve against the base directory.
+        assert_eq!(
+            resolve_user_path("sub/file.md", &base),
+            PathBuf::from("/base/dir/sub/file.md")
+        );
+        assert_eq!(
+            resolve_user_path("../up.md", &base),
+            PathBuf::from("/base/dir/../up.md")
+        );
+        // `~/` expands to $HOME.
+        if let Ok(home) = std::env::var("HOME") {
+            assert_eq!(
+                resolve_user_path("~/notes/x.md", &base),
+                PathBuf::from(home).join("notes/x.md")
+            );
+        }
+    }
+
+    #[test]
+    fn cmd_edit_opens_external_file_and_reroots() {
+        let (mut app, root) = test_app("test_cmd_edit");
+        let ext = std::env::current_dir().unwrap().join("test_cmd_edit_ext");
+        if ext.exists() {
+            let _ = std::fs::remove_dir_all(&ext);
+        }
+        std::fs::create_dir_all(&ext).unwrap();
+        let note = ext.join("scratch.md");
+        std::fs::write(&note, "# Scratch\nSee [[Sibling]]\n").unwrap();
+
+        dispatch_command(&mut app, &format!("e {}", note.display()));
+        assert_eq!(app.active_path, note);
+        // The wiki root now tracks the opened file's own directory.
+        assert_eq!(app.wiki_mgr.root_dir(), ext.as_path());
+        // A sibling link resolves within that directory.
+        assert_eq!(app.wiki_mgr.link_to_path("Sibling"), ext.join("sibling.md"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&ext);
+    }
+
+    #[test]
+    fn cmd_edit_no_arg_leaves_state() {
+        let (mut app, root) = test_app("test_cmd_edit_noarg");
+        let before = app.active_path.clone();
+        dispatch_command(&mut app, "e");
+        assert_eq!(app.active_path, before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cmd_wiki_switches_tree_to_home() {
+        let (mut app, root) = test_app("test_cmd_wiki");
+        let other = std::env::current_dir().unwrap().join("test_cmd_wiki_other");
+        if other.exists() {
+            let _ = std::fs::remove_dir_all(&other);
+        }
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("home.md"), "# Other Home\n").unwrap();
+
+        dispatch_command(&mut app, &format!("wiki {}", other.display()));
+        assert_eq!(app.wiki_mgr.root_dir(), other.as_path());
+        assert_eq!(app.active_path, other.join("home.md"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn cmd_wiki_missing_dir_keeps_root() {
+        let (mut app, root) = test_app("test_cmd_wiki_missing");
+        let before = app.wiki_mgr.root_dir().to_path_buf();
+        dispatch_command(&mut app, "wiki /no/such/calki/dir/xyz");
+        assert_eq!(app.wiki_mgr.root_dir(), before.as_path());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

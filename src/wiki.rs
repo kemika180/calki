@@ -94,6 +94,15 @@ impl WikiManager {
         &self.root_dir
     }
 
+    /// Re-point the manager at a different wiki tree, loading that directory's
+    /// own link/cursor registries. Unlike [`init_wiki`], this never seeds the
+    /// onboarding `home.md` or sample notes — so switching into an arbitrary
+    /// directory (via `:wiki`/`:e`) leaves it untouched apart from the lazily
+    /// written `.calki-links.json` once it has links to record.
+    pub fn rebind<P: AsRef<Path>>(&mut self, new_root: P) {
+        *self = Self::new(new_root);
+    }
+
     // Ensures the wiki directory and home.md onboarding file exist
     pub fn init_wiki(&self) -> Result<PathBuf, String> {
         if !self.root_dir.exists() {
@@ -504,6 +513,36 @@ mod tests {
         assert!(backlinks_updated.is_empty());
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_rebind_switches_root_and_registry() {
+        let base = std::env::current_dir().unwrap().join("test_wiki_rebind");
+        if base.exists() {
+            let _ = fs::remove_dir_all(&base);
+        }
+        let tree_a = base.join("a");
+        let tree_b = base.join("b");
+        fs::create_dir_all(&tree_a).unwrap();
+        fs::create_dir_all(&tree_b).unwrap();
+        fs::write(tree_a.join("home.md"), "# A\nSee [[Alpha]]").unwrap();
+        fs::write(tree_b.join("home.md"), "# B\nSee [[Beta]]").unwrap();
+
+        let mut mgr = WikiManager::new(&tree_a);
+        assert_eq!(mgr.root_dir(), tree_a.as_path());
+        assert_eq!(
+            mgr.registry.borrow().get("home.md"),
+            Some(&vec!["Alpha".to_string()])
+        );
+
+        mgr.rebind(&tree_b);
+        assert_eq!(mgr.root_dir(), tree_b.as_path());
+        assert_eq!(
+            mgr.registry.borrow().get("home.md"),
+            Some(&vec!["Beta".to_string()])
+        );
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

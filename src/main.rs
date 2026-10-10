@@ -682,6 +682,17 @@ impl App {
 
     // Load a note file into the editor, handling onboarding or template creation
     fn load_note(&mut self, path: PathBuf) -> Result<(), String> {
+        // Keep the wiki root tracking the active file's directory so `[[links]]`
+        // and backlinks always resolve within the tree the current file lives in.
+        // Intra-tree navigation (parent == root) skips this; opening a file in
+        // another directory (`:e`, `:wiki`, history back into another tree)
+        // re-points the root there.
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+            && parent != self.wiki_mgr.root_dir()
+        {
+            self.wiki_mgr.rebind(parent);
+        }
         self.active_path = path;
 
         if !self.active_path.exists() {
