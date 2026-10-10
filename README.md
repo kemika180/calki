@@ -1,175 +1,174 @@
-# calki 🧮 📝
+# calki
 
-A terminal-based Markdown note-taking tool and interactive math sheet calculator with local wiki-style link navigation.
+A terminal Markdown editor with a live calculator and wiki-style links built in. Write notes, do the math inside them, and link them together — without leaving the keyboard.
 
-`calki` combines real-time document-based calculations with the inter-linked organization of a personal wiki, all inside a fast, Vim-friendly terminal interface.
-
-![calki Onboarding Screen](home.png)
+![calki onboarding screen](home.png)
 
 ---
 
-## 🚀 Key Features
+## Features
 
-* **Interactive Math Sheets**: Real-time evaluation of mathematical equations. Write assignments or expressions, end them with `=>`, and watch them calculate instantly when you exit Insert mode.
+### Live math in your notes
 
-  ![Grocery List Budgeting](grocery-list.png)
+Write an expression, end the line with `=>`, and calki evaluates it the moment you leave Insert mode. The same works inline inside a sentence with backticks: `` `10m * 5m =>` ``.
 
-* **Inline Math Evaluation**: Run calculations right inside your sentences using backticks: `` `10m * 5m =>` ``.
-* **Powerful Calculation Engine**: Far beyond basic arithmetic — trigonometry, statistics (`mean`, `median`, `stddev`, `variance`), vectors and **matrices** (`[[1, 2], [3, 4]]` with `*`, `transpose`, `det`, `inv`, and linear systems via `linsolve(A, b)`), complex numbers, symbolic differentiation (`diff`) and equation solving (`solve` — symbolic rearrangement, algebraic inversion, or Newton-Raphson with an optional initial guess for nonlinear equations), higher-order list operations (`map`, `filter`, `reduce`, `zip`), `for`/`while` loops and conditionals, financial functions (`pmt`, `fv`, `pv`), hex/binary literals, and inline `sparkline`s.
-* **Dimensional & Currency Analysis**: Supports physical units (length, speed, data size, temperature, time) and live-updated currency conversion (fetched via a background thread to prevent startup latency).
-* **User-Definable Units**: Invent your own units with plain physics-style equivalences — `1 jabberwock = 2 jumjumtrees`. Chain them (`200 jumjumtrees = 7 bandersnatch`) and convert across the whole chain in either direction (`100 jabberwock to bandersnatch => 7 bandersnatch`), even when nothing is anchored to a real unit. Tie any invented unit to a built-in one (`1 jabberwock = 2 meters`) and the entire system grounds into SI automatically, so it converts to `ft`, `km`, and everything else. Contradictory definitions are flagged as errors.
-* **Date, Time & Timezones**: Native date/time values (`2026-08-01`, `2026-08-01T09:30`, `9am`, `9:30pm`) with calendar-aware arithmetic — `2026-08-01 + 3 days`, `2026-08-04 - 2026-08-01 => 3 days`, `2024-01-31 + 1 month => 2024-02-29` (leap-safe, end-of-month clamping) — plus DST-correct timezone conversion (`9am PST in UTC`, `2026-07-01T09:00 in America/New_York`; IANA names, common abbreviations, and `UTC±N` offsets) and `now()` / `today()`.
-* **Export**: Compile the current note to HTML, or the entire wiki to a single Markdown document (`Ctrl-e`).
+![Grocery list budgeting](grocery-list.png)
 
-  ![Trip Planning & Speed Conversion](trip-planning.png)
+The calculation engine goes well past arithmetic:
 
-* **Wiki Link Navigation**: Create double-bracket links like `[[Project Goals]]` to connect notes. Press `Enter` on a link in Normal mode to jump to it, and `Backspace` or `Ctrl-o` to navigate back.
-* **Header Section Folding**: Collapse long notes by section. Press `za` or `Tab` on a Markdown header (`#`, `##`, …) to fold or unfold everything beneath it down to the next header of the same level, shown as a `▶ # Section (N lines folded)` marker. Folds nest, survive edits, and Vim motions step over them.
-* **Todo List Checkboxes**: Press `t` in Normal mode while hovering over any list line to toggle the checkbox state `[ ]` <-> `[x]`, or convert a plain list bullet into a checkbox item automatically.
-* **Custom Functions**: Define custom functions directly in your notes (e.g. `f(x) = x^2 + 2*x`) and use them elsewhere in the same file. They are also displayed under the Variables panel.
-* **Triple-Panel Layout**:
-  - **Left Panel (Wiki Map)**: View references and incoming backlinks for the current note.
-  - **Center Panel (Editor)**: Full-featured editor powered by `edtui` with Vim motion bindings.
-  - **Right Panel (Variables Inspector)**: View active variable scopes and mathematical evaluations.
-* **Persistent Session & Customization**: Automatically saves your panel layout, cursor position, and preferences in `~/.config/calki/config.json`.
-* **Automatic Version Checking**: Checks for new updates on launch from GitHub in a non-blocking background thread and provides an option to skip/ignore warnings for the current update.
+- **Algebra & calculus** — symbolic differentiation (`diff`) and equation solving (`solve`) by rearrangement, algebraic inversion, or Newton-Raphson with an optional initial guess.
+- **Statistics** — `mean`, `median`, `stddev`, `variance`, `sum`, `min`, `max`.
+- **Vectors & matrices** — `[[1, 2], [3, 4]]` with `*`, `transpose`, `det`, `inv`, and linear systems via `linsolve(A, b)`.
+- **Programming constructs** — `map`, `filter`, `reduce`, `zip`, `for`/`while` loops, and conditionals.
+- **Finance** — `pmt`, `fv`, `pv`.
+- Complex numbers, hex and binary literals, and inline `sparkline`s.
+
+### Units, currency, and units you invent
+
+Dimensional analysis covers length, speed, data size, temperature, and time, alongside live currency conversion (rates are fetched in the background, so startup stays instant).
+
+You can also invent your own units with plain physics-style equivalences:
+
+```
+1 jabberwock = 2 jumjumtrees
+200 jumjumtrees = 7 bandersnatch
+100 jabberwock to bandersnatch   => 7 bandersnatch
+```
+
+Chains convert in either direction even when nothing is anchored to a real unit. Tie an invented unit to a built-in one (`1 jabberwock = 2 meters`) and the whole system grounds into SI — so it converts to `ft`, `km`, and everything else. Contradictory definitions are reported as errors.
+
+### Dates, times, and timezones
+
+Native date/time values (`2026-08-01`, `2026-08-01T09:30`, `9am`, `9:30pm`) with calendar-aware arithmetic:
+
+```
+2026-08-01 + 3 days          => 2026-08-04
+2026-08-04 - 2026-08-01      => 3 days
+2024-01-31 + 1 month         => 2024-02-29          (leap-safe, end-of-month clamped)
+2026-01-15T09:00 PST in UTC  => 2026-01-15T17:00
+```
+
+Timezone conversion is DST-correct and understands IANA names (`America/New_York`), common abbreviations, and `UTC±N` offsets. `now()` and `today()` are available too.
+
+### Notes and navigation
+
+- **Wiki links** — connect notes with `[[Project Goals]]`. Press `Enter` on a link to follow it, `Backspace` or `Ctrl-o` to go back. Following a link to a note that doesn't exist creates it.
+- **Open any file, switch trees** — `:e <path>` edits any file, inside your wiki or not (created if new); `:wiki <dir>` switches to another wiki tree for the session. Links and backlinks always resolve relative to the file you're editing.
+- **Section folding** — `za` or `Tab` on a header folds everything beneath it down to the next header of the same level, shown as `▶ # Section (N lines folded)`. Folds nest, survive edits, and Vim motions step over them.
+- **Todo checkboxes** — `t` on a list line toggles `[ ]` ⇄ `[x]`, or turns a plain bullet into a checkbox.
+- **Custom functions** — define `f(x) = x^2 + 2*x` in a note and reuse it anywhere in that file; defined functions appear in the Variables panel.
+
+![Trip planning and speed conversion](trip-planning.png)
+
+### Interface
+
+- **Three panels** — a Wiki Map (references and backlinks) on the left, the `edtui`-powered Vim editor in the center, and a Variables Inspector (live scopes and results) on the right.
+- **Export** — `Ctrl-e` compiles the current note to HTML, or the whole wiki to a single Markdown file.
+- **Persistent sessions** — panel layout, cursor position, and preferences are saved between runs.
+- **Update checks** — calki checks GitHub for new releases on launch, without blocking startup, and lets you skip a version you don't want.
 
 ---
 
-## 🛠️ Installation & Updating
+## Installation
 
-To install `calki`, you will need the Rust toolchain installed on your machine. If you do not have it, install it via [rustup](https://rustup.rs/):
+calki needs the Rust toolchain. If you don't have it, install it with [rustup](https://rustup.rs/):
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### 📦 Install via Cargo (Recommended)
-
-Install the latest version of `calki` directly from [crates.io](https://crates.io/):
+### From crates.io
 
 ```bash
 cargo install calki
 ```
 
-This compiles and installs the binary to your Cargo binary path (typically `~/.cargo/bin/`), allowing you to run it anywhere by simply typing:
+This installs the binary to `~/.cargo/bin/`; run it from anywhere with `calki`.
+
+### From source
 
 ```bash
-calki
+git clone https://github.com/kemika180/calki.git
+cd calki
+cargo install --path .    # or: cargo run --release
 ```
 
-### 🛠️ Build from Source
+### Updating
 
-If you prefer to compile directly from the git repository:
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/kemika180/calki.git
-   cd calki
-   ```
-
-2. Build the release binary:
-   ```bash
-   cargo build --release
-   ```
-
-3. (Optional) Install the binary globally:
-   ```bash
-   cargo install --path .
-   ```
-
-4. Run the compiled binary directly:
-   ```bash
-   ./target/release/calki
-   ```
-
-### 🔄 How to Update
-
-* **If installed via Cargo**:
-  Re-run the install command to fetch the latest version:
-  ```bash
-  cargo install calki
-  ```
-
-* **If installed from Source**:
-  Pull the latest commits and rebuild:
-  ```bash
-  cd /path/to/calki
-  git pull origin main
-  cargo install --path .
-  ```
+Re-run the install command to pick up the latest version — `cargo install calki`, or `cargo install --path .` after a `git pull origin main`.
 
 ---
 
-## ⌨️ Keybindings & Navigation
+## Keybindings
 
-`calki` uses Vim-like modal editing. You can navigate the editor using standard Vim motions (`h`, `j`, `k`, `l`, `w`, `b`, etc.). Repeat multipliers are supported for repeatable motions (e.g., `5j` moves 5 lines down, `12w` jumps forward 12 words, and `3x` deletes 3 characters).
+calki uses Vim-style modal editing: the standard motions (`h` `j` `k` `l` `w` `b` …) work, and repeatable motions take a count (`5j` down five lines, `12w` forward twelve words, `3x` delete three characters).
 
-### Panel Controls
+### Panels
+
 | Key | Action |
 | --- | --- |
-| `F2` | Toggle Left Panel (Wiki Map) |
-| `F3` | Toggle Right Panel (Variables Inspector) |
-| `Ctrl-h` / `Shift-H` | Move focus to the panel on the left |
-| `Ctrl-l` / `Shift-L` | Move focus to the panel on the right |
+| `F2` | Toggle the left panel (Wiki Map) |
+| `F3` | Toggle the right panel (Variables Inspector) |
+| `Ctrl-h` / `Shift-H` | Focus the panel to the left |
+| `Ctrl-l` / `Shift-L` | Focus the panel to the right |
+| `F1` | Toggle the Help & Math Function guide |
 
-### Help & Reference Modals
+### Global
+
 | Key | Action |
 | --- | --- |
-| `F1` | Toggle the unified Help & Math Function Guide |
-
-### Global Actions
-| Key | Action |
-| --- | --- |
-| `/` | Search the entire wiki for a keyword |
+| `/` | Search the wiki for a keyword |
+| `:` | Open the command line (`:e`, `:wiki`, `:theme`, `:q`) |
 | `Ctrl-s` | Save the current note |
-| `Ctrl-e` | Open the Export menu (HTML / Markdown) |
-| `F4` | Toggle editor word wrapping |
-| `Ctrl-q` or `ZZ` | Save and quit |
+| `Ctrl-e` | Open the export menu (HTML / Markdown) |
+| `F4` | Toggle word wrap |
+| `Ctrl-q` / `ZZ` | Save and quit |
 
-### Wiki Navigation (Normal Mode)
+### Editing — Normal mode
+
 | Key | Action |
 | --- | --- |
-| `Enter` | Follow `[[Wiki Link]]` under the cursor / Create note |
-| `Backspace` or `Ctrl-o` | Go back to the previous note in history |
+| `Enter` | Follow the `[[wiki link]]` under the cursor (creates the note if missing) |
+| `Backspace` / `Ctrl-o` | Go back in history |
+| `t` | Toggle a todo checkbox, or turn a list bullet into one |
+| `Ctrl-d` | Delete the current note (with confirmation) |
+| `za` / `Tab` | Fold or unfold the header section at the cursor |
 
-### Editor Actions
-| Key (Mode) | Action |
+### Editing — Visual mode
+
+| Key | Action |
 | --- | --- |
-| `t` (Normal) | Toggle todo item checkbox `[ ]` <=> `[x]` / Convert plain list bullet to todo checkbox |
-| `Ctrl-d` (Normal) | Delete the current wiki note (with confirmation) |
-| `za` or `Tab` (Normal) | Fold / unfold the Markdown header section at the cursor |
-| `>` / `<` (Visual) | Indent / dedent the selected lines by one level (spaces) |
-| `Enter` (Visual) | Wrap the highlighted selection in a `[[Wiki Link]]` |
+| `>` / `<` | Indent / dedent the selected lines |
+| `Enter` | Wrap the selection in a `[[wiki link]]` |
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
-`calki` stores configuration files in your OS-appropriate configuration directory (typically `~/.config/calki/` on Linux/macOS).
+calki reads `config.json` from your OS config directory (`~/.config/calki/` on Linux and macOS):
 
-The `config.json` file supports customization of the following options:
-
-* `scrolloff` (integer, default: `5`): The number of lines to keep visible above and below the cursor when scrolling.
-* `mouse_focus_on_hover` (boolean, default: `true`): If `true`, panel focus changes automatically when hovering the mouse pointer. If `false`, mouse click is required to focus a panel.
-* `expand_variables_on_select` (boolean, default: `false`): If `true`, the variables panel will dynamically expand to show full variable names/values when it is selected/focused.
-* `line_numbers` (string, default: `"None"`): Line numbering mode inside the editor. Supported options are `"None"`, `"Absolute"`, and `"Relative"`.
-* `word_wrap` (boolean, default: `false`): Wrap long lines in the editor instead of scrolling horizontally. Toggle live with `F4`.
-
-Example configuration file (`~/.config/calki/config.json`):
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `theme` | string | `"tokyo-night"` | Color theme. Switch live with `:theme <name>`; custom themes live in `~/.config/calki/themes/`. |
+| `scrolloff` | integer | `5` | Lines kept visible above and below the cursor while scrolling. |
+| `line_numbers` | string | `"None"` | Line numbering: `"None"`, `"Absolute"`, or `"Relative"`. |
+| `word_wrap` | boolean | `true` | Wrap long lines instead of scrolling horizontally. Toggle live with `F4`. |
+| `mouse_focus_on_hover` | boolean | `true` | Focus a panel on hover rather than requiring a click. |
+| `expand_variables_on_select` | boolean | `false` | Expand the Variables panel to full names and values when it's focused. |
 
 ```json
 {
+  "theme": "tokyo-night",
   "scrolloff": 5,
-  "mouse_focus_on_hover": true,
-  "expand_variables_on_select": false,
   "line_numbers": "None",
-  "word_wrap": false
+  "word_wrap": true,
+  "mouse_focus_on_hover": true,
+  "expand_variables_on_select": false
 }
 ```
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the GPL v3 License. See the [LICENSE](LICENSE) file for details.
+Licensed under GPL v3. See [LICENSE](LICENSE) for details.
