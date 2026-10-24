@@ -153,6 +153,7 @@ calki reads `config.json` from your OS config directory (`~/.config/calki/` on L
 | `scrolloff` | integer | `5` | Lines kept visible above and below the cursor while scrolling. |
 | `line_numbers` | string | `"None"` | Line numbering: `"None"`, `"Absolute"`, or `"Relative"`. |
 | `word_wrap` | boolean | `true` | Wrap long lines instead of scrolling horizontally. Toggle live with `F4`. |
+| `conceal` | boolean | `false` | Hide the backticks around `` `inline code` `` on every line except the cursor's. Fenced code blocks are left as typed. |
 | `mouse_focus_on_hover` | boolean | `true` | Focus a panel on hover rather than requiring a click. |
 | `expand_variables_on_select` | boolean | `false` | Expand the Variables panel to full names and values when it's focused. |
 
@@ -162,6 +163,7 @@ calki reads `config.json` from your OS config directory (`~/.config/calki/` on L
   "scrolloff": 5,
   "line_numbers": "None",
   "word_wrap": true,
+  "conceal": false,
   "mouse_focus_on_hover": true,
   "expand_variables_on_select": false
 }

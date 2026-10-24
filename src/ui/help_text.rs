@@ -330,6 +330,16 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
             Line::from(vec![
                 Span::styled(
+                    " conceal                   ",
+                    Style::default().fg(palette.config_key).bold(),
+                ),
+                Span::styled(
+                    "Hide inline-code backticks off the cursor line (default: false)",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
                     " theme                     ",
                     Style::default().fg(palette.config_key).bold(),
                 ),

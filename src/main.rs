@@ -1,4 +1,5 @@
 mod app;
+mod conceal;
 mod currency;
 mod highlight;
 mod math;
@@ -186,6 +187,7 @@ struct AppConfig {
     line_numbers: String,
     word_wrap: bool,
     theme: String,
+    conceal: bool,
 }
 
 impl Default for AppConfig {
@@ -198,6 +200,7 @@ impl Default for AppConfig {
             line_numbers: "None".to_string(),
             word_wrap: true,
             theme: "tokyo-night".to_string(),
+            conceal: false,
         }
     }
 }
@@ -668,6 +671,12 @@ impl App {
 
         self.editor_state.highlights =
             crate::highlight::compute_syntax_highlights(&vecs, selected_var, &self.palette);
+        let conceal_ranges = if self.config.conceal {
+            crate::conceal::compute_conceal_ranges(&vecs)
+        } else {
+            HashMap::new()
+        };
+        self.editor_state.set_conceal_ranges(conceal_ranges);
     }
 
     // Saves current editor state to the active note file
@@ -2391,6 +2400,28 @@ mod main_tests {
     }
 
     #[test]
+    fn update_highlights_sets_conceal_ranges_only_when_enabled() {
+        let wiki_root = std::env::current_dir()
+            .unwrap()
+            .join("test_wiki_temp_conceal_ranges");
+        let _ = std::fs::remove_dir_all(&wiki_root);
+        std::fs::create_dir_all(&wiki_root).unwrap();
+        let mut app = App::new(wiki_root.clone()).unwrap();
+        app.editor_state = EditorState::new(edtui::Lines::from("top\nuse `x` here"));
+
+        app.config.conceal = true;
+        app.update_highlights();
+        assert!(app.editor_state.has_conceal());
+        assert!(!app.editor_state.column_map(1).is_identity());
+
+        app.config.conceal = false;
+        app.update_highlights();
+        assert!(!app.editor_state.has_conceal());
+
+        let _ = std::fs::remove_dir_all(&wiki_root);
+    }
+
+    #[test]
     fn test_follow_link_types() {
         let line = "Go to [Google](https://google.com) or visit https://rust-lang.org now.";
 
@@ -3578,6 +3609,7 @@ mod main_tests {
         assert_eq!(default_config.ignored_update_hash, None);
         assert_eq!(default_config.line_numbers, "None");
         assert!(default_config.word_wrap);
+        assert!(!default_config.conceal);
 
         // Test serialization and deserialization
         let custom_config = AppConfig {
@@ -3588,6 +3620,7 @@ mod main_tests {
             line_numbers: "Absolute".to_string(),
             word_wrap: false,
             theme: "dracula".to_string(),
+            conceal: true,
         };
         let serialized = serde_json::to_string_pretty(&custom_config).unwrap();
         let deserialized: AppConfig = serde_json::from_str(&serialized).unwrap();
@@ -3600,6 +3633,7 @@ mod main_tests {
         );
         assert_eq!(deserialized.line_numbers, "Absolute");
         assert!(!deserialized.word_wrap);
+        assert!(deserialized.conceal);
 
         // Test fallback defaults during deserialization (e.g. if fields are missing in JSON)
         let partial_json = r#"{"scrolloff": 12}"#;
@@ -3609,6 +3643,7 @@ mod main_tests {
         assert!(!deserialized_partial.expand_variables_on_select); // Default false fallback
         assert_eq!(deserialized_partial.line_numbers, "None"); // Default None fallback
         assert!(deserialized_partial.word_wrap); // Default true fallback
+        assert!(!deserialized_partial.conceal); // Default false fallback
     }
 
     #[test]

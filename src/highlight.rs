@@ -214,6 +214,12 @@ pub(crate) fn inline_code_ranges(line: &[char]) -> Vec<RangeInclusive<usize>> {
     ranges
 }
 
+/// Whether `line` is styled as a whole (header, blockquote, rule or comment),
+/// so the math and inline painters skip it.
+pub(crate) fn is_special_line(line: &[char]) -> bool {
+    header_level(line).is_some() || is_blockquote(line) || is_hr(line) || is_comment(line)
+}
+
 fn is_blockquote(line: &[char]) -> bool {
     trim_start_slice(line).first() == Some(&'>')
 }
@@ -1126,7 +1132,7 @@ fn section_d(
 
 #[cfg(test)]
 mod tests {
-    use super::{header_level, inline_code_ranges};
+    use super::{header_level, inline_code_ranges, is_special_line};
 
     fn chars(s: &str) -> Vec<char> {
         s.chars().collect()
@@ -1166,5 +1172,16 @@ mod tests {
     #[test]
     fn inline_code_ranges_unmatched_trailing() {
         assert_eq!(inline_code_ranges(&chars("`a` `b")), vec![0..=2]);
+    }
+
+    #[test]
+    fn is_special_line_kinds() {
+        assert!(is_special_line(&chars("# Title")));
+        assert!(is_special_line(&chars("  > quote")));
+        assert!(is_special_line(&chars("---")));
+        assert!(is_special_line(&chars(" // note")));
+        assert!(!is_special_line(&chars("plain `code`")));
+        assert!(!is_special_line(&chars("#tag")));
+        assert!(!is_special_line(&chars("/ not a comment")));
     }
 }
