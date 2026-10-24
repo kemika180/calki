@@ -51,9 +51,11 @@ impl MouseEventHandler {
 
         // Hit-test against the geometry the user is looking at, i.e. before
         // this event changes the selection or mode (which decide which rows
-        // render concealed).
+        // render concealed). A release doesn't move the cursor: press and
+        // drag already put it there, and the press may have revealed (and so
+        // reflowed) the row under the pointer.
         let hit = match event {
-            MouseEvent::Down(mouse) | MouseEvent::Up(mouse) | MouseEvent::Drag(mouse) => Some(
+            MouseEvent::Down(mouse) | MouseEvent::Drag(mouse) => Some(
                 mouse_position_to_cursor_position(state, &mouse, state.view.tab_width),
             ),
             _ => None,
@@ -579,5 +581,16 @@ mod tests {
             state.cursor = Index2::new(3, 0);
             assert_cells_round_trip(&mut state, 14);
         }
+    }
+
+    #[test]
+    fn release_after_click_on_concealed_row_keeps_cursor() {
+        // Press maps x=3 on "a bc d" to 'c' (col 4) and reveals the row; the
+        // release at the same cell must not re-map it against the raw row.
+        let mut state = concealed_state("x\na `bc` d", 80, false);
+        down(&mut state, 1, 3);
+        assert_eq!(state.cursor, Index2::new(1, 4));
+        MouseEventHandler::on_event(MouseEvent::Up(MousePosition::new(1, 3)), &mut state);
+        assert_eq!(state.cursor, Index2::new(1, 4));
     }
 }
