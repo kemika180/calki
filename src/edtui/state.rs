@@ -249,7 +249,12 @@ impl EditorState {
 
     /// Updates the vertical offset in wrap mode so the cursor row is on screen.
     pub(crate) fn update_viewport_vertical_wrap(&mut self, max_width: usize, max_height: usize) {
-        let heights = self.row_heights_above_cursor(max_width, max_height);
+        // Measuring rows is only needed when the cursor fell below the screen.
+        let heights = if self.view.cursor_below_viewport(self.cursor.row) {
+            self.row_heights_above_cursor(max_width, max_height)
+        } else {
+            Vec::new()
+        };
         self.view
             .update_viewport_vertical_wrap(max_height, self.cursor.row, &heights);
     }

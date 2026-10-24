@@ -198,6 +198,12 @@ impl ViewState {
         self.num_rows = num_rows;
     }
 
+    /// Whether `cursor_row` is past the rows shown last frame. Always false
+    /// before the first frame (`num_rows == 0`).
+    pub(crate) fn cursor_below_viewport(&self, cursor_row: usize) -> bool {
+        self.num_rows != 0 && cursor_row >= self.viewport.y + self.num_rows
+    }
+
     /// Scrolls down just far enough that the cursor row fits on screen.
     ///
     /// Walks up from the cursor row, adding each row's screen height, and puts
@@ -205,7 +211,7 @@ impl ViewState {
     /// Does nothing if the cursor row is already within the rows shown last
     /// frame, or before the first frame (`num_rows == 0`).
     fn scroll_down(&mut self, heights: &[usize], max_height: usize, cursor_row: usize) {
-        if cursor_row < self.viewport.y + self.num_rows || self.num_rows == 0 {
+        if !self.cursor_below_viewport(cursor_row) {
             return;
         }
 

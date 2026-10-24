@@ -311,46 +311,46 @@ pub(crate) fn render_editor(f: &mut Frame, app: &mut App, editor_area: Rect) {
             app.editor_state.display_row_height(row, wrap_width)
         };
 
-        // Calculate physical_top(y_offset, cursor_row)
-        let get_physical_top = |start_y: usize, end_row: usize| -> usize {
-            let mut sum = 0;
-            for row in start_y..end_row {
-                sum += get_line_height(row);
-            }
-            sum
-        };
+        // Each rule below walks up from the cursor summing screen rows, so it
+        // measures at most about a screen's worth of rows, never the whole
+        // distance to the viewport top.
 
         // Constraint check: too far up?
         if cursor_row < y_offset {
             y_offset = cursor_row;
         }
 
-        while y_offset > 0 && get_physical_top(y_offset, cursor_row) < scrolloff {
-            y_offset -= 1;
+        // Keep `scrolloff` screen rows above the cursor: the top can be no
+        // lower than the highest row that leaves that many rows above it.
+        let mut row = cursor_row;
+        let mut above = 0;
+        while row > 0 && above < scrolloff {
+            row -= 1;
+            above += get_line_height(row);
         }
+        y_offset = y_offset.min(row);
 
-        // Ensure scrolloff below cursor:
+        // The lowest viewport top that keeps the cursor row's bottom within
+        // `limit` screen rows.
         let cursor_height = get_line_height(cursor_row);
-        let target_limit = viewport_height.saturating_sub(scrolloff);
-
-        while y_offset < cursor_row {
-            let phys_top = get_physical_top(y_offset, cursor_row);
-            if phys_top + cursor_height > target_limit {
-                y_offset += 1;
-            } else {
-                break;
+        let lowest_top = |limit: usize| -> usize {
+            let mut row = cursor_row;
+            let mut above = 0;
+            while row > 0 {
+                let height = get_line_height(row - 1);
+                if above + height + cursor_height > limit {
+                    break;
+                }
+                row -= 1;
+                above += height;
             }
-        }
+            row
+        };
 
-        // Make sure the cursor row itself is visible in the viewport even if scrolloff is too large
-        while y_offset < cursor_row {
-            let phys_top = get_physical_top(y_offset, cursor_row);
-            if phys_top + cursor_height > viewport_height {
-                y_offset += 1;
-            } else {
-                break;
-            }
-        }
+        // Ensure scrolloff below the cursor, and failing that (scrolloff too
+        // large) that the cursor row itself stays visible.
+        y_offset = y_offset.max(lowest_top(viewport_height.saturating_sub(scrolloff)));
+        y_offset = y_offset.max(lowest_top(viewport_height));
     } else if app.editor_state.folded.is_empty() {
         if cursor_row < y_offset + scrolloff {
             y_offset = cursor_row.saturating_sub(scrolloff);
