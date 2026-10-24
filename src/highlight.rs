@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::edtui;
-use crate::line_kind::{header_level, is_blockquote, is_comment, is_hr};
+use crate::line_kind::{LineKind, classify_lines};
 use crate::theme::Palette;
 use crate::{
     HighlightToken, find_in_chars, find_in_chars_from, is_registered_unit,
@@ -24,7 +24,10 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
 ) -> Vec<edtui::Highlight> {
     let mut highlights = Vec::new();
     let mut brace_level = 0;
+    let kinds = classify_lines(lines_vecs);
 
+    // Collects names from every line, fences included, because the evaluator
+    // defines them there too.
     let mut defined_vars = std::collections::HashSet::new();
     for line in lines_vecs {
         let line = line.as_ref();
@@ -69,24 +72,43 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
 
     let sv_chars: Option<Vec<char>> = selected_var.map(|sv| sv.chars().collect());
 
-    for (row_idx, line) in lines_vecs.iter().enumerate() {
+    for (row_idx, (line, kind)) in lines_vecs.iter().zip(&kinds).enumerate() {
         let line = line.as_ref();
         let n = line.len();
         let mut line_styles: Vec<Option<Style>> = vec![None; n];
         let mut arrow_idx: Option<usize> = None;
 
-        // Whole-line styles; `is_special_line` is the single classifier (conceal
-        // uses it too), and the first matching painter wins.
-        let is_special_line = is_special_line(line);
-        if is_special_line {
-            let _painted = paint_header(line, &mut line_styles, palette)
-                || paint_blockquote(line, &mut line_styles, palette)
-                || paint_hr(line, &mut line_styles, palette)
-                || paint_comment(line, &mut line_styles, palette);
-        }
+        // Whole-line styles come from the line's kind. Plain text gets the full
+        // markdown + math pass; code in an untagged or math fence keeps math
+        // but no markdown; foreign code (```python …) is left unstyled.
+        let markdown = match kind {
+            LineKind::Header(level) => {
+                paint_header(*level, &mut line_styles, palette);
+                None
+            }
+            LineKind::Blockquote => {
+                paint_indented(line, &mut line_styles, palette.blockquote);
+                None
+            }
+            LineKind::Rule => {
+                line_styles.fill(Some(Style::default().fg(palette.hr).dim()));
+                None
+            }
+            LineKind::Comment => {
+                paint_indented(line, &mut line_styles, palette.comment);
+                None
+            }
+            LineKind::FenceDelimiter => {
+                line_styles.fill(Some(Style::default().fg(palette.fg_muted)));
+                None
+            }
+            LineKind::Code { .. } if kind.is_foreign_code() => None,
+            LineKind::Code { .. } => Some(false),
+            LineKind::Text => Some(true),
+        };
 
         let mut line_braces = 0;
-        if !is_special_line {
+        if let Some(markdown) = markdown {
             let mut in_quote = false;
             let mut prev_char = None;
             let mut has_lbrace = false;
@@ -108,8 +130,13 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
             }
             let in_block = brace_level > 0 || has_lbrace || has_rbrace;
 
-            // Find all backtick ranges up front so the section painters can skip inline code.
-            let backtick_ranges = inline_code_ranges(line);
+            // Find all backtick ranges up front so the section painters can
+            // skip inline code. Code lines have no inline code or links.
+            let backtick_ranges = if markdown {
+                inline_code_ranges(line)
+            } else {
+                Vec::new()
+            };
 
             let (arrow, math_info) = section_a(
                 line,
@@ -121,7 +148,11 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
             );
             arrow_idx = arrow;
             section_b(line, n, &mut line_styles, &backtick_ranges, palette);
-            let link_ranges = section_c(line, n, &mut line_styles, palette);
+            let link_ranges = if markdown {
+                section_c(line, n, &mut line_styles, palette)
+            } else {
+                Vec::new()
+            };
             section_d(
                 line,
                 &mut line_styles,
@@ -132,19 +163,22 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
                 palette,
             );
 
-            // E. Lists / Bullet points
-            paint_list(line, &mut line_styles, palette);
-
-            // F/G/H. Inline emphasis (bold/italic/strikethrough); skipped on math lines.
-            if !math_info.is_math {
-                paint_bold(line, &mut line_styles, &backtick_ranges, palette);
-                paint_italic(line, &mut line_styles, &backtick_ranges, palette);
-                paint_strike(line, &mut line_styles, &backtick_ranges, palette);
+            // E. Lists / Bullet points; F/G/H. Inline emphasis
+            // (bold/italic/strikethrough), skipped on math lines.
+            if markdown {
+                paint_list(line, &mut line_styles, palette);
+                if !math_info.is_math {
+                    paint_bold(line, &mut line_styles, &backtick_ranges, palette);
+                    paint_italic(line, &mut line_styles, &backtick_ranges, palette);
+                    paint_strike(line, &mut line_styles, &backtick_ranges, palette);
+                }
             }
         }
 
         // I. Selected Variable Highlight
-        paint_selected_var(line, &mut line_styles, sv_chars.as_deref(), palette);
+        if !kind.is_foreign_code() && *kind != LineKind::FenceDelimiter {
+            paint_selected_var(line, &mut line_styles, sv_chars.as_deref(), palette);
+        }
 
         // Force anything after '=>' to be italic
         if let Some(arrow_pos) = arrow_idx {
@@ -157,7 +191,7 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
             }
         }
 
-        if !is_special_line {
+        if markdown.is_some() {
             brace_level = std::cmp::max(0, brace_level + line_braces);
         }
 
@@ -167,20 +201,22 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
     highlights
 }
 
-fn paint_header(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    if let Some(header_len) = header_level(line) {
-        let header_style = match header_len {
-            1 => Style::default().fg(palette.h1).bold(),
-            2 => Style::default().fg(palette.h2).bold(),
-            3 => Style::default().fg(palette.h3).bold(),
-            4 => Style::default().fg(palette.h4).bold(),
-            5 => Style::default().fg(palette.h5).bold(),
-            _ => Style::default().fg(palette.h6).bold(), // H6+
-        };
-        line_styles.fill(Some(header_style));
-        return true;
-    }
-    false
+fn paint_header(level: usize, line_styles: &mut [Option<Style>], palette: &Palette) {
+    let color = match level {
+        1 => palette.h1,
+        2 => palette.h2,
+        3 => palette.h3,
+        4 => palette.h4,
+        5 => palette.h5,
+        _ => palette.h6, // H6+
+    };
+    line_styles.fill(Some(Style::default().fg(color).bold()));
+}
+
+/// Italic `color` from the first non-blank char to the end (quotes, comments).
+fn paint_indented(line: &[char], line_styles: &mut [Option<Style>], color: Color) {
+    let start_col = line.len() - trim_start_slice(line).len();
+    line_styles[start_col..].fill(Some(Style::default().fg(color).italic()));
 }
 
 /// Inline-code spans of `line` as inclusive ranges from the opening to the
@@ -197,41 +233,6 @@ pub(crate) fn inline_code_ranges(line: &[char]) -> Vec<RangeInclusive<usize>> {
         from = end + 1;
     }
     ranges
-}
-
-/// Whether `line` is styled as a whole (header, blockquote, rule or comment),
-/// so the math and inline painters skip it.
-pub(crate) fn is_special_line(line: &[char]) -> bool {
-    header_level(line).is_some() || is_blockquote(line) || is_hr(line) || is_comment(line)
-}
-
-fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    if !is_blockquote(line) {
-        return false;
-    }
-    let start_col = line.len() - trim_start_slice(line).len();
-    let quote_style = Style::default().fg(palette.blockquote).italic();
-    line_styles[start_col..].fill(Some(quote_style));
-    true
-}
-
-fn paint_hr(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    if !is_hr(line) {
-        return false;
-    }
-    let hr_style = Style::default().fg(palette.hr).dim();
-    line_styles.fill(Some(hr_style));
-    true
-}
-
-fn paint_comment(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    if !is_comment(line) {
-        return false;
-    }
-    let start_col = line.len() - trim_start_slice(line).len();
-    let comment_style = Style::default().fg(palette.comment).italic();
-    line_styles[start_col..].fill(Some(comment_style));
-    true
 }
 
 /// Collapse a per-column style buffer into contiguous `edtui::Highlight` ranges
@@ -1103,10 +1104,22 @@ fn section_d(
 
 #[cfg(test)]
 mod tests {
-    use super::{inline_code_ranges, is_special_line};
+    use super::{compute_syntax_highlights, inline_code_ranges};
+    use ratatui::style::Modifier;
 
     fn chars(s: &str) -> Vec<char> {
         s.chars().collect()
+    }
+
+    /// (start col, end col, style) of each highlight on `row` of `text`.
+    fn row_styles(text: &str, row: usize) -> Vec<(usize, usize, ratatui::style::Style)> {
+        let lines: Vec<Vec<char>> = text.lines().map(chars).collect();
+        let palette = crate::theme::tokyo_night_night();
+        compute_syntax_highlights(&lines, None, &palette)
+            .into_iter()
+            .filter(|h| h.start.row == row)
+            .map(|h| (h.start.col, h.end.col, h.style))
+            .collect()
     }
 
     #[test]
@@ -1125,13 +1138,52 @@ mod tests {
     }
 
     #[test]
-    fn is_special_line_kinds() {
-        assert!(is_special_line(&chars("# Title")));
-        assert!(is_special_line(&chars("  > quote")));
-        assert!(is_special_line(&chars("---")));
-        assert!(is_special_line(&chars(" // note")));
-        assert!(!is_special_line(&chars("plain `code`")));
-        assert!(!is_special_line(&chars("#tag")));
-        assert!(!is_special_line(&chars("/ not a comment")));
+    fn no_markdown_styling_inside_fences() {
+        let italic = |styles: &[(usize, usize, ratatui::style::Style)]| {
+            styles
+                .iter()
+                .any(|(_, _, s)| s.add_modifier.contains(Modifier::ITALIC))
+        };
+        assert!(italic(&row_styles("*a* b", 0)));
+        assert!(!italic(&row_styles("```\n*a* b\n```", 1)));
+        assert!(row_styles("```python\n# comment\n```", 1).is_empty());
+    }
+
+    #[test]
+    fn untagged_and_math_fences_keep_math_colors() {
+        let plain = row_styles("x = 2 + 3", 0);
+        assert!(!plain.is_empty());
+        assert_eq!(row_styles("```\nx = 2 + 3\n```", 1), plain);
+        assert_eq!(row_styles("~~~calki\nx = 2 + 3\n~~~", 1), plain);
+    }
+
+    #[test]
+    fn foreign_code_is_unstyled_and_fence_lines_are_muted() {
+        let text = "```python\nx = 2 + 3\n```";
+        assert!(row_styles(text, 1).is_empty());
+        let muted = crate::theme::tokyo_night_night().fg_muted;
+        for row in [0, 2] {
+            let styles = row_styles(text, row);
+            assert_eq!(styles.len(), 1);
+            assert_eq!(styles[0].2.fg, Some(muted));
+        }
+    }
+
+    #[test]
+    fn names_defined_in_foreign_code_still_count_as_variables() {
+        // The evaluator still defines `m` inside the fence, so later lines
+        // must color it the same as when it is defined in plain text.
+        assert_eq!(
+            row_styles("```python\nm = 2\n```\ncost = m * 3", 3),
+            row_styles("m = 2\ncost = m * 3", 1)
+        );
+    }
+
+    #[test]
+    fn braces_in_foreign_code_do_not_leak_into_later_lines() {
+        assert_eq!(
+            row_styles("```js\nfunction f() {\n```\ny = 1", 3),
+            row_styles("y = 1", 0)
+        );
     }
 }

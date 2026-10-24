@@ -10,6 +10,9 @@
 use crate::{trim_char_slice, trim_start_slice};
 use std::rc::Rc;
 
+/// Fence languages whose bodies calki still treats as math.
+const MATH_LANGS: [&str; 2] = ["calki", "math"];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LineKind {
     /// The line that opens or closes a fenced code block.
@@ -25,6 +28,19 @@ pub(crate) enum LineKind {
     Rule,
     Comment,
     Text,
+}
+
+impl LineKind {
+    /// Code in a fence tagged with a language other than calki's math, which
+    /// calki must not style as markdown or math.
+    pub(crate) fn is_foreign_code(&self) -> bool {
+        match self {
+            Self::Code { lang: Some(lang) } => {
+                !MATH_LANGS.iter().any(|m| lang.eq_ignore_ascii_case(m))
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The kind of every line in `lines`, in order.
@@ -81,17 +97,17 @@ pub(crate) fn header_level(line: &[char]) -> Option<usize> {
     }
 }
 
-pub(crate) fn is_blockquote(line: &[char]) -> bool {
+fn is_blockquote(line: &[char]) -> bool {
     trim_start_slice(line).first() == Some(&'>')
 }
 
-pub(crate) fn is_hr(line: &[char]) -> bool {
+fn is_hr(line: &[char]) -> bool {
     let trimmed = trim_char_slice(line);
     (trimmed == ['-', '-', '-'] || trimmed == ['*', '*', '*'] || trimmed == ['_', '_', '_'])
         && line.len() >= 3
 }
 
-pub(crate) fn is_comment(line: &[char]) -> bool {
+fn is_comment(line: &[char]) -> bool {
     trim_start_slice(line).starts_with(&['/', '/'])
 }
 
@@ -229,5 +245,14 @@ mod tests {
     #[test]
     fn inline_triple_backticks_are_not_a_fence() {
         assert_eq!(kinds("```ls``` lists files"), vec![LineKind::Text]);
+    }
+
+    #[test]
+    fn foreign_code_is_tagged_with_a_non_math_language() {
+        assert!(code(Some("python")).is_foreign_code());
+        assert!(!code(Some("Calki")).is_foreign_code());
+        assert!(!code(Some("math")).is_foreign_code());
+        assert!(!code(None).is_foreign_code());
+        assert!(!LineKind::Text.is_foreign_code());
     }
 }
