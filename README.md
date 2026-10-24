@@ -54,6 +54,7 @@ Timezone conversion is DST-correct and understands IANA names (`America/New_York
 
 - **Wiki links** — connect notes with `[[Project Goals]]`. Press `Enter` on a link to follow it, `Backspace` or `Ctrl-o` to go back. Following a link to a note that doesn't exist creates it.
 - **Open any file, switch trees** — `:e <path>` edits any file, inside your wiki or not (created if new); `:wiki <dir>` switches to another wiki tree for the session. Links and backlinks always resolve relative to the file you're editing.
+- **Concealed markup** — `:conceal on` hides the backticks around `` `inline code` `` on every line except the one you're editing, which always shows the raw text. `:conceal off` brings them back; bare `:conceal` toggles. The setting is saved (config key `conceal`).
 - **Section folding** — `za` or `Tab` on a header folds everything beneath it down to the next header of the same level, shown as `▶ # Section (N lines folded)`. Folds nest, survive edits, and Vim motions step over them.
 - **Todo checkboxes** — `t` on a list line toggles `[ ]` ⇄ `[x]`, or turns a plain bullet into a checkbox.
 - **Custom functions** — define `f(x) = x^2 + 2*x` in a note and reuse it anywhere in that file; defined functions appear in the Variables panel.
@@ -118,7 +119,7 @@ calki uses Vim-style modal editing: the standard motions (`h` `j` `k` `l` `w` `b
 | Key | Action |
 | --- | --- |
 | `/` | Search the wiki for a keyword |
-| `:` | Open the command line (`:e`, `:wiki`, `:theme`, `:q`) |
+| `:` | Open the command line (`:e`, `:wiki`, `:theme`, `:conceal`, `:q`) |
 | `Ctrl-s` | Save the current note |
 | `Ctrl-e` | Open the export menu (HTML / Markdown) |
 | `F4` | Toggle word wrap |
@@ -153,7 +154,7 @@ calki reads `config.json` from your OS config directory (`~/.config/calki/` on L
 | `scrolloff` | integer | `5` | Lines kept visible above and below the cursor while scrolling. |
 | `line_numbers` | string | `"None"` | Line numbering: `"None"`, `"Absolute"`, or `"Relative"`. |
 | `word_wrap` | boolean | `true` | Wrap long lines instead of scrolling horizontally. Toggle live with `F4`. |
-| `conceal` | boolean | `false` | Hide the backticks around `` `inline code` `` on every line except the cursor's. Fenced code blocks are left as typed. |
+| `conceal` | boolean | `false` | Hide the backticks around `` `inline code` `` on every line except the cursor's. Fenced code blocks are left as typed. Toggle live with `:conceal`. |
 | `mouse_focus_on_hover` | boolean | `true` | Focus a panel on hover rather than requiring a click. |
 | `expand_variables_on_select` | boolean | `false` | Expand the Variables panel to full names and values when it's focused. |
 

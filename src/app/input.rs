@@ -116,6 +116,7 @@ pub(crate) fn dispatch_command(app: &mut App, input: &str) {
         "theme" => apply_theme_command(app, arg),
         "e" | "edit" => open_file_command(app, arg),
         "wiki" => switch_wiki_command(app, arg),
+        "conceal" => conceal_command(app, arg),
         other => app.set_status_message(format!("unknown command: {other}")),
     }
 }
@@ -200,6 +201,28 @@ fn switch_wiki_command(app: &mut App, arg: &str) {
             app.set_status_message(format!("wiki error: {e}"));
         }
     }
+}
+
+/// `:conceal [on|off|toggle]`: hide inline-code backticks on lines the cursor
+/// is not on. Bare `:conceal` toggles. Saved to config, like `:theme`; the
+/// ranges refresh in the `update_highlights` that follows every command.
+fn conceal_command(app: &mut App, arg: &str) {
+    let enabled = match arg {
+        "" | "toggle" => !app.config.conceal,
+        "on" => true,
+        "off" => false,
+        _ => {
+            app.set_status_message("usage: :conceal [on|off|toggle]");
+            return;
+        }
+    };
+    app.config.conceal = enabled;
+    let _ = app.config.save();
+    app.set_status_message(if enabled {
+        "conceal: on"
+    } else {
+        "conceal: off"
+    });
 }
 
 /// `:theme` — no arg lists available themes; an arg switches to that theme,
@@ -1253,6 +1276,108 @@ mod tests {
         let before = app.wiki_mgr.root_dir().to_path_buf();
         dispatch_command(&mut app, "wiki /no/such/calki/dir/xyz");
         assert_eq!(app.wiki_mgr.root_dir(), before.as_path());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn status(app: &App) -> Option<&str> {
+        app.status_message.as_ref().map(|(msg, _)| msg.as_str())
+    }
+
+    #[test]
+    fn cmd_conceal_on_sets_config_and_ranges() {
+        let (mut app, root) = test_app("test_cmd_conceal_on");
+        app.editor_state =
+            crate::edtui::EditorState::new(crate::edtui::Lines::from("top\nuse `x`"));
+        dispatch_command(&mut app, "conceal on");
+        app.update_highlights();
+        assert!(app.config.conceal);
+        assert!(app.editor_state.has_conceal());
+        assert_eq!(status(&app), Some("conceal: on"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cmd_conceal_toggle_flips() {
+        let (mut app, root) = test_app("test_cmd_conceal_toggle");
+        assert!(!app.config.conceal);
+        dispatch_command(&mut app, "conceal");
+        assert!(app.config.conceal);
+        dispatch_command(&mut app, "conceal toggle");
+        assert!(!app.config.conceal);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cmd_conceal_off_clears() {
+        let (mut app, root) = test_app("test_cmd_conceal_off");
+        app.editor_state =
+            crate::edtui::EditorState::new(crate::edtui::Lines::from("top\nuse `x`"));
+        dispatch_command(&mut app, "conceal on");
+        app.update_highlights();
+        dispatch_command(&mut app, "conceal off");
+        app.update_highlights();
+        assert!(!app.config.conceal);
+        assert!(!app.editor_state.has_conceal());
+        assert_eq!(status(&app), Some("conceal: off"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cmd_conceal_bad_arg_usage() {
+        let (mut app, root) = test_app("test_cmd_conceal_bad");
+        dispatch_command(&mut app, "conceal maybe");
+        assert!(!app.config.conceal);
+        assert_eq!(status(&app), Some("usage: :conceal [on|off|toggle]"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn left_click(app: &mut App, column: u16, row: u16) {
+        handle_mouse(
+            app,
+            crossterm::event::MouseEvent {
+                kind: event::MouseEventKind::Down(event::MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+    }
+
+    /// App with conceal on, the editor at x=20, and `text` loaded.
+    fn concealed_editor_app(name: &str, text: &str) -> (App, PathBuf) {
+        let (mut app, root) = test_app(name);
+        app.left_area = ratatui::layout::Rect::new(0, 0, 20, 30);
+        app.editor_area = ratatui::layout::Rect::new(20, 0, 60, 30);
+        app.right_area = ratatui::layout::Rect::new(80, 0, 20, 30);
+        app.editor_state = crate::edtui::EditorState::new(crate::edtui::Lines::from(text));
+        app.editor_state.view.screen_area = ratatui::layout::Rect::new(20, 0, 60, 30);
+        app.editor_state.view.wrap = false;
+        app.config.conceal = true;
+        app.update_highlights();
+        (app, root)
+    }
+
+    #[test]
+    fn click_on_concealed_line_lands_on_seen_char() {
+        // Row 1 is drawn as "a b and more words"; x=2 is 'b', buffer col 3.
+        let (mut app, root) =
+            concealed_editor_app("test_conceal_click", "top\na `b` and more words");
+        left_click(&mut app, 22, 1);
+        assert_eq!(app.editor_state.cursor, crate::edtui::Index2::new(1, 3));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn click_link_after_concealed_code_follows_it() {
+        let (mut app, root) = concealed_editor_app(
+            "test_conceal_click_link",
+            "top\nsee `cfg` then go to [[Target Note]]",
+        );
+        let target = root.join("target-note.md");
+        std::fs::write(&target, "# Target").unwrap();
+        // Drawn as "see cfg then go to [[Target Note]]": 'T' is at x=21.
+        left_click(&mut app, 20 + 21, 1);
+        assert_eq!(app.active_path, target);
         let _ = std::fs::remove_dir_all(&root);
     }
 }
