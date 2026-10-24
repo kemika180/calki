@@ -67,7 +67,7 @@ Timezone conversion is DST-correct and understands IANA names (`America/New_York
 - **Three panels** — a Wiki Map (references and backlinks) on the left, the `edtui`-powered Vim editor in the center, and a Variables Inspector (live scopes and results) on the right.
 - **Export** — `Ctrl-e` compiles the current note to HTML, or the whole wiki to a single Markdown file.
 - **Persistent sessions** — panel layout, cursor position, and preferences are saved between runs.
-- **Update checks** — calki checks GitHub for new releases on launch, without blocking startup, and lets you skip a version you don't want.
+- **Update checks** — calki checks crates.io for a newer version on launch, without blocking startup, and lets you skip a version you don't want.
 
 ---
 
