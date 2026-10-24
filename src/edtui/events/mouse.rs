@@ -49,6 +49,16 @@ impl MouseEventHandler {
             return;
         }
 
+        // Hit-test against the geometry the user is looking at, i.e. before
+        // this event changes the selection or mode (which decide which rows
+        // render concealed).
+        let hit = match event {
+            MouseEvent::Down(mouse) | MouseEvent::Up(mouse) | MouseEvent::Drag(mouse) => Some(
+                mouse_position_to_cursor_position(state, &mouse, state.view.tab_width),
+            ),
+            _ => None,
+        };
+
         if let MouseEvent::Down(_) = event {
             state.selection = None;
             if state.mode == EditorMode::Visual {
@@ -63,30 +73,26 @@ impl MouseEventHandler {
             set_selection(&mut state.selection, state.cursor);
         }
 
-        match event {
-            MouseEvent::Down(mouse) | MouseEvent::Up(mouse) | MouseEvent::Drag(mouse) => {
-                let lines = &state.lines;
-                let cursor = mouse_position_to_cursor_position(state, &mouse, state.view.tab_width);
-                let last_row = lines.last_row_index();
-                let last_col = lines.last_col_index(cursor.row);
+        if let Some(cursor) = hit {
+            let lines = &state.lines;
+            let last_row = lines.last_row_index();
+            let last_col = lines.last_col_index(cursor.row);
 
-                // row is out of bounds
-                if last_row < cursor.row {
-                    let last_col = lines.last_col_index(last_row);
-                    state.cursor = Index2::new(last_row, last_col);
-                // col is out of bounds
-                } else if last_col < cursor.col {
-                    state.cursor = Index2::new(cursor.row, last_col);
-                } else {
-                    state.cursor = cursor;
-                }
-
-                if let MouseEvent::Drag(_) = event {
-                    set_selection(&mut state.selection, state.cursor);
-                }
+            // row is out of bounds
+            if last_row < cursor.row {
+                let last_col = lines.last_col_index(last_row);
+                state.cursor = Index2::new(last_row, last_col);
+            // col is out of bounds
+            } else if last_col < cursor.col {
+                state.cursor = Index2::new(cursor.row, last_col);
+            } else {
+                state.cursor = cursor;
             }
-            MouseEvent::ScrollUp(_) | MouseEvent::ScrollDown(_) | MouseEvent::None => (),
-        };
+
+            if let MouseEvent::Drag(_) = event {
+                set_selection(&mut state.selection, state.cursor);
+            }
+        }
     }
 
     fn handle_scroll_up(state: &mut EditorState) {
@@ -175,10 +181,16 @@ fn mouse_position_to_cursor_position(
         let row_index = visible
             .to_buffer(top_ordinal + mouse.row)
             .unwrap_or(last_row);
-        let line = state.lines.get(jagged::index::RowIndex::new(row_index));
-        let scrolled = line.map_or(&[][..], |l| l.get(col_index..).unwrap_or_default());
-        let col = col_index + column_at_screen_x(scrolled.iter().copied(), mouse.col, tab_width);
-        return Index2::new(row_index, col);
+        let line = state
+            .lines
+            .get(jagged::index::RowIndex::new(row_index))
+            .map_or(&[][..], Vec::as_slice);
+        let map = state.column_map(row_index);
+        let display = map.display_chars(line);
+        let start = map.to_display(col_index);
+        let scrolled = display.get(start..).unwrap_or_default();
+        let offset = column_at_screen_x(scrolled.iter().copied(), mouse.col, tab_width);
+        return Index2::new(row_index, map.to_buffer(start + offset));
     }
 
     let mut row_screen_index = 0;
@@ -191,10 +203,16 @@ fn mouse_position_to_cursor_position(
         let Some(line) = state.lines.get(jagged::index::RowIndex::new(buffer_row)) else {
             break;
         };
-        let ranges = LineWrapper::wrap_ranges(line, state.view.screen_area.width.into(), tab_width);
+        // Wrap the chars as drawn, then map the hit back to a buffer column.
+        let map = state.column_map(buffer_row);
+        let display = map.display_chars(line);
+        let ranges =
+            LineWrapper::wrap_ranges(&display, state.view.screen_area.width.into(), tab_width);
         if row_screen_index + ranges.len() > mouse.row {
             let wrapped_row = mouse.row - row_screen_index;
-            col_index = column_in_wrapped_row(line, &ranges, wrapped_row, mouse.col, tab_width);
+            let display_col =
+                column_in_wrapped_row(&display, &ranges, wrapped_row, mouse.col, tab_width);
+            col_index = map.to_buffer(display_col);
             break;
         }
         row_screen_index += ranges.len();
@@ -444,5 +462,122 @@ mod tests {
         state.view.viewport.x = 4;
         assert_eq!(hit(&state, 0, 0), Index2::new(0, 4));
         assert_eq!(hit(&state, 0, 3), Index2::new(0, 7));
+    }
+
+    /// State with the backticks of every row hidden (cursor on row 0).
+    fn concealed_state(text: &str, width: u16, wrap: bool) -> EditorState {
+        let mut state = wrapped_state(text, width);
+        state.view.wrap = wrap;
+        let ranges = text
+            .lines()
+            .enumerate()
+            .map(|(row, line)| {
+                let ticks = line.chars().enumerate().filter(|&(_, c)| c == '`');
+                (row, ticks.map(|(i, _)| i..i + 1).collect())
+            })
+            .collect();
+        state.set_conceal_ranges(ranges);
+        state
+    }
+
+    fn down(state: &mut EditorState, row: u16, col: u16) {
+        MouseEventHandler::on_event(MouseEvent::Down(MousePosition::new(row, col)), state);
+    }
+
+    #[test]
+    fn click_concealed_row_maps_to_visible_char() {
+        // Row 1 "a `bc` d" is drawn as "a bc d"; x=3 is 'c', buffer col 4.
+        let state = concealed_state("x\na `bc` d", 80, false);
+        assert_eq!(hit(&state, 1, 3), Index2::new(1, 4));
+        assert_eq!(hit(&state, 1, 2), Index2::new(1, 3));
+        assert_eq!(hit(&state, 1, 5), Index2::new(1, 7));
+    }
+
+    #[test]
+    fn click_concealed_row_wrapped() {
+        // "aa `bb` cc" is drawn as "aa bb cc", wrapped at 6 to "aa bb" / "cc".
+        let state = concealed_state("x\naa `bb` cc", 6, true);
+        assert_eq!(hit(&state, 1, 3), Index2::new(1, 4));
+        assert_eq!(hit(&state, 2, 1), Index2::new(1, 9));
+    }
+
+    #[test]
+    fn click_concealed_row_no_wrap_scrolled() {
+        // Scrolled 2 cols, row 1 is drawn as "cdef"; x=1 is 'd', buffer col 4.
+        let mut state = concealed_state("0123456789\nab`cd`ef", 8, false);
+        state.view.viewport.x = 2;
+        assert_eq!(hit(&state, 1, 0), Index2::new(1, 3));
+        assert_eq!(hit(&state, 1, 1), Index2::new(1, 4));
+        assert_eq!(hit(&state, 1, 2), Index2::new(1, 6));
+    }
+
+    #[test]
+    fn click_past_end_of_concealed_row_clamps() {
+        // "a `b`" has 5 chars; past the end clamps to the last (hidden) one.
+        let mut state = concealed_state("x\na `b`", 80, false);
+        down(&mut state, 1, 30);
+        assert_eq!(state.cursor, Index2::new(1, 4));
+    }
+
+    #[test]
+    fn click_after_visual_selection_uses_revealed_geometry() {
+        // Rows 1-2 are selected, so they are drawn raw: x=3 on row 1 is 'b' (col 3).
+        let mut state = concealed_state("x\na `bc` d\ny `z`", 80, false);
+        state.mode = EditorMode::Visual;
+        state.selection = Some(crate::edtui::state::selection::Selection::new(
+            Index2::new(1, 0),
+            Index2::new(2, 2),
+        ));
+        state.cursor = Index2::new(2, 2);
+        down(&mut state, 1, 3);
+        assert_eq!(state.cursor, Index2::new(1, 3));
+        assert_eq!(state.mode, EditorMode::Normal);
+    }
+
+    /// Renders `state` and checks that clicking any drawn char puts the cursor
+    /// on that same char in the buffer.
+    fn assert_cells_round_trip(state: &mut EditorState, width: u16) {
+        use crate::edtui::{EditorTheme, EditorView};
+        use ratatui_core::{buffer::Buffer, layout::Rect, widgets::Widget};
+
+        let area = Rect::new(0, 0, width, 12);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(state)
+            .theme(EditorTheme::default().hide_status_line())
+            .render(area, &mut buf);
+
+        let mut checked = 0;
+        for y in 0..area.height {
+            for x in 0..area.width {
+                let symbol = buf[(x, y)].symbol().to_string();
+                if symbol.trim().is_empty() {
+                    continue;
+                }
+                let pos = hit(state, y, x);
+                let ch = state
+                    .lines
+                    .get(jagged::index::RowIndex::new(pos.row))
+                    .and_then(|line| line.get(pos.col))
+                    .map(char::to_string);
+                assert_eq!(
+                    ch.as_deref(),
+                    Some(symbol.as_str()),
+                    "cell ({x}, {y}) -> {pos:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn every_rendered_cell_round_trips_through_mouse() {
+        let text =
+            "first `code` line\nsome `x` and `yy` words that wrap around\n😀 `wide` b\nplain";
+        for wrap in [true, false] {
+            let mut state = concealed_state(text, 14, wrap);
+            state.cursor = Index2::new(3, 0);
+            assert_cells_round_trip(&mut state, 14);
+        }
     }
 }

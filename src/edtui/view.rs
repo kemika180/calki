@@ -1,3 +1,4 @@
+mod conceal;
 mod internal;
 pub(crate) mod line_wrapper;
 mod render_line;
@@ -6,6 +7,7 @@ pub mod status_line;
 pub mod syntax_highlighting;
 pub mod theme;
 
+use conceal::conceal_spans;
 use render_line::RenderLine;
 #[cfg(feature = "syntax-highlighting")]
 use syntax_highlighting::SyntaxHighlighter;
@@ -337,7 +339,7 @@ impl Widget for EditorView<'_, '_> {
             let spans = if let Some(&hidden_count) = fold_markers.get(&row_index) {
                 fold_marker_spans(line, hidden_count, fold_marker_style)
             } else {
-                generate_spans(
+                let spans = generate_spans(
                     line,
                     &selections,
                     &self.state.highlights,
@@ -347,7 +349,10 @@ impl Widget for EditorView<'_, '_> {
                     &self.theme.selection_style,
                     #[cfg(feature = "syntax-highlighting")]
                     self.syntax_highlighter.as_ref(),
-                )
+                );
+                // Identity (no-op) unless this row has hidden ranges and the
+                // cursor or selection is not on it.
+                conceal_spans(spans, &self.state.column_map(row_index), col_skips)
             };
 
             let render_line = if wrap_lines {
