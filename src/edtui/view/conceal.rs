@@ -39,7 +39,7 @@ pub(crate) fn conceal_spans<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::edtui::state::conceal::ConcealRanges;
+    use crate::edtui::state::conceal::{ConcealRanges, every_backtick_hidden};
     use crate::edtui::state::selection::Selection;
     use crate::edtui::{EditorMode, EditorState, EditorView, Index2, Lines};
     use ratatui_core::{
@@ -68,26 +68,9 @@ mod tests {
         assert_eq!(conceal_spans(spans, &map, 2), vec![Span::raw("b c")]);
     }
 
-    /// Hides the backticks of every `` `x` `` pair on every row.
-    fn backtick_ranges(text: &str) -> ConcealRanges {
-        text.lines()
-            .enumerate()
-            .filter_map(|(row, line)| {
-                let ticks: Vec<usize> = line
-                    .chars()
-                    .enumerate()
-                    .filter(|&(_, c)| c == '`')
-                    .map(|(i, _)| i)
-                    .collect();
-                let ranges: Vec<_> = ticks.iter().map(|&i| i..i + 1).collect();
-                (!ranges.is_empty()).then_some((row, ranges))
-            })
-            .collect()
-    }
-
     fn concealed_state(text: &str) -> EditorState {
         let mut state = EditorState::new(Lines::from(text));
-        state.set_conceal_ranges(backtick_ranges(text));
+        state.set_conceal_ranges(every_backtick_hidden(text));
         state
     }
 

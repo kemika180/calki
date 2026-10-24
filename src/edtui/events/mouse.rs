@@ -472,15 +472,7 @@ mod tests {
     fn concealed_state(text: &str, width: u16, wrap: bool) -> EditorState {
         let mut state = wrapped_state(text, width);
         state.view.wrap = wrap;
-        let ranges = text
-            .lines()
-            .enumerate()
-            .map(|(row, line)| {
-                let ticks = line.chars().enumerate().filter(|&(_, c)| c == '`');
-                (row, ticks.map(|(i, _)| i..i + 1).collect())
-            })
-            .collect();
-        state.set_conceal_ranges(ranges);
+        state.set_conceal_ranges(crate::edtui::state::conceal::every_backtick_hidden(text));
         state
     }
 

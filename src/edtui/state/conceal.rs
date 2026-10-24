@@ -142,6 +142,23 @@ impl EditorState {
     }
 }
 
+/// Test helper: hides every backtick on every row of `text`.
+#[cfg(test)]
+pub(crate) fn every_backtick_hidden(text: &str) -> ConcealRanges {
+    text.lines()
+        .enumerate()
+        .filter_map(|(row, line)| {
+            let ticks: Vec<Range<usize>> = line
+                .chars()
+                .enumerate()
+                .filter(|&(_, c)| c == '`')
+                .map(|(i, _)| i..i + 1)
+                .collect();
+            (!ticks.is_empty()).then_some((row, ticks))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
