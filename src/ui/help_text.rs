@@ -143,7 +143,7 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
                     Style::default().fg(palette.keybind_label).bold(),
                 ),
                 Span::styled(
-                    "Hide inline-code backticks off the cursor line (alone toggles; saved)",
+                    "Hide inline-code backticks off the cursor line (toggle or no arg flips; saved)",
                     Style::default().fg(palette.fg),
                 ),
             ]),
