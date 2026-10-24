@@ -9,7 +9,7 @@
 use crate::edtui::EditorMode;
 use crate::edtui::EditorState;
 use crate::edtui::state::selection::set_selection_with_lines;
-use crate::line_kind::header_level;
+use crate::line_kind::{LineKind, classify_lines};
 use jagged::index::RowIndex;
 use std::collections::{HashMap, HashSet};
 
@@ -111,12 +111,16 @@ impl VisibleLines {
 
 impl EditorState {
     /// All Markdown header rows with their levels (1 for `#`, 2 for `##`, …),
-    /// in ascending row order.
+    /// in ascending row order. `#` lines inside fenced code are not headers.
     fn header_rows(&self) -> Vec<(usize, usize)> {
-        self.lines
-            .iter_row()
+        let rows: Vec<&Vec<char>> = self.lines.iter_row().collect();
+        classify_lines(&rows)
+            .into_iter()
             .enumerate()
-            .filter_map(|(row, chars)| header_level(chars).map(|level| (row, level)))
+            .filter_map(|(row, kind)| match kind {
+                LineKind::Header(level) => Some((row, level)),
+                _ => None,
+            })
             .collect()
     }
 
@@ -223,12 +227,9 @@ impl EditorState {
         }
         // Current header rows → their text.
         let current: HashMap<usize, String> = self
-            .lines
-            .iter_row()
-            .enumerate()
-            .filter_map(|(row, chars)| {
-                header_level(chars).map(|_| (row, chars.iter().collect::<String>()))
-            })
+            .header_rows()
+            .into_iter()
+            .map(|(row, _)| (row, self.row_text(row)))
             .collect();
         self.folded
             .retain(|row, text| current.get(row) == Some(text));
@@ -292,6 +293,28 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    #[test]
+    fn hash_lines_in_fenced_code_are_not_fold_headers() {
+        // # A (0), fence (1-4) with "# setup" at 2, body (5), # B (6).
+        let mut s = state("# A\n```python\n# setup\nx = 1\n```\nbody\n# B");
+        fold_at(&mut s, 0);
+        assert_eq!(s.folded_regions()[0].end_row, 6);
+
+        // The cursor inside the fence belongs to section A, not "# setup".
+        s.folded.clear();
+        s.cursor = Index2::new(3, 0);
+        s.toggle_fold_at_cursor();
+        assert_eq!(s.folded.keys().copied().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn reconcile_drops_fold_whose_header_is_now_inside_a_fence() {
+        let mut s = state("```\n# A\nbody");
+        fold_at(&mut s, 1);
+        s.reconcile_folds();
+        assert!(s.folded.is_empty());
     }
 
     #[test]

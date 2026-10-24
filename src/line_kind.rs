@@ -84,8 +84,8 @@ fn classify_line(line: &[char]) -> LineKind {
 
 /// Markdown ATX-header level of `line` (1 for `#`, 2 for `##`, …), or `None` if
 /// the line is not a header. A header is a run of leading `#` followed by a
-/// space or end-of-line. Shared with header-section folding.
-pub(crate) fn header_level(line: &[char]) -> Option<usize> {
+/// space or end-of-line.
+fn header_level(line: &[char]) -> Option<usize> {
     if line.first() != Some(&'#') {
         return None;
     }
