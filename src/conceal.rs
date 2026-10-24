@@ -2,7 +2,7 @@
 //!
 //! The editor widget only knows "hide these char ranges on this row" (see
 //! `edtui::state::conceal`); this module picks the ranges. Currently that is
-//! the backticks around inline code. Fenced code blocks (```` ``` ````) and
+//! the backticks around inline code. Fenced code blocks (```` ``` ```` or `~~~`) and
 //! lines the highlighter styles as a whole (headers, quotes, rules, comments)
 //! are left raw.
 
@@ -17,14 +17,20 @@ pub(crate) fn compute_conceal_ranges<T: AsRef<[char]>>(
     lines: &[T],
 ) -> HashMap<usize, Vec<Range<usize>>> {
     let mut ranges = HashMap::new();
-    let mut in_fence = false;
+    let mut open_fence: Option<Fence> = None;
     for (row, line) in lines.iter().enumerate() {
         let line = line.as_ref();
-        if is_fence(line) {
-            in_fence = !in_fence;
+        if let Some(fence) = &open_fence {
+            if fence.is_closed_by(line) {
+                open_fence = None;
+            }
             continue;
         }
-        if in_fence || is_special_line(line) {
+        if let Some(fence) = Fence::opened_by(line) {
+            open_fence = Some(fence);
+            continue;
+        }
+        if is_special_line(line) {
             continue;
         }
         let hidden = inline_code_delimiters(line);
@@ -35,9 +41,39 @@ pub(crate) fn compute_conceal_ranges<T: AsRef<[char]>>(
     ranges
 }
 
-/// Whether `line` opens or closes a fenced code block.
-fn is_fence(line: &[char]) -> bool {
-    trim_start_slice(line).starts_with(&['`', '`', '`'])
+/// An open fenced code block, following CommonMark: a run of 3+ backticks or
+/// tildes opens it, and only a run of the same char, at least as long and
+/// with nothing after it, closes it.
+struct Fence {
+    marker: char,
+    len: usize,
+}
+
+impl Fence {
+    /// The fence `line` opens, if any. A backtick fence's info string may not
+    /// contain a backtick, so ```` ```ls``` ```` is inline code, not a fence.
+    fn opened_by(line: &[char]) -> Option<Self> {
+        let (marker, len, rest) = fence_run(line)?;
+        if marker == '`' && rest.contains(&'`') {
+            return None;
+        }
+        Some(Self { marker, len })
+    }
+
+    fn is_closed_by(&self, line: &[char]) -> bool {
+        fence_run(line).is_some_and(|(marker, len, rest)| {
+            marker == self.marker && len >= self.len && rest.iter().all(|c| c.is_whitespace())
+        })
+    }
+}
+
+/// The fence char, run length and remainder of `line` if, after leading
+/// whitespace, it starts with 3+ backticks or tildes.
+fn fence_run(line: &[char]) -> Option<(char, usize, &[char])> {
+    let trimmed = trim_start_slice(line);
+    let marker = *trimmed.first().filter(|&&c| c == '`' || c == '~')?;
+    let len = trimmed.iter().take_while(|&&c| c == marker).count();
+    (len >= 3).then(|| (marker, len, &trimmed[len..]))
 }
 
 /// The opening and closing backtick of each single-backtick inline-code span
@@ -127,5 +163,34 @@ mod tests {
     fn multibyte_char_columns() {
         // Columns are char indices: 'é' is one column.
         assert_eq!(ranges("é `ü`"), HashMap::from([(0, vec![2..3, 4..5])]));
+    }
+
+    #[test]
+    fn inline_triple_backticks_do_not_open_a_fence() {
+        // "```ls``` lists files" is inline code under CommonMark, not a fence.
+        let found = ranges("```ls``` lists files\nthen `x`");
+        assert!(found.contains_key(&1));
+    }
+
+    #[test]
+    fn tilde_fence_body_is_left_raw() {
+        let found = ranges("~~~sh\necho `date`\n~~~\nafter `b`");
+        assert!(!found.contains_key(&1));
+        assert!(found.contains_key(&3));
+    }
+
+    #[test]
+    fn shorter_or_different_run_does_not_close_fence() {
+        let text = "````md\n```\nin `a`\n```\n~~~~\n````\nout `b`";
+        let found = ranges(text);
+        assert!(!found.contains_key(&2));
+        assert!(found.contains_key(&6));
+    }
+
+    #[test]
+    fn fence_with_trailing_text_does_not_close() {
+        let found = ranges("```\n``` not a close\nstill `in`\n```\nout `x`");
+        assert!(!found.contains_key(&2));
+        assert!(found.contains_key(&4));
     }
 }
