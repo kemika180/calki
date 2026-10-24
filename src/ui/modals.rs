@@ -65,19 +65,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App) {
         Style::default().fg(app.palette.help_section).italic(),
     )]));
 
-    let max_scroll = if help_text.len() > area.height as usize {
-        (help_text.len() - area.height as usize) as u16
-    } else {
-        0
-    };
-    if app.help_scroll > max_scroll {
-        app.help_scroll = max_scroll;
-    }
-
+    let inner_width = block.inner(area).width;
     let paragraph = Paragraph::new(help_text)
         .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((app.help_scroll, 0));
+        .wrap(Wrap { trim: false });
+    // Rows after wrapping, borders included, so the last line can scroll into view.
+    let total_rows = paragraph.line_count(inner_width);
+    let max_scroll =
+        u16::try_from(total_rows.saturating_sub(usize::from(area.height))).unwrap_or(u16::MAX);
+    app.help_scroll = app.help_scroll.min(max_scroll);
+    let paragraph = paragraph.scroll((app.help_scroll, 0));
     f.render_widget(Clear, area); // Clear background
     f.render_widget(paragraph, area);
 }
@@ -233,4 +230,41 @@ pub(crate) fn render_export_menu(f: &mut Frame, app: &App) {
     let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
     f.render_widget(Clear, area);
     f.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn screen_text(terminal: &Terminal<TestBackend>) -> String {
+        let buf = terminal.backend().buffer();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn help_scrolls_to_last_line_when_text_wraps() {
+        let root = std::env::current_dir().unwrap().join("test_help_scroll");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = App::new(root.clone()).unwrap();
+        app.help_tab_idx = 0;
+        app.help_scroll = u16::MAX;
+
+        // Narrow and short, so many help lines wrap and the text overflows.
+        let mut terminal = Terminal::new(TestBackend::new(60, 30)).unwrap();
+        terminal.draw(|f| render_help(f, &mut app)).unwrap();
+
+        let text = screen_text(&terminal);
+        assert!(text.contains("to close"), "footer not reachable:\n{text}");
+        assert!(app.help_scroll > 0 && app.help_scroll < u16::MAX);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
