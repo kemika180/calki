@@ -2,78 +2,29 @@
 //!
 //! The editor widget only knows "hide these char ranges on this row" (see
 //! `edtui::state::conceal`); this module picks the ranges. Currently that is
-//! the backticks around inline code. Fenced code blocks (```` ``` ```` or `~~~`) and
-//! lines the highlighter styles as a whole (headers, quotes, rules, comments)
-//! are left raw.
+//! the backticks around inline code, on plain text lines only: fenced code,
+//! headers, quotes, rules and comments (see [`crate::line_kind`]) are left raw.
 
-use crate::highlight::{inline_code_ranges, is_special_line};
-use crate::trim_start_slice;
+use crate::highlight::inline_code_ranges;
+use crate::line_kind::{LineKind, classify_lines};
 use std::collections::HashMap;
 use std::ops::Range;
 
 /// Hidden char ranges keyed by buffer row, for
-/// `EditorState::set_conceal_ranges`.
+/// `EditorState::set_conceal_ranges`. Only plain text lines are concealed.
 pub(crate) fn compute_conceal_ranges<T: AsRef<[char]>>(
     lines: &[T],
 ) -> HashMap<usize, Vec<Range<usize>>> {
-    let mut ranges = HashMap::new();
-    let mut open_fence: Option<Fence> = None;
-    for (row, line) in lines.iter().enumerate() {
-        let line = line.as_ref();
-        if let Some(fence) = &open_fence {
-            if fence.is_closed_by(line) {
-                open_fence = None;
-            }
-            continue;
-        }
-        if let Some(fence) = Fence::opened_by(line) {
-            open_fence = Some(fence);
-            continue;
-        }
-        if is_special_line(line) {
-            continue;
-        }
-        let hidden = inline_code_delimiters(line);
-        if !hidden.is_empty() {
-            ranges.insert(row, hidden);
-        }
-    }
-    ranges
-}
-
-/// An open fenced code block, following CommonMark: a run of 3+ backticks or
-/// tildes opens it, and only a run of the same char, at least as long and
-/// with nothing after it, closes it.
-struct Fence {
-    marker: char,
-    len: usize,
-}
-
-impl Fence {
-    /// The fence `line` opens, if any. A backtick fence's info string may not
-    /// contain a backtick, so ```` ```ls``` ```` is inline code, not a fence.
-    fn opened_by(line: &[char]) -> Option<Self> {
-        let (marker, len, rest) = fence_run(line)?;
-        if marker == '`' && rest.contains(&'`') {
-            return None;
-        }
-        Some(Self { marker, len })
-    }
-
-    fn is_closed_by(&self, line: &[char]) -> bool {
-        fence_run(line).is_some_and(|(marker, len, rest)| {
-            marker == self.marker && len >= self.len && rest.iter().all(|c| c.is_whitespace())
+    classify_lines(lines)
+        .into_iter()
+        .zip(lines)
+        .enumerate()
+        .filter(|(_, (kind, _))| *kind == LineKind::Text)
+        .filter_map(|(row, (_, line))| {
+            let hidden = inline_code_delimiters(line.as_ref());
+            (!hidden.is_empty()).then_some((row, hidden))
         })
-    }
-}
-
-/// The fence char, run length and remainder of `line` if, after leading
-/// whitespace, it starts with 3+ backticks or tildes.
-fn fence_run(line: &[char]) -> Option<(char, usize, &[char])> {
-    let trimmed = trim_start_slice(line);
-    let marker = *trimmed.first().filter(|&&c| c == '`' || c == '~')?;
-    let len = trimmed.iter().take_while(|&&c| c == marker).count();
-    (len >= 3).then(|| (marker, len, &trimmed[len..]))
+        .collect()
 }
 
 /// The opening and closing backtick of each single-backtick inline-code span

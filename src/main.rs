@@ -2,6 +2,7 @@ mod app;
 mod conceal;
 mod currency;
 mod highlight;
+mod line_kind;
 mod math;
 mod theme;
 mod ui;

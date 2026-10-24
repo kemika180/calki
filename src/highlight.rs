@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::edtui;
+use crate::line_kind::{header_level, is_blockquote, is_comment, is_hr};
 use crate::theme::Palette;
 use crate::{
     HighlightToken, find_in_chars, find_in_chars_from, is_registered_unit,
@@ -166,21 +167,6 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
     highlights
 }
 
-/// Markdown ATX-header level of `line` (1 for `#`, 2 for `##`, …), or `None` if
-/// the line is not a header. A header is a run of leading `#` followed by a
-/// space or end-of-line. Shared by the highlighter and header-section folding.
-pub(crate) fn header_level(line: &[char]) -> Option<usize> {
-    if line.first() != Some(&'#') {
-        return None;
-    }
-    let header_len = line.iter().take_while(|&&c| c == '#').count();
-    if line.get(header_len) == Some(&' ') || line.len() == header_len {
-        Some(header_len)
-    } else {
-        None
-    }
-}
-
 fn paint_header(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
     if let Some(header_len) = header_level(line) {
         let header_style = match header_len {
@@ -217,20 +203,6 @@ pub(crate) fn inline_code_ranges(line: &[char]) -> Vec<RangeInclusive<usize>> {
 /// so the math and inline painters skip it.
 pub(crate) fn is_special_line(line: &[char]) -> bool {
     header_level(line).is_some() || is_blockquote(line) || is_hr(line) || is_comment(line)
-}
-
-fn is_blockquote(line: &[char]) -> bool {
-    trim_start_slice(line).first() == Some(&'>')
-}
-
-fn is_hr(line: &[char]) -> bool {
-    let trimmed = trim_char_slice(line);
-    (trimmed == ['-', '-', '-'] || trimmed == ['*', '*', '*'] || trimmed == ['_', '_', '_'])
-        && line.len() >= 3
-}
-
-fn is_comment(line: &[char]) -> bool {
-    trim_start_slice(line).starts_with(&['/', '/'])
 }
 
 fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
@@ -1131,31 +1103,10 @@ fn section_d(
 
 #[cfg(test)]
 mod tests {
-    use super::{header_level, inline_code_ranges, is_special_line};
+    use super::{inline_code_ranges, is_special_line};
 
     fn chars(s: &str) -> Vec<char> {
         s.chars().collect()
-    }
-
-    #[test]
-    fn header_level_detects_atx_levels() {
-        assert_eq!(header_level(&chars("# Title")), Some(1));
-        assert_eq!(header_level(&chars("## Sub")), Some(2));
-        assert_eq!(header_level(&chars("###### Deep")), Some(6));
-        // Bare header with no trailing text still counts.
-        assert_eq!(header_level(&chars("#")), Some(1));
-        assert_eq!(header_level(&chars("###")), Some(3));
-    }
-
-    #[test]
-    fn header_level_rejects_non_headers() {
-        assert_eq!(header_level(&chars("")), None);
-        assert_eq!(header_level(&chars("not a header")), None);
-        // `#` must be followed by a space or end-of-line, not another glyph.
-        assert_eq!(header_level(&chars("#tag")), None);
-        assert_eq!(header_level(&chars("##bold")), None);
-        // Leading whitespace disqualifies (ATX headers start at column 0).
-        assert_eq!(header_level(&chars(" # indented")), None);
     }
 
     #[test]

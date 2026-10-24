@@ -9,7 +9,7 @@
 use crate::edtui::EditorMode;
 use crate::edtui::EditorState;
 use crate::edtui::state::selection::set_selection_with_lines;
-use crate::highlight::header_level;
+use crate::line_kind::header_level;
 use jagged::index::RowIndex;
 use std::collections::{HashMap, HashSet};
 
