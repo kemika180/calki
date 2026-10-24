@@ -1,4 +1,5 @@
 //! The editors state
+pub(crate) mod conceal;
 pub(crate) mod fold;
 pub mod highlight;
 pub mod mode;
@@ -40,6 +41,10 @@ pub struct EditorState {
     /// header line's text at fold time, so [`EditorState::reconcile_folds`] can
     /// tell an unchanged header from a different one that shifted into that row.
     pub(crate) folded: HashMap<usize, String>,
+
+    /// Char ranges to hide on rows the cursor is not on, keyed by row (see
+    /// [`conceal`]). Empty when concealment is off.
+    pub(crate) conceal: conceal::ConcealRanges,
 
     /// Internal view state of the editor.
     pub(crate) view: ViewState,
@@ -87,6 +92,7 @@ impl EditorState {
             selection: None,
             highlights: Vec::new(),
             folded: HashMap::new(),
+            conceal: conceal::ConcealRanges::new(),
             view: ViewState::default(),
             search: SearchState::default(),
             undo: Stack::new(),
