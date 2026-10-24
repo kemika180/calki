@@ -74,15 +74,14 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
         let mut line_styles: Vec<Option<Style>> = vec![None; n];
         let mut arrow_idx: Option<usize> = None;
 
-        let mut is_special_line = paint_header(line, &mut line_styles, palette);
-        if !is_special_line {
-            is_special_line = paint_blockquote(line, &mut line_styles, palette);
-        }
-        if !is_special_line {
-            is_special_line = paint_hr(line, &mut line_styles, palette);
-        }
-        if !is_special_line {
-            is_special_line = paint_comment(line, &mut line_styles, palette);
+        // Whole-line styles; `is_special_line` is the single classifier (conceal
+        // uses it too), and the first matching painter wins.
+        let is_special_line = is_special_line(line);
+        if is_special_line {
+            let _painted = paint_header(line, &mut line_styles, palette)
+                || paint_blockquote(line, &mut line_styles, palette)
+                || paint_hr(line, &mut line_styles, palette)
+                || paint_comment(line, &mut line_styles, palette);
         }
 
         let mut line_braces = 0;
