@@ -108,17 +108,8 @@ pub(crate) fn compute_syntax_highlights<T: AsRef<[char]>>(
             }
             let in_block = brace_level > 0 || has_lbrace || has_rbrace;
 
-            let mut backtick_ranges = Vec::new();
             // Find all backtick ranges up front so the section painters can skip inline code.
-            let mut b_idx = 0;
-            while let Some(start_pos) = find_in_chars_from(line, "`", b_idx) {
-                if let Some(end_pos) = find_in_chars_from(line, "`", start_pos + 1) {
-                    backtick_ranges.push(start_pos..=end_pos);
-                    b_idx = end_pos + 1;
-                } else {
-                    break;
-                }
-            }
+            let backtick_ranges = inline_code_ranges(line);
 
             let (arrow, math_info) = section_a(
                 line,
@@ -207,38 +198,63 @@ fn paint_header(line: &[char], line_styles: &mut [Option<Style>], palette: &Pale
     false
 }
 
-fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    let trimmed_start = trim_start_slice(line);
-    if trimmed_start.first() == Some(&'>') {
-        let start_col = line.len() - trimmed_start.len();
-        let quote_style = Style::default().fg(palette.blockquote).italic();
-        line_styles[start_col..].fill(Some(quote_style));
-        return true;
+/// Inline-code spans of `line` as inclusive ranges from the opening to the
+/// closing backtick. Backticks pair up left to right; an unmatched trailing
+/// backtick is ignored.
+pub(crate) fn inline_code_ranges(line: &[char]) -> Vec<RangeInclusive<usize>> {
+    let mut ranges = Vec::new();
+    let mut from = 0;
+    while let Some(start) = find_in_chars_from(line, "`", from) {
+        let Some(end) = find_in_chars_from(line, "`", start + 1) else {
+            break;
+        };
+        ranges.push(start..=end);
+        from = end + 1;
     }
-    false
+    ranges
+}
+
+fn is_blockquote(line: &[char]) -> bool {
+    trim_start_slice(line).first() == Some(&'>')
+}
+
+fn is_hr(line: &[char]) -> bool {
+    let trimmed = trim_char_slice(line);
+    (trimmed == ['-', '-', '-'] || trimmed == ['*', '*', '*'] || trimmed == ['_', '_', '_'])
+        && line.len() >= 3
+}
+
+fn is_comment(line: &[char]) -> bool {
+    trim_start_slice(line).starts_with(&['/', '/'])
+}
+
+fn paint_blockquote(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
+    if !is_blockquote(line) {
+        return false;
+    }
+    let start_col = line.len() - trim_start_slice(line).len();
+    let quote_style = Style::default().fg(palette.blockquote).italic();
+    line_styles[start_col..].fill(Some(quote_style));
+    true
 }
 
 fn paint_hr(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    let trimmed = trim_char_slice(line);
-    if (trimmed == ['-', '-', '-'] || trimmed == ['*', '*', '*'] || trimmed == ['_', '_', '_'])
-        && line.len() >= 3
-    {
-        let hr_style = Style::default().fg(palette.hr).dim();
-        line_styles.fill(Some(hr_style));
-        return true;
+    if !is_hr(line) {
+        return false;
     }
-    false
+    let hr_style = Style::default().fg(palette.hr).dim();
+    line_styles.fill(Some(hr_style));
+    true
 }
 
 fn paint_comment(line: &[char], line_styles: &mut [Option<Style>], palette: &Palette) -> bool {
-    let trimmed_start = trim_start_slice(line);
-    if trimmed_start.len() >= 2 && trimmed_start[0] == '/' && trimmed_start[1] == '/' {
-        let start_col = line.len() - trimmed_start.len();
-        let comment_style = Style::default().fg(palette.comment).italic();
-        line_styles[start_col..].fill(Some(comment_style));
-        return true;
+    if !is_comment(line) {
+        return false;
     }
-    false
+    let start_col = line.len() - trim_start_slice(line).len();
+    let comment_style = Style::default().fg(palette.comment).italic();
+    line_styles[start_col..].fill(Some(comment_style));
+    true
 }
 
 /// Collapse a per-column style buffer into contiguous `edtui::Highlight` ranges
@@ -1110,7 +1126,7 @@ fn section_d(
 
 #[cfg(test)]
 mod tests {
-    use super::header_level;
+    use super::{header_level, inline_code_ranges};
 
     fn chars(s: &str) -> Vec<char> {
         s.chars().collect()
@@ -1135,5 +1151,20 @@ mod tests {
         assert_eq!(header_level(&chars("##bold")), None);
         // Leading whitespace disqualifies (ATX headers start at column 0).
         assert_eq!(header_level(&chars(" # indented")), None);
+    }
+
+    #[test]
+    fn inline_code_ranges_pairs() {
+        assert_eq!(
+            inline_code_ranges(&chars("a `b` c `de`")),
+            vec![2..=4, 8..=11]
+        );
+        assert_eq!(inline_code_ranges(&chars("``")), vec![0..=1]);
+        assert!(inline_code_ranges(&chars("no code")).is_empty());
+    }
+
+    #[test]
+    fn inline_code_ranges_unmatched_trailing() {
+        assert_eq!(inline_code_ranges(&chars("`a` `b")), vec![0..=2]);
     }
 }
