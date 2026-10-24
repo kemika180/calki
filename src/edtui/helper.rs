@@ -205,13 +205,6 @@ pub(crate) fn char_width(ch: char, tab_width: usize) -> usize {
     ch.width().unwrap_or(0)
 }
 
-/// Determines the unicode width of chars.
-pub(crate) fn chars_width(chars: &[char], tab_width: usize) -> usize {
-    chars
-        .iter()
-        .fold(0, |sum, ch| sum + char_width(*ch, tab_width))
-}
-
 /// Determines the unicode width of a span.
 pub(crate) fn span_width(s: &Span, tab_width: usize) -> usize {
     use unicode_width::UnicodeWidthStr;

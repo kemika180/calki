@@ -1507,73 +1507,6 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn estimate_line_height(line: &[char], max_width: usize, tab_width: usize) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    if line.is_empty() {
-        return 1;
-    }
-    if max_width == 0 {
-        return 1;
-    }
-
-    let mut num_lines = 0;
-    let mut current_width = 0;
-    let mut last_space_idx_in_chunk: Option<usize> = None;
-    let mut chunk_len = 0;
-
-    let mut i = 0;
-    while i < line.len() {
-        let ch = line[i];
-        let ch_w = if ch == '\t' {
-            tab_width
-        } else {
-            ch.width().unwrap_or(0)
-        };
-
-        if current_width + ch_w > max_width {
-            if let Some(space_idx) = last_space_idx_in_chunk {
-                num_lines += 1;
-                // Backtrack to after space
-                let characters_in_next_line = chunk_len - 1 - space_idx;
-                current_width = 0;
-                last_space_idx_in_chunk = None;
-                chunk_len = 0;
-                // recalculate width of characters after space
-                let backtrack_start = i - characters_in_next_line;
-                for &c in &line[backtrack_start..=i] {
-                    let c_w = if c == '\t' {
-                        tab_width
-                    } else {
-                        c.width().unwrap_or(0)
-                    };
-                    current_width += c_w;
-                    if c == ' ' {
-                        last_space_idx_in_chunk = Some(chunk_len);
-                    }
-                    chunk_len += 1;
-                }
-            } else {
-                // Force wrap
-                num_lines += 1;
-                current_width = ch_w;
-                last_space_idx_in_chunk = if ch == ' ' { Some(0) } else { None };
-                chunk_len = 1;
-            }
-        } else {
-            current_width += ch_w;
-            if ch == ' ' {
-                last_space_idx_in_chunk = Some(chunk_len);
-            }
-            chunk_len += 1;
-        }
-        i += 1;
-    }
-    if current_width > 0 {
-        num_lines += 1;
-    }
-    num_lines.max(1)
-}
-
 fn find_in_chars(chars: &[char], sub: &str) -> Option<usize> {
     let sub_chars: Vec<char> = sub.chars().collect();
     if sub_chars.is_empty() {
@@ -3758,20 +3691,5 @@ mod main_tests {
         assert_eq!(format!("{:>3}%", pct), "100%");
 
         let _ = std::fs::remove_dir_all(&wiki_root);
-    }
-
-    #[test]
-    fn test_estimate_line_height() {
-        let chars_empty: Vec<char> = vec![];
-        assert_eq!(estimate_line_height(&chars_empty, 10, 4), 1);
-
-        let chars_short: Vec<char> = "hello".chars().collect();
-        assert_eq!(estimate_line_height(&chars_short, 10, 4), 1);
-
-        let chars_exact: Vec<char> = "hello world".chars().collect();
-        assert_eq!(estimate_line_height(&chars_exact, 5, 4), 3);
-
-        let chars_long: Vec<char> = "hello world from rust".chars().collect();
-        assert_eq!(estimate_line_height(&chars_long, 7, 4), 4);
     }
 }

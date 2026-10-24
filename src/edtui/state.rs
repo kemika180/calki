@@ -15,7 +15,9 @@ use self::{mode::EditorMode, selection::Selection, undo::Stack};
 use crate::edtui::actions::Execute;
 use crate::edtui::clipboard::{Clipboard, ClipboardTrait};
 use crate::edtui::helper::max_col;
+use crate::edtui::view::line_wrapper::LineWrapper;
 use crate::edtui::{Index2, Lines};
+use jagged::index::RowIndex;
 use ratatui_core::layout::Position;
 use std::collections::HashMap;
 
@@ -223,6 +225,34 @@ impl EditorState {
     pub fn set_viewport_height(&mut self, height: usize) {
         self.view.update_num_rows(height);
     }
+
+    /// Screen rows `row` takes when word-wrapped at `max_width`, measured on
+    /// the chars actually drawn (concealed markup excluded) with the same
+    /// wrap the renderer uses. A row past the end of the buffer counts as 1.
+    pub fn display_row_height(&self, row: usize, max_width: usize) -> usize {
+        let Some(line) = self.lines.get(RowIndex::new(row)) else {
+            return 1;
+        };
+        let chars = self.column_map(row).display_chars(line);
+        LineWrapper::wrap_ranges(&chars, max_width, self.view.tab_width).len()
+    }
+
+    /// Display heights of `cursor_row` and the rows above it, nearest first,
+    /// enough to fill `max_height` screen rows.
+    fn row_heights_above_cursor(&self, max_width: usize, max_height: usize) -> Vec<usize> {
+        (0..=self.cursor.row)
+            .rev()
+            .take(max_height + 1)
+            .map(|row| self.display_row_height(row, max_width))
+            .collect()
+    }
+
+    /// Updates the vertical offset in wrap mode so the cursor row is on screen.
+    pub(crate) fn update_viewport_vertical_wrap(&mut self, max_width: usize, max_height: usize) {
+        let heights = self.row_heights_above_cursor(max_width, max_height);
+        self.view
+            .update_viewport_vertical_wrap(max_height, self.cursor.row, &heights);
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +368,47 @@ mod tests {
 
         // Newlines should be replaced with spaces
         assert_eq!(state.lines, Lines::from("HelloLine1 Line2 Line3"));
+    }
+
+    #[test]
+    fn display_row_height_matches_word_wrap() {
+        let state = EditorState::new(Lines::from("\nhello\nhello world\nhello world from rust"));
+        assert_eq!(state.display_row_height(0, 10), 1);
+        assert_eq!(state.display_row_height(1, 10), 1);
+        // Matches the renderer, which draws "hello", a blank row, then "world":
+        // the space after a word that fills its row starts a new row.
+        assert_eq!(state.display_row_height(2, 5), 3);
+        assert_eq!(state.display_row_height(3, 7), 4);
+        assert_eq!(state.display_row_height(99, 7), 1);
+    }
+
+    #[test]
+    fn display_row_height_ignores_concealed_chars_off_the_cursor_row() {
+        // 12 chars raw (2 rows at width 10), 10 once the backticks are hidden.
+        let text = "`aaaaaaaaaa`\n`aaaaaaaaaa`";
+        let mut state = EditorState::new(Lines::from(text));
+        state.set_conceal_ranges(conceal::every_backtick_hidden(text));
+        state.cursor = Index2::new(1, 0);
+        assert_eq!(state.display_row_height(0, 10), 1);
+        assert_eq!(state.display_row_height(1, 10), 2);
+    }
+
+    #[test]
+    fn wrap_scroll_keeps_cursor_on_screen_when_word_wrap_adds_rows() {
+        // Each line word-wraps to 3 rows at width 9, but is only 17 chars wide;
+        // measuring by width alone (2 rows) left the cursor below the screen.
+        let text: String = (0..10).map(|_| "aaaaa bbbbb ccccc\n").collect::<String>() + "end";
+        let mut state = EditorState::new(Lines::from(text.as_str()));
+        state.cursor = Index2::new(10, 1);
+        let area = Rect::new(0, 0, 9, 6);
+        for _ in 0..2 {
+            let mut buf = Buffer::empty(area);
+            EditorView::new(&mut state).render(area, &mut buf);
+        }
+        let pos = state.cursor_screen_position().unwrap();
+        assert!(
+            pos.y < area.height - 1,
+            "cursor at {pos:?} is off the text area"
+        );
     }
 }

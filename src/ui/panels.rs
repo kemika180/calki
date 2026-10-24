@@ -2,8 +2,8 @@
 //! the editor panel and the `left_area`/`right_area` layout write-back stay in
 //! the orchestrator (mouse routing depends on the latter).
 
-use crate::edtui::{self, EditorMode, EditorView, RowIndex};
-use crate::{App, FocusedPanel, estimate_line_height};
+use crate::edtui::{self, EditorMode, EditorView};
+use crate::{App, FocusedPanel};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem};
 
@@ -308,11 +308,7 @@ pub(crate) fn render_editor(f: &mut Frame, app: &mut App, editor_area: Rect) {
             if hidden.contains(&row) {
                 return 0;
             }
-            if let Some(line) = app.editor_state.lines.get(RowIndex::new(row)) {
-                estimate_line_height(line.as_slice(), wrap_width, 4)
-            } else {
-                1
-            }
+            app.editor_state.display_row_height(row, wrap_width)
         };
 
         // Calculate physical_top(y_offset, cursor_row)

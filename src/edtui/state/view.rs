@@ -1,10 +1,4 @@
-use crate::edtui::{
-    Lines,
-    helper::{char_width, chars_width},
-    state::fold::VisibleLines,
-    view::LineNumbers,
-    view::line_wrapper::LineWrapper,
-};
+use crate::edtui::{helper::char_width, state::fold::VisibleLines, view::LineNumbers};
 use ratatui_core::layout::{Position, Rect};
 
 /// Represents the (x, y) offset of the editor's viewport.
@@ -178,13 +172,14 @@ impl ViewState {
         self.viewport.y
     }
 
-    /// Updates the view ports vertical offset.
+    /// Updates the vertical offset in wrap mode. `heights[i]` is the number of
+    /// screen rows buffer row `cursor_row - i` takes (see
+    /// `EditorState::display_row_height`).
     pub(crate) fn update_viewport_vertical_wrap(
         &mut self,
-        width: usize,
         height: usize,
         cursor_row: usize,
-        lines: &Lines,
+        heights: &[usize],
     ) -> usize {
         // scroll up
         if cursor_row < self.viewport.y {
@@ -192,7 +187,7 @@ impl ViewState {
         }
 
         // scroll down
-        self.scroll_down(lines, width, height, cursor_row);
+        self.scroll_down(heights, height, cursor_row);
 
         self.viewport.y
     }
@@ -203,45 +198,24 @@ impl ViewState {
         self.num_rows = num_rows;
     }
 
-    /// Scrolls the viewport down based on the cursor's row position.
+    /// Scrolls down just far enough that the cursor row fits on screen.
     ///
-    /// This function adjusts the viewport to ensure that the cursor remains visible
-    /// when moving down in a list of lines. It calculates the required scrolling
-    /// based on the line width and wraps the content to fit within the maximum width and height.
-    ///
-    /// # Behavior
-    ///
-    /// If the cursor is already visible within the current viewport, no action is taken.
-    /// Otherwise, the function calculates how many rows the content would need to wrap,
-    /// and adjusts the viewport accordingly.
-    fn scroll_down(
-        &mut self,
-        lines: &Lines,
-        max_width: usize,
-        max_height: usize,
-        cursor_row: usize,
-    ) {
-        // If the cursor is already within the viewport, or there are no rows to display, return early.
+    /// Walks up from the cursor row, adding each row's screen height, and puts
+    /// the viewport top at the highest row that still fits in `max_height`.
+    /// Does nothing if the cursor row is already within the rows shown last
+    /// frame, or before the first frame (`num_rows == 0`).
+    fn scroll_down(&mut self, heights: &[usize], max_height: usize, cursor_row: usize) {
         if cursor_row < self.viewport.y + self.num_rows || self.num_rows == 0 {
             return;
         }
 
         let mut remaining_height = max_height;
-
-        let skip = lines.len().saturating_sub(cursor_row + 1);
-        for (i, line) in lines.iter_row().rev().skip(skip).enumerate() {
-            let line_width = chars_width(line, self.tab_width);
-            let current_row_height = LineWrapper::determine_split(line_width, max_width).len();
-
-            // If we run out of height or exceed it, scroll the viewport.
-            if remaining_height < current_row_height {
-                let first_visible_row = cursor_row.saturating_sub(i.saturating_sub(1));
-                self.viewport.y = first_visible_row;
+        for (i, &row_height) in heights.iter().enumerate() {
+            if remaining_height < row_height {
+                self.viewport.y = cursor_row.saturating_sub(i.saturating_sub(1));
                 break;
             }
-
-            // Subtract the number of wrapped rows from the remaining height.
-            remaining_height = remaining_height.saturating_sub(current_row_height);
+            remaining_height -= row_height;
         }
     }
 }

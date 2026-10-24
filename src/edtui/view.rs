@@ -253,7 +253,6 @@ impl Widget for EditorView<'_, '_> {
         let wrap_lines = self.get_wrap();
         let tab_width = self.get_tab_width();
         let line_numbers = self.get_line_numbers();
-        let lines = &self.state.lines;
 
         // Retrieve the displayed cursor position. The column of the displayed
         // cursor is clamped to the maximum line length.
@@ -270,18 +269,24 @@ impl Widget for EditorView<'_, '_> {
         // When folds are active the vertical offset is measured in visible
         // rows; the no-fold fast path keeps the original buffer-row math.
         let visible = (!self.state.folded.is_empty()).then(|| self.state.visible_lines());
-        let view_state = &mut self.state.view;
         let (offset_x, offset_y) = if wrap_lines {
             let offset_y = match &visible {
                 // With folds active, keep the cursor within `height` *visible*
                 // rows of the viewport top (approximating each visible row as
                 // one screen row); calki has already set a fold-aware offset.
-                Some(v) => view_state.update_viewport_vertical_folded(height, cursor.row, v),
-                None => view_state.update_viewport_vertical_wrap(width, height, cursor.row, lines),
+                Some(v) => self
+                    .state
+                    .view
+                    .update_viewport_vertical_folded(height, cursor.row, v),
+                None => {
+                    self.state.update_viewport_vertical_wrap(width, height);
+                    self.state.view.viewport.y
+                }
             };
             (0, offset_y)
         } else {
-            let line = lines.get(RowIndex::new(cursor.row));
+            let line = self.state.lines.get(RowIndex::new(cursor.row));
+            let view_state = &mut self.state.view;
             let offset_y = match &visible {
                 Some(v) => view_state.update_viewport_vertical_folded(height, cursor.row, v),
                 None => view_state.update_viewport_vertical(height, cursor.row),
@@ -291,6 +296,8 @@ impl Widget for EditorView<'_, '_> {
                 offset_y,
             )
         };
+
+        let lines = &self.state.lines;
 
         // Predetermine highlighted sections.
         let mut search_selection: Option<Selection> = None;

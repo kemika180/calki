@@ -6,25 +6,6 @@ use std::ops::Range;
 pub(crate) struct LineWrapper;
 
 impl LineWrapper {
-    /// Splits a given line width into multiple smaller widths, ensuring each width
-    /// is no larger than the specified maximum width.
-    pub(crate) fn determine_split(line_width: usize, max_width: usize) -> Vec<usize> {
-        if line_width == 0 {
-            return vec![0];
-        }
-
-        let mut remaining_width = line_width;
-        let mut split_widths = Vec::new();
-
-        while remaining_width > 0 {
-            let current_chunk = std::cmp::min(remaining_width, max_width);
-            split_widths.push(current_chunk);
-            remaining_width = remaining_width.saturating_sub(max_width);
-        }
-
-        split_widths
-    }
-
     /// Word-wraps `chars` into screen rows no wider than `max_width`.
     ///
     /// Returns one half-open range of indices into `chars` per screen row.
