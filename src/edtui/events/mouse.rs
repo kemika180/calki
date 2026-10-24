@@ -1,5 +1,6 @@
 use crossterm::event::{MouseEvent as CTMouseEvent, MouseEventKind};
 use jagged::Index2;
+use std::ops::Range;
 
 use crate::edtui::{
     EditorMode, EditorState,
@@ -156,7 +157,7 @@ fn mouse_position_to_cursor_position(
     let mut col_index = state.view.viewport.x;
 
     // Global -> editor coordinates
-    let mut mouse = Index2::new(
+    let mouse = Index2::new(
         mouse.row.saturating_sub(state.view.screen_area.y.into()),
         mouse.col.saturating_sub(state.view.screen_area.x.into()),
     );
@@ -187,48 +188,50 @@ fn mouse_position_to_cursor_position(
         let Some(line) = state.lines.get(jagged::index::RowIndex::new(buffer_row)) else {
             break;
         };
-        let wrapped_line = LineWrapper::wrap_line(
-            line,
-            state.view.screen_area.width.into(),
-            state.view.tab_width,
-        );
-        let wrapped_line_len = wrapped_line.len().max(1);
-        if row_screen_index + wrapped_line_len > mouse.row {
-            mouse.row = mouse.row.saturating_sub(row_screen_index);
-            col_index = find_cursor_column_in_wrapped_line(&wrapped_line, &mouse, tab_width);
+        let ranges = LineWrapper::wrap_ranges(line, state.view.screen_area.width.into(), tab_width);
+        if row_screen_index + ranges.len() > mouse.row {
+            let wrapped_row = mouse.row - row_screen_index;
+            col_index = column_in_wrapped_row(line, &ranges, wrapped_row, mouse.col, tab_width);
             break;
         }
-        row_screen_index += wrapped_line_len;
+        row_screen_index += ranges.len();
     }
 
     Index2::new(row_index, col_index)
 }
 
-fn find_cursor_column_in_wrapped_line(
-    line: &[Vec<char>],
-    mouse: &Index2,
+/// Maps a click at screen column `x` on screen row `wrapped_row` of a wrapped
+/// line to a buffer column, using the char ranges from
+/// [`LineWrapper::wrap_ranges`]. A click past the row's last char lands just
+/// after it.
+fn column_in_wrapped_row(
+    line: &[char],
+    ranges: &[Range<usize>],
+    wrapped_row: usize,
+    x: usize,
     tab_width: usize,
 ) -> usize {
-    let Some(l) = line.get(mouse.row) else {
+    let Some(range) = ranges.get(wrapped_row) else {
         return 0;
     };
+    let row_chars = line.get(range.clone()).unwrap_or_default();
+    range.start + column_at_screen_x(row_chars.iter().copied(), x, tab_width)
+}
 
-    let col_offset: usize = line.iter().take(mouse.row).map(Vec::len).sum();
-    let mut current_width = 0;
-    let mut col_index = 0;
-
-    for &ch in l {
-        let char_width = char_width(ch, tab_width);
-
-        if current_width + char_width > mouse.col {
+/// Counts how many chars fit fully before screen column `x`, i.e. the index of
+/// the char drawn at `x` (or the char count if `x` is past the end).
+fn column_at_screen_x(chars: impl Iterator<Item = char>, x: usize, tab_width: usize) -> usize {
+    let mut width = 0;
+    let mut count = 0;
+    for ch in chars {
+        let w = char_width(ch, tab_width);
+        if width + w > x {
             break;
         }
-
-        current_width += char_width;
-        col_index += 1;
+        width += w;
+        count += 1;
     }
-
-    col_offset + col_index
+    count
 }
 
 /// Represents a mouse event.
@@ -361,5 +364,51 @@ mod tests {
         MouseEventHandler::on_event(MouseEvent::ScrollDown(MousePosition::new(0, 0)), &mut state);
         // Cursor advances to the next VISIBLE row (# B = 3), never into hidden 1/2.
         assert_eq!(state.cursor.row, 3);
+    }
+
+    fn wrapped_state(text: &str, width: u16) -> EditorState {
+        let mut state = EditorState::new(Lines::from(text));
+        state.view.screen_area = ratatui::layout::Rect::new(0, 0, width, 24);
+        state.view.wrap = true;
+        state
+    }
+
+    fn hit(state: &EditorState, row: u16, col: u16) -> Index2 {
+        mouse_position_to_cursor_position(
+            state,
+            &MousePosition::new(row, col),
+            state.view.tab_width,
+        )
+    }
+
+    #[test]
+    fn click_after_word_wrap_maps_to_buffer_col() {
+        // "Hello" / "World" at width 7; 'W' is buffer col 6.
+        let state = wrapped_state("Hello World", 7);
+        assert_eq!(hit(&state, 1, 0), Index2::new(0, 6));
+        assert_eq!(hit(&state, 1, 4), Index2::new(0, 10));
+        assert_eq!(hit(&state, 0, 4), Index2::new(0, 4));
+    }
+
+    #[test]
+    fn click_third_wrapped_row_no_cumulative_drift() {
+        // "aa" / "bb" / "cc" / "dd" at width 3; each break drops one space.
+        let state = wrapped_state("aa bb cc dd", 3);
+        assert_eq!(hit(&state, 2, 0), Index2::new(0, 6));
+        assert_eq!(hit(&state, 3, 1), Index2::new(0, 10));
+    }
+
+    #[test]
+    fn click_past_row_end_maps_to_break_col() {
+        // Past the end of "Hello" lands on the dropped space (col 5).
+        let state = wrapped_state("Hello World", 7);
+        assert_eq!(hit(&state, 0, 6), Index2::new(0, 5));
+    }
+
+    #[test]
+    fn click_on_later_line_after_wrapped_line() {
+        // Row 0 wraps onto two screen rows, so screen row 2 is buffer row 1.
+        let state = wrapped_state("Hello World\nnext", 7);
+        assert_eq!(hit(&state, 2, 2), Index2::new(1, 2));
     }
 }

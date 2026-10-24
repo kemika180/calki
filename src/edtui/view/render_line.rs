@@ -7,20 +7,21 @@ use ratatui_core::{
 
 use crate::edtui::helper::{rect_indent_y, replace_tabs_in_span};
 
-use super::internal::{find_position_in_spans, find_position_in_wrapped_spans};
+use super::internal::{find_position_in_spans, find_position_in_wrapped_rows};
+use super::line_wrapper::WrappedLine;
 
 /// An internal data type that represents a line for rendering.
 /// A vector of spans represents a line. Wrapped lines consist
 /// of an array of lines.
 pub(super) enum RenderLine<'a> {
-    Wrapped(Vec<Vec<Span<'a>>>),
+    Wrapped(WrappedLine<'a>),
     Single(Vec<Span<'a>>),
 }
 
 impl RenderLine<'_> {
     pub(super) fn num_lines(&self) -> usize {
         match self {
-            RenderLine::Wrapped(lines) => lines.len().max(1),
+            RenderLine::Wrapped(wrapped) => wrapped.rows.len().max(1),
             RenderLine::Single(_) => 1,
         }
     }
@@ -33,8 +34,8 @@ impl RenderLine<'_> {
         tab_width: usize,
     ) -> Position {
         let index2 = match self {
-            RenderLine::Wrapped(lines) => {
-                find_position_in_wrapped_spans(lines, data_col, area.width as usize, tab_width)
+            RenderLine::Wrapped(wrapped) => {
+                find_position_in_wrapped_rows(wrapped, data_col, area.width as usize, tab_width)
             }
 
             RenderLine::Single(line) => find_position_in_spans(line, data_col, tab_width),
@@ -48,8 +49,8 @@ impl RenderLine<'_> {
 
     pub(super) fn render(self, mut area: Rect, buf: &mut Buffer, tab_width: usize) {
         match self {
-            RenderLine::Wrapped(lines) => {
-                for line in lines {
+            RenderLine::Wrapped(wrapped) => {
+                for line in wrapped.rows {
                     if area.height == 0 {
                         break;
                     }

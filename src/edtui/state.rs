@@ -259,6 +259,21 @@ mod tests {
     }
 
     #[test]
+    fn test_cursor_screen_position_after_word_wrap() {
+        // Width 7 wraps "Hello World" as "Hello" / "World"; the space is dropped.
+        let mut state = EditorState::new(Lines::from("Hello World"));
+        state.cursor = Index2::new(0, 6); // 'W'
+
+        let area = Rect::new(0, 0, 7, 5);
+        let mut buffer = Buffer::empty(area);
+        EditorView::new(&mut state).render(area, &mut buffer);
+
+        let pos = state.cursor_screen_position().unwrap();
+        assert_eq!((pos.x, pos.y), (0, 1));
+        assert_eq!(buffer[(pos.x, pos.y)].symbol(), "W");
+    }
+
+    #[test]
     fn test_cursor_screen_position_multiline() {
         let mut state = EditorState::new(Lines::from("Line 1\nLine 2\nLine 3"));
         state.cursor = Index2::new(2, 3);

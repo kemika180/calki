@@ -1,6 +1,7 @@
 //! A collection of internal datatypes for rendering.
 //!
 //! TODO: Refactor.
+use super::line_wrapper::WrappedLine;
 #[cfg(feature = "syntax-highlighting")]
 use crate::edtui::SyntaxHighlighter;
 use crate::edtui::{
@@ -273,50 +274,43 @@ pub(crate) fn line_into_highlighted_spans_with_selections<'a>(
     internal_spans.into_iter().map(Span::from).collect()
 }
 
-/// Finds the position of a character within wrapped spans based on a given
-/// index position.
+/// Finds the screen position (row within the wrapped line, display column) of
+/// the char at index `col` of the unwrapped line.
 ///
-/// # Example
-/// ```ignore
-/// let wrapped_spans = vec![vec![Span::from("hello")], vec![Span::from("world")]];
-/// let index = find_position_in_wrapped_spans(&wrapped_spans, 6, 5);
-/// assert_eq!(index, Index2::new(1, 1));
-/// ```
-pub(super) fn find_position_in_wrapped_spans(
-    wrapped_spans: &[Vec<Span>],
-    col_index: usize,
+/// A space dropped at a word-wrap break has no cell of its own: it sits at the
+/// end of the row before the break if there is room, otherwise at the start of
+/// the next row. A `col` past the end of the line goes after the last char.
+pub(super) fn find_position_in_wrapped_rows(
+    wrapped: &WrappedLine,
+    col: usize,
     max_width: usize,
     tab_width: usize,
 ) -> Index2 {
-    if wrapped_spans.is_empty() {
-        return Index2::new(0, col_index);
+    let rows = &wrapped.rows;
+    for (row, range) in wrapped.ranges.iter().enumerate() {
+        if col < range.start {
+            // `col` is the dropped space just before this row.
+            let prev = row.saturating_sub(1);
+            let prev_width = rows.get(prev).map_or(0, |r| spans_width(r, tab_width));
+            return if prev_width < max_width {
+                Index2::new(prev, prev_width)
+            } else {
+                Index2::new(row, 0)
+            };
+        }
+        if col < range.end {
+            let spans = rows.get(row).map_or(&[][..], Vec::as_slice);
+            let x = unicode_width_position_in_spans(spans, col - range.start, tab_width);
+            return Index2::new(row, x);
+        }
     }
 
-    let mut char_pos = col_index;
-
-    for (row, spans) in wrapped_spans.iter().enumerate() {
-        let row_char_count = count_characters_in_spans(spans);
-        let max_char_pos = row_char_count.saturating_sub(1);
-
-        if char_pos <= max_char_pos {
-            let col = unicode_width_position_in_spans(spans, char_pos, tab_width);
-            return Index2::new(row, col);
-        }
-
-        if row + 1 < wrapped_spans.len() {
-            char_pos -= row_char_count;
-        }
-    }
-
-    let last_span_width = match wrapped_spans.last() {
-        Some(span) => spans_width(span, tab_width),
-        None => 0,
-    };
-
-    if last_span_width >= max_width {
-        Index2::new(wrapped_spans.len(), 0)
+    let last_row = rows.len().saturating_sub(1);
+    let last_width = rows.last().map_or(0, |r| spans_width(r, tab_width));
+    if last_width >= max_width {
+        Index2::new(rows.len(), 0)
     } else {
-        Index2::new(wrapped_spans.len().saturating_sub(1), last_span_width)
+        Index2::new(last_row, last_width)
     }
 }
 
@@ -348,10 +342,6 @@ pub(crate) fn find_position_in_spans(spans: &[Span], char_pos: usize, tab_width:
         0,
         unicode_width_position_in_spans(spans, char_pos, tab_width),
     )
-}
-
-fn count_characters_in_spans(spans: &[Span]) -> usize {
-    spans.iter().map(|span| span.content.chars().count()).sum()
 }
 
 fn spans_width(spans: &[Span], tab_width: usize) -> usize {
@@ -538,41 +528,90 @@ mod tests {
         assert_eq!(index, 8);
     }
 
-    #[test]
-    fn test_find_position_in_wrapped_spans() {
-        let line_1 = vec![Span::from("abc")];
-        let line_2 = vec![Span::from("def")];
-        let spans = vec![line_1, line_2];
-
-        let position = find_position_in_wrapped_spans(&spans, 2, 3, 0);
-        assert_eq!(position, Index2::new(0, 2));
-
-        let position = find_position_in_wrapped_spans(&spans, 3, 3, 0);
-        assert_eq!(position, Index2::new(1, 0));
-
-        let position = find_position_in_wrapped_spans(&spans, 5, 3, 0);
-        assert_eq!(position, Index2::new(1, 2));
-
-        let position = find_position_in_wrapped_spans(&spans, 6, 3, 0);
-        assert_eq!(position, Index2::new(2, 0));
+    fn wrapped(text: &str, max_width: usize) -> WrappedLine<'static> {
+        use crate::edtui::view::line_wrapper::LineWrapper;
+        LineWrapper::wrap_spans(vec![Span::from(text.to_string())], max_width, 0)
     }
 
     #[test]
-    fn test_find_position_in_wrapped_spans_with_emoji() {
-        let line_1 = vec![Span::from("a😀b")];
-        let line_2 = vec![Span::from("c😀")];
-        let spans = vec![line_1, line_2];
+    fn test_find_position_in_wrapped_rows() {
+        let line = wrapped("abcdef", 3);
 
-        let position = find_position_in_wrapped_spans(&spans, 2, 4, 0);
-        assert_eq!(position, Index2::new(0, 3));
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 2, 3, 0),
+            Index2::new(0, 2)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 3, 3, 0),
+            Index2::new(1, 0)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 5, 3, 0),
+            Index2::new(1, 2)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 6, 3, 0),
+            Index2::new(2, 0)
+        );
+    }
 
-        let position = find_position_in_wrapped_spans(&spans, 3, 4, 0);
-        assert_eq!(position, Index2::new(1, 0));
+    #[test]
+    fn test_find_position_in_wrapped_rows_with_emoji() {
+        let line = wrapped("a😀bc😀", 4);
 
-        let position = find_position_in_wrapped_spans(&spans, 4, 4, 0);
-        assert_eq!(position, Index2::new(1, 1));
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 2, 4, 0),
+            Index2::new(0, 3)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 3, 4, 0),
+            Index2::new(1, 0)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 4, 4, 0),
+            Index2::new(1, 1)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 5, 4, 0),
+            Index2::new(1, 3)
+        );
+    }
 
-        let position = find_position_in_wrapped_spans(&spans, 5, 4, 0);
-        assert_eq!(position, Index2::new(1, 3));
+    #[test]
+    fn cursor_after_word_break_starts_next_row() {
+        // "Hello World" at width 7 → "Hello" / "World"; the space (col 5) is dropped.
+        let line = wrapped("Hello World", 7);
+
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 6, 7, 0),
+            Index2::new(1, 0)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 10, 7, 0),
+            Index2::new(1, 4)
+        );
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 11, 7, 0),
+            Index2::new(1, 5)
+        );
+    }
+
+    #[test]
+    fn cursor_on_dropped_space_sits_at_row_end() {
+        let line = wrapped("Hello World", 7);
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 5, 7, 0),
+            Index2::new(0, 5)
+        );
+    }
+
+    #[test]
+    fn cursor_after_several_breaks_does_not_drift() {
+        let line = wrapped("aa bb cc dd", 3);
+        // 'd' at col 9 is the start of the fourth row.
+        assert_eq!(
+            find_position_in_wrapped_rows(&line, 9, 3, 0),
+            Index2::new(3, 0)
+        );
     }
 }
