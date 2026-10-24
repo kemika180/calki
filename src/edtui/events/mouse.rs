@@ -205,7 +205,9 @@ fn mouse_position_to_cursor_position(
         let Some(line) = state.lines.get(jagged::index::RowIndex::new(buffer_row)) else {
             break;
         };
-        // Wrap the chars as drawn, then map the hit back to a buffer column.
+        // Wrap the chars as drawn (concealed chars removed), then map the hit
+        // back to a buffer column. Fold-marker rows are still measured by their
+        // raw header text, not the longer marker that render draws.
         let map = state.column_map(buffer_row);
         let display = map.display_chars(line);
         let ranges =
