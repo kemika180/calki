@@ -314,6 +314,9 @@ impl Widget for EditorView<'_, '_> {
             .base
             .add_modifier(ratatui_core::style::Modifier::DIM);
 
+        // Concealment fast path: with no hidden ranges, rows skip it entirely.
+        let conceal_active = self.state.has_conceal();
+
         let mut cursor_position: Option<Position> = None;
         let mut content_area = content_main;
         let mut gutter_row_area = gutter_area;
@@ -350,9 +353,12 @@ impl Widget for EditorView<'_, '_> {
                     #[cfg(feature = "syntax-highlighting")]
                     self.syntax_highlighter.as_ref(),
                 );
-                // Identity (no-op) unless this row has hidden ranges and the
-                // cursor or selection is not on it.
-                conceal_spans(spans, &self.state.column_map(row_index), col_skips)
+                // Rows the cursor or selection is on stay raw (identity map).
+                if conceal_active {
+                    conceal_spans(spans, &self.state.column_map(row_index), col_skips)
+                } else {
+                    spans
+                }
             };
 
             let render_line = if wrap_lines {
