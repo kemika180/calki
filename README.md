@@ -55,6 +55,7 @@ Timezone conversion is DST-correct and understands IANA names (`America/New_York
 - **Wiki links** — connect notes with `[[Project Goals]]`. Press `Enter` on a link to follow it, `Backspace` or `Ctrl-o` to go back. Following a link to a note that doesn't exist creates it.
 - **Open any file, switch trees** — `:e <path>` edits any file, inside your wiki or not (created if new); `:wiki <dir>` switches to another wiki tree for the session. Links and backlinks always resolve relative to the file you're editing.
 - **Concealed markup** — `:conceal on` hides the backticks around `` `inline code` `` on every line except the one you're editing, which always shows the raw text. `:conceal off` brings them back; bare `:conceal` toggles. The setting is saved (config key `conceal`).
+- **Fenced code blocks** — math inside an untagged ```` ``` ```` (or ```` ```calki ````) block keeps its colors; a block tagged with another language, like ```` ```python ````, is shown as plain code, and its `#` lines aren't treated as headers or folds. Math inside tagged blocks is still evaluated for now.
 - **Section folding** — `za` or `Tab` on a header folds everything beneath it down to the next header of the same level, shown as `▶ # Section (N lines folded)`. Folds nest, survive edits, and Vim motions step over them.
 - **Todo checkboxes** — `t` on a list line toggles `[ ]` ⇄ `[x]`, or turns a plain bullet into a checkbox.
 - **Custom functions** — define `f(x) = x^2 + 2*x` in a note and reuse it anywhere in that file; defined functions appear in the Variables panel.

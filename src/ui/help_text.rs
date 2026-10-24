@@ -1100,6 +1100,16 @@ pub(crate) fn help_content(tab: usize, palette: &crate::theme::Palette) -> Vec<L
             ]),
             Line::from(vec![
                 Span::styled(
+                    " ```lang                ",
+                    Style::default().fg(palette.keybind_label).bold(),
+                ),
+                Span::styled(
+                    "Fenced code block: math colors kept if untagged; ```python etc. shown plain",
+                    Style::default().fg(palette.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
                     " - list / 1.            ",
                     Style::default().fg(palette.keybind_label).bold(),
                 ),
