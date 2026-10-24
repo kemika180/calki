@@ -175,7 +175,10 @@ fn mouse_position_to_cursor_position(
         let row_index = visible
             .to_buffer(top_ordinal + mouse.row)
             .unwrap_or(last_row);
-        return Index2::new(row_index, mouse.col.saturating_add(col_index));
+        let line = state.lines.get(jagged::index::RowIndex::new(row_index));
+        let scrolled = line.map_or(&[][..], |l| l.get(col_index..).unwrap_or_default());
+        let col = col_index + column_at_screen_x(scrolled.iter().copied(), mouse.col, tab_width);
+        return Index2::new(row_index, col);
     }
 
     let mut row_screen_index = 0;
@@ -410,5 +413,36 @@ mod tests {
         // Row 0 wraps onto two screen rows, so screen row 2 is buffer row 1.
         let state = wrapped_state("Hello World\nnext", 7);
         assert_eq!(hit(&state, 2, 2), Index2::new(1, 2));
+    }
+
+    fn unwrapped_state(text: &str) -> EditorState {
+        let mut state = wrapped_state(text, 80);
+        state.view.wrap = false;
+        state
+    }
+
+    #[test]
+    fn click_no_wrap_after_tab() {
+        // Tab width 2: '\t' covers screen cols 0-1, so 'b' at col 1 is drawn at x=2.
+        let state = unwrapped_state("\tbc");
+        assert_eq!(hit(&state, 0, 2), Index2::new(0, 1));
+        assert_eq!(hit(&state, 0, 3), Index2::new(0, 2));
+    }
+
+    #[test]
+    fn click_no_wrap_on_second_cell_of_wide_char() {
+        // '😀' covers cols 1-2; both cells map to it, 'b' is at x=3.
+        let state = unwrapped_state("a😀b");
+        assert_eq!(hit(&state, 0, 1), Index2::new(0, 1));
+        assert_eq!(hit(&state, 0, 2), Index2::new(0, 1));
+        assert_eq!(hit(&state, 0, 3), Index2::new(0, 2));
+    }
+
+    #[test]
+    fn click_no_wrap_with_horizontal_scroll() {
+        let mut state = unwrapped_state("0123456789");
+        state.view.viewport.x = 4;
+        assert_eq!(hit(&state, 0, 0), Index2::new(0, 4));
+        assert_eq!(hit(&state, 0, 3), Index2::new(0, 7));
     }
 }
